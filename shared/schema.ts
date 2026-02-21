@@ -21,9 +21,23 @@ export const customers = pgTable("customers", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const pianos = pgTable("pianos", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull(),
+  make: text("make"),
+  model: text("model"),
+  pianoType: text("piano_type"),
+  year: text("year"),
+  notes: text("notes"),
+  photos: text("photos").array(),
+  lastTuned: text("last_tuned"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const serviceRecords = pgTable("service_records", {
   id: serial("id").primaryKey(),
   customerId: integer("customer_id").notNull(),
+  pianoId: integer("piano_id"),
   serviceDate: text("service_date").notNull(),
   serviceType: text("service_type").notNull(),
   notes: text("notes"),
@@ -36,6 +50,11 @@ export const insertCustomerSchema = createInsertSchema(customers).omit({
   createdAt: true,
 });
 
+export const insertPianoSchema = createInsertSchema(pianos).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertServiceRecordSchema = createInsertSchema(serviceRecords).omit({
   id: true,
   createdAt: true,
@@ -43,5 +62,7 @@ export const insertServiceRecordSchema = createInsertSchema(serviceRecords).omit
 
 export type Customer = typeof customers.$inferSelect;
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
+export type Piano = typeof pianos.$inferSelect;
+export type InsertPiano = z.infer<typeof insertPianoSchema>;
 export type ServiceRecord = typeof serviceRecords.$inferSelect;
 export type InsertServiceRecord = z.infer<typeof insertServiceRecordSchema>;

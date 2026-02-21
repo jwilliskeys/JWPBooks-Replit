@@ -24,8 +24,6 @@ export default function CustomerForm() {
     city: "",
     state: "",
     zipCode: "",
-    pianoType: "",
-    lastTuned: "",
     personalNotes: "",
   });
 
@@ -33,11 +31,11 @@ export default function CustomerForm() {
     mutationFn: (data: typeof form) => apiRequest("POST", "/api/customers", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-      toast({ title: "Customer added successfully" });
+      toast({ title: "Client added successfully" });
       navigate("/customers");
     },
     onError: () => {
-      toast({ title: "Failed to add customer", variant: "destructive" });
+      toast({ title: "Failed to add client", variant: "destructive" });
     },
   });
 
@@ -59,9 +57,9 @@ export default function CustomerForm() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Add Customer</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Add Client</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
-            Add a new customer to your database
+            Add a new client to your database
           </p>
         </div>
       </div>
@@ -69,7 +67,7 @@ export default function CustomerForm() {
       <form onSubmit={handleSubmit}>
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Customer Information</CardTitle>
+            <CardTitle className="text-base">Client Information</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
@@ -100,15 +98,6 @@ export default function CustomerForm() {
                   onChange={(e) => setForm({ ...form, companyName: e.target.value })}
                   placeholder="Company name"
                   data-testid="input-company"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Piano Type</Label>
-                <Input
-                  value={form.pianoType}
-                  onChange={(e) => setForm({ ...form, pianoType: e.target.value })}
-                  placeholder="e.g. Kawai Grand"
-                  data-testid="input-piano"
                 />
               </div>
               <div className="space-y-2">
@@ -168,22 +157,13 @@ export default function CustomerForm() {
                   />
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label>Last Tuned (M/D/YY)</Label>
-                <Input
-                  value={form.lastTuned}
-                  onChange={(e) => setForm({ ...form, lastTuned: e.target.value })}
-                  placeholder="1/15/25"
-                  data-testid="input-last-tuned"
-                />
-              </div>
             </div>
             <div className="space-y-2">
               <Label>Personal Notes</Label>
               <Textarea
                 value={form.personalNotes}
                 onChange={(e) => setForm({ ...form, personalNotes: e.target.value })}
-                placeholder="Any notes about this customer or their piano..."
+                placeholder="Any notes about this client..."
                 className="min-h-[100px]"
                 data-testid="input-notes"
               />
@@ -199,7 +179,7 @@ export default function CustomerForm() {
                 disabled={createMutation.isPending}
                 data-testid="button-submit-form"
               >
-                {createMutation.isPending ? "Adding..." : "Add Customer"}
+                {createMutation.isPending ? "Adding..." : "Add Client"}
               </Button>
             </div>
           </CardContent>

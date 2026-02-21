@@ -93,16 +93,16 @@ export default function Customers() {
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Clients</h1>
           <p className="text-muted-foreground text-sm mt-1">
             {isLoading
               ? "Loading..."
-              : `${filtered.length} of ${customers?.length ?? 0} customers`}
+              : `${filtered.length} of ${customers?.length ?? 0} clients`}
           </p>
         </div>
         <Link href="/customers/new">
           <Button data-testid="button-add-customer">
-            <UserPlus className="h-4 w-4 mr-2" /> Add Customer
+            <UserPlus className="h-4 w-4 mr-2" /> Add Client
           </Button>
         </Link>
       </div>
@@ -111,7 +111,7 @@ export default function Customers() {
         <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search customers..."
+            placeholder="Search clients..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -162,11 +162,11 @@ export default function Customers() {
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
-            <h3 className="font-medium text-sm">No customers found</h3>
+            <h3 className="font-medium text-sm">No clients found</h3>
             <p className="text-sm text-muted-foreground mt-1">
               {search || cityFilter !== "all" || statusFilter !== "all"
                 ? "Try adjusting your filters"
-                : "Import from Google Sheets or add customers manually"}
+                : "Import from Google Sheets or add clients manually"}
             </p>
           </CardContent>
         </Card>

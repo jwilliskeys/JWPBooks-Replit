@@ -2,7 +2,30 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertServiceRecordSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema } from "@shared/schema";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+
+const uploadDir = path.join(process.cwd(), "uploads", "pianos");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req: any, _file: any, cb: any) => cb(null, uploadDir),
+    filename: (_req: any, file: any, cb: any) => {
+      const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
+      cb(null, uniqueName);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req: any, file: any, cb: any) => {
+    const allowed = /\.(jpg|jpeg|png|gif|webp)$/i;
+    cb(null, allowed.test(path.extname(file.originalname)));
+  },
+});
 
 export async function registerRoutes(
   httpServer: Server,
@@ -105,6 +128,140 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
+
+  app.get("/api/customers/:id/pianos", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const customerPianos = await storage.getPianos(id);
+      res.json(customerPianos);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/customers/:id/pianos", async (req, res) => {
+    try {
+      const customerId = parseInt(req.params.id);
+      if (isNaN(customerId)) return res.status(400).json({ message: "Invalid ID" });
+      const data = { ...req.body, customerId };
+      const parsed = insertPianoSchema.safeParse(data);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const piano = await storage.createPiano(parsed.data);
+      await storage.syncCustomerFromPianos(customerId);
+      res.status(201).json(piano);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/pianos/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getPiano(id);
+      if (!existing) return res.status(404).json({ message: "Piano not found" });
+      const updateSchema = insertPianoSchema.partial();
+      const parsed = updateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const piano = await storage.updatePiano(id, parsed.data);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      await storage.syncCustomerFromPianos(existing.customerId);
+      res.json(piano);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/pianos/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getPiano(id);
+      if (!existing) return res.status(404).json({ message: "Piano not found" });
+      const deleted = await storage.deletePiano(id);
+      if (!deleted) return res.status(404).json({ message: "Piano not found" });
+      await storage.syncCustomerFromPianos(existing.customerId);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/pianos/:id/services", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const records = await storage.getServiceRecordsByPiano(id);
+      res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/pianos/:id/services", async (req, res) => {
+    try {
+      const pianoId = parseInt(req.params.id);
+      if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(pianoId);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const data = { ...req.body, pianoId, customerId: piano.customerId };
+      const parsed = insertServiceRecordSchema.safeParse(data);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const record = await storage.createServiceRecord(parsed.data);
+      if (req.body.serviceType === "tuning" && req.body.serviceDate) {
+        await storage.updatePiano(pianoId, { lastTuned: req.body.serviceDate });
+        await storage.syncCustomerFromPianos(piano.customerId);
+      }
+      res.status(201).json(record);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/pianos/:id/photos", upload.array("photos", 10), async (req, res) => {
+    try {
+      const pianoId = parseInt(req.params.id as string);
+      if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(pianoId);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const files = (req as any).files as any[];
+      if (!files || files.length === 0) return res.status(400).json({ message: "No files uploaded" });
+      const newPhotos = files.map((f) => `/uploads/pianos/${f.filename}`);
+      const existingPhotos = piano.photos || [];
+      const allPhotos = [...existingPhotos, ...newPhotos];
+      const updated = await storage.updatePiano(pianoId, { photos: allPhotos });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/pianos/:pianoId/photos", async (req, res) => {
+    try {
+      const pianoId = parseInt(req.params.pianoId);
+      if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(pianoId);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const { photoUrl } = req.body;
+      if (!photoUrl) return res.status(400).json({ message: "No photo URL provided" });
+      const updatedPhotos = (piano.photos || []).filter((p) => p !== photoUrl);
+      const filePath = path.join(process.cwd(), photoUrl);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      const updated = await storage.updatePiano(pianoId, { photos: updatedPhotos });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.use("/uploads", (await import("express")).default.static(path.join(process.cwd(), "uploads")));
 
   app.post("/api/sync", async (_req, res) => {
     try {

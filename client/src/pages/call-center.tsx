@@ -101,7 +101,7 @@ export default function CallCenter() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Call Center</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Customers sorted by who needs to be contacted next
+          Clients sorted by who needs to be contacted next
         </p>
       </div>
 
@@ -125,12 +125,12 @@ export default function CallCenter() {
       ) : sorted.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <Phone className="h-10 w-10 mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No customers found</p>
+          <p className="text-sm">No clients found</p>
         </div>
       ) : (
         <div className="border rounded-lg divide-y" data-testid="call-list">
           <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted/50 rounded-t-lg">
-            <span>Customer</span>
+            <span>Client</span>
             <span className="w-28 text-center">Last Tuned</span>
             <span className="w-28 text-center">Last Contacted</span>
             <span className="w-24 text-center">Status</span>

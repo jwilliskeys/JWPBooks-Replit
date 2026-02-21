@@ -19,10 +19,11 @@ Preferred communication style: Simple, everyday language.
 - **Path aliases**: `@/` maps to `client/src/`, `@shared/` maps to `shared/`
 
 ### Pages
-- `/` — Dashboard with stats (total customers, overdue tunings, etc.)
-- `/customers` — Customer list with search and filtering
-- `/customers/new` — Create new customer form
-- `/customers/:id` — Customer detail with service records
+- `/` — Dashboard with stats (total clients, overdue tunings, etc.)
+- `/customers` — Client list with search and filtering
+- `/customers/new` — Create new client form
+- `/customers/:id` — Client detail with multiple piano profiles and per-piano service records
+- `/call-center` — Call center with contact priority list and last contacted tracking
 - `/sync` — Google Sheets sync interface
 
 ### Backend
@@ -30,9 +31,13 @@ Preferred communication style: Simple, everyday language.
 - **Language**: TypeScript, executed via `tsx`
 - **API Pattern**: RESTful JSON API under `/api/` prefix
 - **Key Endpoints**:
-  - `GET/POST /api/customers` — List and create customers
-  - `GET/PATCH/DELETE /api/customers/:id` — Individual customer CRUD
-  - `GET/POST /api/customers/:id/service-records` — Service records per customer
+  - `GET/POST /api/customers` — List and create clients
+  - `GET/PATCH/DELETE /api/customers/:id` — Individual client CRUD
+  - `GET/POST /api/customers/:id/pianos` — Piano profiles per client
+  - `PATCH/DELETE /api/pianos/:id` — Individual piano CRUD
+  - `GET/POST /api/pianos/:id/services` — Service records per piano
+  - `POST/DELETE /api/pianos/:id/photos` — Photo upload/removal per piano
+  - `GET/POST /api/customers/:id/services` — Legacy service records per client
   - `POST /api/sync` — Sync data from Google Sheets
 
 ### Data Storage
@@ -40,8 +45,9 @@ Preferred communication style: Simple, everyday language.
 - **ORM**: Drizzle ORM with `drizzle-zod` for schema validation
 - **Schema location**: `shared/schema.ts` (shared between client and server)
 - **Tables**:
-  - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, createdAt
-  - `service_records` — id, customerId, serviceDate, serviceType, notes, cost, createdAt
+  - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, lastContacted, createdAt
+  - `pianos` — id, customerId, make, model, pianoType, year, notes, photos (text[]), lastTuned, createdAt
+  - `service_records` — id, customerId, pianoId, serviceDate, serviceType, notes, cost, createdAt
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory
 - **Schema push**: Use `npm run db:push` to push schema changes directly
 

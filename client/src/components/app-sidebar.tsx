@@ -18,9 +18,9 @@ import type { Customer } from "@shared/schema";
 
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Customers", url: "/customers", icon: Users },
+  { title: "Clients", url: "/customers", icon: Users },
   { title: "Call Center", url: "/call-center", icon: PhoneCall },
-  { title: "Add Customer", url: "/customers/new", icon: UserPlus },
+  { title: "Add Client", url: "/customers/new", icon: UserPlus },
   { title: "Sync Data", url: "/sync", icon: RefreshCw },
 ];
 
@@ -56,7 +56,7 @@ export function AppSidebar() {
                       <Link href={item.url} data-testid={`nav-${item.title.toLowerCase().replace(/\s+/g, '-')}`}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.title}</span>
-                        {item.title === "Customers" && customers && (
+                        {item.title === "Clients" && customers && (
                           <Badge variant="secondary" className="ml-auto no-default-active-elevate">
                             {customers.length}
                           </Badge>
@@ -72,7 +72,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="p-4">
         <p className="text-xs text-muted-foreground">
-          Piano Technician CRM
+          Piano Technician Client Manager
         </p>
       </SidebarFooter>
     </Sidebar>

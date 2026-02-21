@@ -122,17 +122,17 @@ export default function Dashboard() {
         </div>
         <Link href="/customers/new">
           <Button data-testid="button-add-customer-dashboard">
-            Add Customer
+            Add Client
           </Button>
         </Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          title="Total Customers"
+          title="Total Clients"
           value={totalCustomers}
           icon={Users}
-          description="Active customer accounts"
+          description="Active client accounts"
           loading={isLoading}
         />
         <StatCard
@@ -178,7 +178,7 @@ export default function Dashboard() {
             ) : needsAttention.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                <p className="text-sm">All customers are up to date!</p>
+                <p className="text-sm">All clients are up to date!</p>
               </div>
             ) : (
               <div className="space-y-2">

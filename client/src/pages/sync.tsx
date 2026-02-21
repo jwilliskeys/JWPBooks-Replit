@@ -55,7 +55,7 @@ export default function SyncPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Sync Data</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Import customer data from your Google Spreadsheet
+          Import client data from your Google Spreadsheet
         </p>
       </div>
 
@@ -85,10 +85,10 @@ export default function SyncPage() {
             </div>
             <div>
               <p className="text-sm font-medium">
-                {customers?.length ?? 0} customers in database
+                {customers?.length ?? 0} clients in database
               </p>
               <p className="text-xs text-muted-foreground">
-                Syncing will update existing and add new customers
+                Syncing will update existing and add new clients
               </p>
             </div>
           </div>
@@ -105,7 +105,7 @@ export default function SyncPage() {
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
             This will read all rows from your Google Spreadsheet and sync them with your local
-            database. Existing customers (matched by first + last name) will be updated,
+            database. Existing clients (matched by first + last name) will be updated,
             and new ones will be added.
           </p>
 
