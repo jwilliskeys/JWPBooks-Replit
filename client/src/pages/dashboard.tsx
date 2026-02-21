@@ -22,28 +22,32 @@ function StatCard({
   icon: Icon,
   description,
   loading,
+  href,
 }: {
   title: string;
   value: string | number;
   icon: any;
   description: string;
   loading: boolean;
+  href: string;
 }) {
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-1 pt-3 px-4">
-        <CardTitle className="text-xs font-medium text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-      </CardHeader>
-      <CardContent className="pb-3 px-4">
-        {loading ? (
-          <Skeleton className="h-7 w-16" />
-        ) : (
-          <div className="text-xl font-bold" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>{value}</div>
-        )}
-        <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
-      </CardContent>
-    </Card>
+    <Link href={href}>
+      <Card className="cursor-pointer hover-elevate">
+        <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-1 pt-3 px-4">
+          <CardTitle className="text-xs font-medium text-muted-foreground">{title}</CardTitle>
+          <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+        </CardHeader>
+        <CardContent className="pb-3 px-4">
+          {loading ? (
+            <Skeleton className="h-7 w-16" />
+          ) : (
+            <div className="text-xl font-bold" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>{value}</div>
+          )}
+          <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
+        </CardContent>
+      </Card>
+    </Link>
   );
 }
 
@@ -131,13 +135,14 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 grid-cols-2">
         <StatCard
           title="Total Clients"
           value={totalCustomers}
           icon={Users}
           description="Active client accounts"
           loading={isLoading}
+          href="/customers"
         />
         <StatCard
           title="Total Pianos"
@@ -145,13 +150,15 @@ export default function Dashboard() {
           icon={Piano}
           description="Pianos under service"
           loading={pianosLoading}
+          href="/customers"
         />
         <StatCard
-          title="Tunings Scheduled"
+          title="Scheduled Appointments"
           value={scheduledTunings.length}
           icon={Calendar}
-          description="Upcoming tuning appointments"
+          description="Upcoming appointments"
           loading={appointmentsLoading}
+          href="/appointments"
         />
         <StatCard
           title="Overdue"
@@ -159,6 +166,7 @@ export default function Dashboard() {
           icon={AlertTriangle}
           description="Over 12 months since last tuning"
           loading={isLoading}
+          href="/call-center"
         />
       </div>
 
