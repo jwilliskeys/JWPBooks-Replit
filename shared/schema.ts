@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, serial, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -45,6 +45,20 @@ export const serviceRecords = pgTable("service_records", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const appointments = pgTable("appointments", {
+  id: serial("id").primaryKey(),
+  customerId: integer("customer_id").notNull(),
+  pianoId: integer("piano_id"),
+  date: text("date").notNull(),
+  time: text("time").notNull(),
+  servicesRequested: text("services_requested"),
+  priceEstimate: text("price_estimate"),
+  notes: text("notes"),
+  isTuning: boolean("is_tuning").default(false),
+  status: text("status").default("scheduled"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertCustomerSchema = createInsertSchema(customers).omit({
   id: true,
   createdAt: true,
@@ -60,9 +74,16 @@ export const insertServiceRecordSchema = createInsertSchema(serviceRecords).omit
   createdAt: true,
 });
 
+export const insertAppointmentSchema = createInsertSchema(appointments).omit({
+  id: true,
+  createdAt: true,
+});
+
 export type Customer = typeof customers.$inferSelect;
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Piano = typeof pianos.$inferSelect;
 export type InsertPiano = z.infer<typeof insertPianoSchema>;
 export type ServiceRecord = typeof serviceRecords.$inferSelect;
 export type InsertServiceRecord = z.infer<typeof insertServiceRecordSchema>;
+export type Appointment = typeof appointments.$inferSelect;
+export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;

@@ -4,12 +4,15 @@ import {
   customers,
   pianos,
   serviceRecords,
+  appointments,
   type Customer,
   type InsertCustomer,
   type Piano,
   type InsertPiano,
   type ServiceRecord,
   type InsertServiceRecord,
+  type Appointment,
+  type InsertAppointment,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -27,6 +30,12 @@ export interface IStorage {
   getServiceRecords(customerId: number): Promise<ServiceRecord[]>;
   getServiceRecordsByPiano(pianoId: number): Promise<ServiceRecord[]>;
   createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord>;
+  getAppointments(): Promise<Appointment[]>;
+  getAppointmentsByCustomer(customerId: number): Promise<Appointment[]>;
+  getAppointment(id: number): Promise<Appointment | undefined>;
+  createAppointment(appointment: InsertAppointment): Promise<Appointment>;
+  updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined>;
+  deleteAppointment(id: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -120,6 +129,38 @@ export class DatabaseStorage implements IStorage {
   async createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord> {
     const [created] = await db.insert(serviceRecords).values(record).returning();
     return created;
+  }
+
+  async getAllPianos(): Promise<Piano[]> {
+    return db.select().from(pianos).orderBy(pianos.createdAt);
+  }
+
+  async getAppointments(): Promise<Appointment[]> {
+    return db.select().from(appointments).orderBy(appointments.date);
+  }
+
+  async getAppointmentsByCustomer(customerId: number): Promise<Appointment[]> {
+    return db.select().from(appointments).where(eq(appointments.customerId, customerId)).orderBy(appointments.date);
+  }
+
+  async getAppointment(id: number): Promise<Appointment | undefined> {
+    const [appointment] = await db.select().from(appointments).where(eq(appointments.id, id));
+    return appointment;
+  }
+
+  async createAppointment(appointment: InsertAppointment): Promise<Appointment> {
+    const [created] = await db.insert(appointments).values(appointment).returning();
+    return created;
+  }
+
+  async updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined> {
+    const [updated] = await db.update(appointments).set(data).where(eq(appointments.id, id)).returning();
+    return updated;
+  }
+
+  async deleteAppointment(id: number): Promise<boolean> {
+    const result = await db.delete(appointments).where(eq(appointments.id, id)).returning();
+    return result.length > 0;
   }
 
   async syncCustomerFromPianos(customerId: number): Promise<void> {

@@ -12,8 +12,9 @@ import {
   ArrowRight,
   CalendarDays,
   MapPin,
+  Calendar,
 } from "lucide-react";
-import type { Customer } from "@shared/schema";
+import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 
 function StatCard({
   title,
@@ -30,17 +31,17 @@ function StatCard({
 }) {
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+      <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-1 pt-3 px-4">
+        <CardTitle className="text-xs font-medium text-muted-foreground">{title}</CardTitle>
+        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
       </CardHeader>
-      <CardContent>
+      <CardContent className="pb-3 px-4">
         {loading ? (
-          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-7 w-16" />
         ) : (
-          <div className="text-2xl font-bold" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>{value}</div>
+          <div className="text-xl font-bold" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>{value}</div>
         )}
-        <p className="text-xs text-muted-foreground mt-1">{description}</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
       </CardContent>
     </Card>
   );
@@ -72,21 +73,24 @@ export default function Dashboard() {
     queryKey: ["/api/customers"],
   });
 
+  const { data: allAppointments, isLoading: appointmentsLoading } = useQuery<Appointment[]>({
+    queryKey: ["/api/appointments"],
+  });
+
+  const { data: allPianos, isLoading: pianosLoading } = useQuery<PianoType[]>({
+    queryKey: ["/api/pianos"],
+  });
+
   const totalCustomers = customers?.length ?? 0;
 
-  const uniquePianos = customers
-    ? new Set(customers.map((c) => c.pianoType).filter(Boolean)).size
-    : 0;
+  const scheduledTunings = allAppointments?.filter((a) => a.isTuning && a.status === "scheduled") ?? [];
 
   const overdueCustomers = customers?.filter((c) => {
     const months = getMonthsSinceLastTuned(c.lastTuned);
     return months !== null && months >= 12;
   }) ?? [];
 
-  const recentlyTuned = customers?.filter((c) => {
-    const months = getMonthsSinceLastTuned(c.lastTuned);
-    return months !== null && months < 6;
-  }) ?? [];
+  const totalPianos = allPianos?.length ?? 0;
 
   const needsAttention = customers
     ?.filter((c) => {
@@ -127,7 +131,7 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Clients"
           value={totalCustomers}
@@ -136,18 +140,18 @@ export default function Dashboard() {
           loading={isLoading}
         />
         <StatCard
-          title="Piano Types"
-          value={uniquePianos}
+          title="Total Pianos"
+          value={totalPianos}
           icon={Piano}
-          description="Unique piano makes served"
-          loading={isLoading}
+          description="Pianos under service"
+          loading={pianosLoading}
         />
         <StatCard
-          title="Recently Tuned"
-          value={recentlyTuned.length}
-          icon={Clock}
-          description="Within last 6 months"
-          loading={isLoading}
+          title="Tunings Scheduled"
+          value={scheduledTunings.length}
+          icon={Calendar}
+          description="Upcoming tuning appointments"
+          loading={appointmentsLoading}
         />
         <StatCard
           title="Overdue"
@@ -184,7 +188,6 @@ export default function Dashboard() {
               <div className="space-y-2">
                 {needsAttention.map((customer) => {
                   const months = getMonthsSinceLastTuned(customer.lastTuned);
-                  const isOverdue = months !== null && months >= 12;
                   return (
                     <Link
                       key={customer.id}

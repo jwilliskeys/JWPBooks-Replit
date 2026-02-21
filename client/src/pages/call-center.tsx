@@ -14,8 +14,10 @@ import {
   CheckCircle,
   Search,
   ExternalLink,
+  Calendar,
 } from "lucide-react";
 import type { Customer } from "@shared/schema";
+import { AppointmentDialog } from "@/components/appointment-dialog";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
@@ -57,6 +59,9 @@ function getOverdueBadge(months: number | null) {
 
 export default function CallCenter() {
   const [search, setSearch] = useState("");
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  const [appointmentCustomerId, setAppointmentCustomerId] = useState<number | undefined>(undefined);
+  const [appointmentCustomerName, setAppointmentCustomerName] = useState<string>("");
   const { toast } = useToast();
 
   const { data: customers, isLoading } = useQuery<Customer[]>({
@@ -134,7 +139,7 @@ export default function CallCenter() {
             <span className="w-28 text-center">Last Tuned</span>
             <span className="w-28 text-center">Last Contacted</span>
             <span className="w-24 text-center">Status</span>
-            <span className="w-28 text-center">Action</span>
+            <span className="w-40 text-center">Actions</span>
           </div>
           {sorted.map((customer) => {
             const tunedMonths = getMonthsSince(customer.lastTuned);
@@ -178,7 +183,7 @@ export default function CallCenter() {
                   {getOverdueBadge(tunedMonths)}
                 </div>
 
-                <div className="w-28 text-center">
+                <div className="w-40 flex items-center justify-center gap-1">
                   <Button
                     size="sm"
                     variant="outline"
@@ -195,12 +200,33 @@ export default function CallCenter() {
                     <CheckCircle className="h-3 w-3 mr-1" />
                     Contacted
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-xs h-7"
+                    onClick={() => {
+                      setAppointmentCustomerId(customer.id);
+                      setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
+                      setShowAppointmentDialog(true);
+                    }}
+                    data-testid={`button-schedule-${customer.id}`}
+                  >
+                    <Calendar className="h-3 w-3 mr-1" />
+                    Appt
+                  </Button>
                 </div>
               </div>
             );
           })}
         </div>
       )}
+
+      <AppointmentDialog
+        open={showAppointmentDialog}
+        onOpenChange={setShowAppointmentDialog}
+        customerId={appointmentCustomerId}
+        customerName={appointmentCustomerName}
+      />
     </div>
   );
 }

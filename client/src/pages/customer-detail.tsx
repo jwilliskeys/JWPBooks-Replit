@@ -37,11 +37,15 @@ import {
   ImagePlus,
   X,
   Music,
+  Calendar,
+  Clock,
+  CheckCircle,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer, Piano, ServiceRecord } from "@shared/schema";
+import type { Customer, Piano, ServiceRecord, Appointment } from "@shared/schema";
 import { Link } from "wouter";
+import { AppointmentDialog } from "@/components/appointment-dialog";
 
 function getMonthsSince(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
@@ -65,7 +69,7 @@ function getStatusBadge(dateStr: string | null | undefined) {
   return <Badge className="bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
 }
 
-function PianoCard({ piano, customerId }: { piano: Piano; customerId: string }) {
+function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano; customerId: string; onScheduleAppointment?: (pianoId: number) => void }) {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [showServiceDialog, setShowServiceDialog] = useState(false);
@@ -307,6 +311,18 @@ function PianoCard({ piano, customerId }: { piano: Piano; customerId: string }) 
             <ImagePlus className="h-3 w-3 mr-1" />
             {uploadPhotosMutation.isPending ? "Uploading..." : "Add Photos"}
           </Button>
+          {onScheduleAppointment && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={() => onScheduleAppointment(piano.id)}
+              data-testid={`button-schedule-piano-${piano.id}`}
+            >
+              <Calendar className="h-3 w-3 mr-1" />
+              Schedule
+            </Button>
+          )}
         </div>
 
         <div className="border-t pt-3">
@@ -392,6 +408,8 @@ export default function CustomerDetail() {
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [showAddPiano, setShowAddPiano] = useState(false);
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  const [appointmentPianoId, setAppointmentPianoId] = useState<number | undefined>(undefined);
   const [editForm, setEditForm] = useState<Partial<Customer>>({});
   const [newPianoForm, setNewPianoForm] = useState({
     make: "",
@@ -412,6 +430,30 @@ export default function CustomerDetail() {
   const { data: customerPianos } = useQuery<Piano[]>({
     queryKey: ["/api/customers", customerId, "pianos"],
     enabled: !!customerId,
+  });
+
+  const { data: customerAppointments } = useQuery<Appointment[]>({
+    queryKey: ["/api/customers", customerId, "appointments"],
+    enabled: !!customerId,
+  });
+
+  const completeAppointmentMutation = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest("PATCH", `/api/appointments/${id}`, { status: "completed" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "appointments"] });
+      toast({ title: "Appointment completed" });
+    },
+  });
+
+  const deleteAppointmentMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/appointments/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "appointments"] });
+      toast({ title: "Appointment deleted" });
+    },
   });
 
   const updateMutation = useMutation({
@@ -513,6 +555,16 @@ export default function CustomerDetail() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            onClick={() => {
+              setAppointmentPianoId(undefined);
+              setShowAppointmentDialog(true);
+            }}
+            data-testid="button-schedule-appointment"
+          >
+            <Calendar className="h-3 w-3 mr-1.5" /> Schedule
+          </Button>
           <Button variant="secondary" size="sm" onClick={startEditing} data-testid="button-edit">
             <Edit className="h-3 w-3 mr-1.5" /> Edit
           </Button>
@@ -729,11 +781,102 @@ export default function CustomerDetail() {
         ) : (
           <div className="space-y-4">
             {customerPianos.map((piano) => (
-              <PianoCard key={piano.id} piano={piano} customerId={customerId!} />
+              <PianoCard
+                key={piano.id}
+                piano={piano}
+                customerId={customerId!}
+                onScheduleAppointment={(pianoId) => {
+                  setAppointmentPianoId(pianoId);
+                  setShowAppointmentDialog(true);
+                }}
+              />
             ))}
           </div>
         )}
       </div>
+
+      {customerAppointments && customerAppointments.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <Calendar className="h-5 w-5" /> Appointments
+            <Badge variant="secondary">{customerAppointments.length}</Badge>
+          </h2>
+          <div className="space-y-2">
+            {customerAppointments.map((appt) => {
+              const isCompleted = appt.status === "completed";
+              const piano = customerPianos?.find((p) => p.id === appt.pianoId);
+              const pianoLabel = piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : null;
+              return (
+                <Card key={appt.id} className={isCompleted ? "opacity-60" : ""} data-testid={`client-appointment-${appt.id}`}>
+                  <CardContent className="py-3 px-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-sm font-medium">{appt.date} at {appt.time}</span>
+                          {appt.isTuning && (
+                            <Badge variant="secondary" className="text-xs">
+                              <Music className="h-3 w-3 mr-1" />Tuning
+                            </Badge>
+                          )}
+                          <Badge variant={isCompleted ? "secondary" : "default"} className="text-xs">
+                            {isCompleted ? "Completed" : "Scheduled"}
+                          </Badge>
+                        </div>
+                        {pianoLabel && (
+                          <p className="text-xs text-muted-foreground">Piano: {pianoLabel}</p>
+                        )}
+                        {appt.servicesRequested && (
+                          <p className="text-sm mt-0.5">{appt.servicesRequested}</p>
+                        )}
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
+                          {appt.priceEstimate && <span className="font-medium text-foreground">{appt.priceEstimate}</span>}
+                          {appt.notes && <span>{appt.notes}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {!isCompleted && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs h-7"
+                            onClick={() => completeAppointmentMutation.mutate(appt.id)}
+                            disabled={completeAppointmentMutation.isPending}
+                            data-testid={`button-complete-appt-${appt.id}`}
+                          >
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            Done
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => {
+                            if (confirm("Delete this appointment?")) {
+                              deleteAppointmentMutation.mutate(appt.id);
+                            }
+                          }}
+                          data-testid={`button-delete-appt-${appt.id}`}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <AppointmentDialog
+        open={showAppointmentDialog}
+        onOpenChange={setShowAppointmentDialog}
+        customerId={customer.id}
+        pianoId={appointmentPianoId}
+        customerName={`${customer.firstName} ${customer.lastName}`}
+      />
     </div>
   );
 }

@@ -38,6 +38,9 @@ Preferred communication style: Simple, everyday language.
   - `GET/POST /api/pianos/:id/services` — Service records per piano
   - `POST/DELETE /api/pianos/:id/photos` — Photo upload/removal per piano
   - `GET/POST /api/customers/:id/services` — Legacy service records per client
+  - `GET /api/pianos` — List all pianos
+  - `GET/POST/PATCH/DELETE /api/appointments` — Appointment CRUD
+  - `GET /api/customers/:id/appointments` — Appointments per client
   - `POST /api/sync` — Sync data from Google Sheets
 
 ### Data Storage
@@ -48,6 +51,7 @@ Preferred communication style: Simple, everyday language.
   - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, lastContacted, createdAt
   - `pianos` — id, customerId, make, model, pianoType, year, notes, photos (text[]), lastTuned, createdAt
   - `service_records` — id, customerId, pianoId, serviceDate, serviceType, notes, cost, createdAt
+  - `appointments` — id, customerId, pianoId, date, time, servicesRequested, priceEstimate, notes, isTuning, status, createdAt
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory
 - **Schema push**: Use `npm run db:push` to push schema changes directly
 
