@@ -209,8 +209,8 @@ export default function Dashboard() {
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <Badge
-                            variant={isOverdue ? "destructive" : "secondary"}
-                            className="no-default-active-elevate"
+                            variant={months !== null && months >= 24 ? "destructive" : "outline"}
+                            className={`no-default-active-elevate ${months !== null && months >= 12 && months < 24 ? "bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500" : ""}`}
                           >
                             <CalendarDays className="h-3 w-3 mr-1" />
                             {months}mo ago

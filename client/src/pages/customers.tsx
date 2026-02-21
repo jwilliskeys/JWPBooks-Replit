@@ -41,9 +41,10 @@ function getMonthsSince(dateStr: string | null | undefined): number | null {
 function getStatusBadge(dateStr: string | null | undefined) {
   const months = getMonthsSince(dateStr);
   if (months === null) return <Badge variant="secondary" className="no-default-active-elevate">No record</Badge>;
-  if (months >= 12) return <Badge variant="destructive" className="no-default-active-elevate">Overdue</Badge>;
+  if (months >= 24) return <Badge variant="destructive" className="no-default-active-elevate">Overdue</Badge>;
+  if (months >= 12) return <Badge className="no-default-active-elevate bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500">Overdue</Badge>;
   if (months >= 6) return <Badge variant="secondary" className="no-default-active-elevate">Due soon</Badge>;
-  return <Badge className="no-default-active-elevate bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Current</Badge>;
+  return <Badge className="no-default-active-elevate bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
 }
 
 export default function Customers() {
@@ -136,7 +137,7 @@ export default function Customers() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="current">Current</SelectItem>
+              <SelectItem value="current">Recently Tuned</SelectItem>
               <SelectItem value="due">Due Soon</SelectItem>
               <SelectItem value="overdue">Overdue</SelectItem>
               <SelectItem value="unknown">No Record</SelectItem>

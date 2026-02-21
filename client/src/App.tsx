@@ -13,6 +13,7 @@ import Customers from "@/pages/customers";
 import CustomerDetail from "@/pages/customer-detail";
 import CustomerForm from "@/pages/customer-form";
 import SyncPage from "@/pages/sync";
+import CallCenter from "@/pages/call-center";
 
 function Router() {
   return (
@@ -21,6 +22,7 @@ function Router() {
       <Route path="/customers" component={Customers} />
       <Route path="/customers/new" component={CustomerForm} />
       <Route path="/customers/:id" component={CustomerDetail} />
+      <Route path="/call-center" component={CallCenter} />
       <Route path="/sync" component={SyncPage} />
       <Route component={NotFound} />
     </Switch>

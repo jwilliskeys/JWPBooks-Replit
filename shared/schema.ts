@@ -17,6 +17,7 @@ export const customers = pgTable("customers", {
   pianoType: text("piano_type"),
   lastTuned: text("last_tuned"),
   personalNotes: text("personal_notes"),
+  lastContacted: text("last_contacted"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
