@@ -75,15 +75,15 @@ export default function Appointments() {
     }) ?? [];
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-5xl mx-auto">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight" data-testid="text-appointments-title">Appointments</h1>
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-appointments-title">Appointments</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Manage scheduled appointments
         </p>
       </div>
 
-      <div className="relative max-w-md">
+      <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder="Search by client, service, or date..."
@@ -112,51 +112,53 @@ export default function Appointments() {
             const isCompleted = appointment.status === "completed";
             return (
               <Card key={appointment.id} className={isCompleted ? "opacity-60" : ""} data-testid={`appointment-card-${appointment.id}`}>
-                <CardContent className="py-4 px-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {customer ? (
-                          <Link href={`/customers/${customer.id}`}>
-                            <span className="text-sm font-medium hover:underline cursor-pointer flex items-center gap-1" data-testid={`appointment-client-${appointment.id}`}>
-                              {customer.firstName} {customer.lastName}
-                              <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                            </span>
-                          </Link>
-                        ) : (
-                          <span className="text-sm font-medium">Unknown Client</span>
-                        )}
-                        {appointment.isTuning && (
-                          <Badge variant="secondary" className="text-xs">
-                            <Music className="h-3 w-3 mr-1" />
-                            Tuning
+                <CardContent className="py-3 sm:py-4 px-3 sm:px-5">
+                  <div className="space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          {customer ? (
+                            <Link href={`/customers/${customer.id}`}>
+                              <span className="text-sm font-medium hover:underline cursor-pointer flex items-center gap-1" data-testid={`appointment-client-${appointment.id}`}>
+                                {customer.firstName} {customer.lastName}
+                                <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />
+                              </span>
+                            </Link>
+                          ) : (
+                            <span className="text-sm font-medium">Unknown Client</span>
+                          )}
+                          {appointment.isTuning && (
+                            <Badge variant="secondary" className="text-xs">
+                              <Music className="h-3 w-3 mr-1" />
+                              Tuning
+                            </Badge>
+                          )}
+                          <Badge variant={isCompleted ? "secondary" : "default"} className="text-xs" data-testid={`appointment-status-${appointment.id}`}>
+                            {isCompleted ? "Completed" : "Scheduled"}
                           </Badge>
+                        </div>
+                        <div className="flex items-center gap-3 sm:gap-4 text-xs text-muted-foreground mt-1 flex-wrap">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="h-3 w-3 shrink-0" />
+                            {appointment.date}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3 shrink-0" />
+                            {appointment.time}
+                          </span>
+                          {appointment.priceEstimate && (
+                            <span className="font-medium text-foreground">{appointment.priceEstimate}</span>
+                          )}
+                        </div>
+                        {appointment.servicesRequested && (
+                          <p className="text-sm mt-1">{appointment.servicesRequested}</p>
                         )}
-                        <Badge variant={isCompleted ? "secondary" : "default"} className="text-xs" data-testid={`appointment-status-${appointment.id}`}>
-                          {isCompleted ? "Completed" : "Scheduled"}
-                        </Badge>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          {appointment.date}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {appointment.time}
-                        </span>
-                        {appointment.priceEstimate && (
-                          <span className="font-medium text-foreground">{appointment.priceEstimate}</span>
+                        {appointment.notes && (
+                          <p className="text-xs text-muted-foreground mt-1">{appointment.notes}</p>
                         )}
                       </div>
-                      {appointment.servicesRequested && (
-                        <p className="text-sm mt-1">{appointment.servicesRequested}</p>
-                      )}
-                      {appointment.notes && (
-                        <p className="text-xs text-muted-foreground mt-1">{appointment.notes}</p>
-                      )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1 justify-end">
                       {!isCompleted && (
                         <Button
                           variant="outline"

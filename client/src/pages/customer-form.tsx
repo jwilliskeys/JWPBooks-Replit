@@ -49,7 +49,7 @@ export default function CustomerForm() {
   };
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
+    <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-4 sm:space-y-6">
       <div className="flex items-center gap-3">
         <Link href="/customers">
           <Button variant="ghost" size="icon" data-testid="button-back-form">
@@ -57,7 +57,7 @@ export default function CustomerForm() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Add Client</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Add Client</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
             Add a new client to your database
           </p>

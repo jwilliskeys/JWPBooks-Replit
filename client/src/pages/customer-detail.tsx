@@ -497,7 +497,7 @@ export default function CustomerDetail() {
 
   if (isLoading) {
     return (
-      <div className="p-6 max-w-4xl mx-auto space-y-6">
+      <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4 sm:space-y-6">
         <Skeleton className="h-8 w-48" />
         <div className="grid gap-4 sm:grid-cols-2">
           <Skeleton className="h-48" />
@@ -509,7 +509,7 @@ export default function CustomerDetail() {
 
   if (!customer) {
     return (
-      <div className="p-6 max-w-4xl mx-auto text-center py-20">
+      <div className="p-4 sm:p-6 max-w-4xl mx-auto text-center py-20">
         <h2 className="text-lg font-semibold">Client not found</h2>
         <Link href="/customers">
           <Button variant="ghost" className="mt-4" data-testid="link-back-to-clients">
@@ -537,24 +537,24 @@ export default function CustomerDetail() {
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Link href="/customers">
-          <Button variant="ghost" size="icon" data-testid="button-back">
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-        </Link>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-customer-name">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4 sm:space-y-6">
+      <div className="space-y-3">
+        <div className="flex items-center gap-3">
+          <Link href="/customers">
+            <Button variant="ghost" size="icon" data-testid="button-back">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate" data-testid="text-customer-name">
               {customer.firstName} {customer.lastName}
             </h1>
+            {customer.companyName && (
+              <p className="text-muted-foreground text-sm mt-0.5 truncate">{customer.companyName}</p>
+            )}
           </div>
-          {customer.companyName && (
-            <p className="text-muted-foreground text-sm mt-0.5">{customer.companyName}</p>
-          )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
           <Button
             size="sm"
             onClick={() => {

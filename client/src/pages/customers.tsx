@@ -90,10 +90,10 @@ export default function Customers() {
   }, [customers, search, cityFilter, statusFilter]);
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Clients</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Clients</h1>
           <p className="text-muted-foreground text-sm mt-1">
             {isLoading
               ? "Loading..."
@@ -102,13 +102,13 @@ export default function Customers() {
         </div>
         <Link href="/customers/new">
           <Button data-testid="button-add-customer">
-            <UserPlus className="h-4 w-4 mr-2" /> Add Client
+            <UserPlus className="h-4 w-4 mr-1 sm:mr-2" /> Add Client
           </Button>
         </Link>
       </div>
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
+      <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3 sm:flex-wrap">
+        <div className="relative flex-1 min-w-0 sm:min-w-[200px] sm:max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search clients..."
@@ -118,10 +118,10 @@ export default function Customers() {
             data-testid="input-search"
           />
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
           <Select value={cityFilter} onValueChange={setCityFilter}>
-            <SelectTrigger className="w-[140px]" data-testid="select-city-filter">
+            <SelectTrigger className="w-full sm:w-[140px]" data-testid="select-city-filter">
               <SelectValue placeholder="All Cities" />
             </SelectTrigger>
             <SelectContent>
@@ -132,7 +132,7 @@ export default function Customers() {
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]" data-testid="select-status-filter">
+            <SelectTrigger className="w-full sm:w-[140px]" data-testid="select-status-filter">
               <SelectValue placeholder="All Status" />
             </SelectTrigger>
             <SelectContent>

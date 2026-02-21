@@ -102,15 +102,15 @@ export default function CallCenter() {
     }) ?? [];
 
   return (
-    <div className="p-6 space-y-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-5xl mx-auto">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Call Center</h1>
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Call Center</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Clients sorted by who needs to be contacted next
         </p>
       </div>
 
-      <div className="relative max-w-md">
+      <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder="Search by name, phone, or city..."
@@ -124,7 +124,7 @@ export default function CallCenter() {
       {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="h-14 w-full" />
+            <Skeleton key={i} className="h-20 w-full rounded-lg" />
           ))}
         </div>
       ) : sorted.length === 0 ? (
@@ -133,87 +133,79 @@ export default function CallCenter() {
           <p className="text-sm">No clients found</p>
         </div>
       ) : (
-        <div className="border rounded-lg divide-y" data-testid="call-list">
-          <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-4 py-2 text-xs font-medium text-muted-foreground bg-muted/50 rounded-t-lg">
-            <span>Client</span>
-            <span className="w-28 text-center">Last Tuned</span>
-            <span className="w-28 text-center">Last Contacted</span>
-            <span className="w-24 text-center">Status</span>
-            <span className="w-40 text-center">Actions</span>
-          </div>
+        <div className="space-y-2" data-testid="call-list">
           {sorted.map((customer) => {
             const tunedMonths = getMonthsSince(customer.lastTuned);
             return (
               <div
                 key={customer.id}
-                className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-4 py-3 items-center hover:bg-muted/30 transition-colors"
+                className="border rounded-lg p-3 sm:p-4 hover:bg-muted/30 transition-colors"
                 data-testid={`call-row-${customer.id}`}
               >
-                <div className="min-w-0">
-                  <Link href={`/customers/${customer.id}`}>
-                    <span className="text-sm font-medium hover:underline cursor-pointer flex items-center gap-1" data-testid={`call-name-${customer.id}`}>
-                      {customer.firstName} {customer.lastName}
-                      <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                    </span>
-                  </Link>
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5">
-                    {customer.phone && (
-                      <span className="flex items-center gap-1">
-                        <Phone className="h-3 w-3" /> {customer.phone}
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="min-w-0 flex-1">
+                    <Link href={`/customers/${customer.id}`}>
+                      <span className="text-sm font-medium hover:underline cursor-pointer flex items-center gap-1" data-testid={`call-name-${customer.id}`}>
+                        {customer.firstName} {customer.lastName}
+                        <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />
                       </span>
-                    )}
-                    {customer.city && <span>{customer.city}, {customer.state}</span>}
+                    </Link>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5 flex-wrap">
+                      {customer.phone && (
+                        <span className="flex items-center gap-1">
+                          <Phone className="h-3 w-3 shrink-0" /> {customer.phone}
+                        </span>
+                      )}
+                      {customer.city && <span>{customer.city}, {customer.state}</span>}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    {getOverdueBadge(tunedMonths)}
                   </div>
                 </div>
 
-                <div className="w-28 text-center">
-                  <span className="text-xs flex items-center justify-center gap-1">
-                    <CalendarDays className="h-3 w-3 text-muted-foreground" />
-                    {formatDate(customer.lastTuned)}
-                  </span>
-                </div>
-
-                <div className="w-28 text-center">
-                  <span className="text-xs" data-testid={`call-contacted-${customer.id}`}>
-                    {formatDate(customer.lastContacted)}
-                  </span>
-                </div>
-
-                <div className="w-24 text-center">
-                  {getOverdueBadge(tunedMonths)}
-                </div>
-
-                <div className="w-40 flex items-center justify-center gap-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-xs h-7"
-                    disabled={markContactedMutation.isPending}
-                    onClick={() =>
-                      markContactedMutation.mutate({
-                        id: customer.id,
-                        date: todayFormatted(),
-                      })
-                    }
-                    data-testid={`button-contacted-${customer.id}`}
-                  >
-                    <CheckCircle className="h-3 w-3 mr-1" />
-                    Contacted
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-xs h-7"
-                    onClick={() => {
-                      setAppointmentCustomerId(customer.id);
-                      setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
-                      setShowAppointmentDialog(true);
-                    }}
-                    data-testid={`button-schedule-${customer.id}`}
-                  >
-                    <Calendar className="h-3 w-3 mr-1" />
-                    Appt
-                  </Button>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-3 sm:gap-4 text-xs text-muted-foreground flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <CalendarDays className="h-3 w-3 shrink-0" />
+                      Tuned: {formatDate(customer.lastTuned)}
+                    </span>
+                    <span data-testid={`call-contacted-${customer.id}`}>
+                      Contacted: {formatDate(customer.lastContacted)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7"
+                      disabled={markContactedMutation.isPending}
+                      onClick={() =>
+                        markContactedMutation.mutate({
+                          id: customer.id,
+                          date: todayFormatted(),
+                        })
+                      }
+                      data-testid={`button-contacted-${customer.id}`}
+                    >
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      Contacted
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7"
+                      onClick={() => {
+                        setAppointmentCustomerId(customer.id);
+                        setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
+                        setShowAppointmentDialog(true);
+                      }}
+                      data-testid={`button-schedule-${customer.id}`}
+                    >
+                      <Calendar className="h-3 w-3 mr-1" />
+                      Appt
+                    </Button>
+                  </div>
                 </div>
               </div>
             );
