@@ -23,7 +23,7 @@ import {
   Piano,
   SlidersHorizontal,
 } from "lucide-react";
-import type { Customer } from "@shared/schema";
+import type { Customer, Piano as PianoType } from "@shared/schema";
 
 function getMonthsSince(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
@@ -55,6 +55,20 @@ export default function Customers() {
   const { data: customers, isLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
   });
+
+  const { data: pianos } = useQuery<PianoType[]>({
+    queryKey: ["/api/pianos"],
+  });
+
+  const pianosByCustomer = useMemo(() => {
+    const map = new Map<number, PianoType>();
+    pianos?.forEach((p) => {
+      if (!map.has(p.customerId)) {
+        map.set(p.customerId, p);
+      }
+    });
+    return map;
+  }, [pianos]);
 
   const cities = useMemo(() => {
     if (!customers) return [];
@@ -194,12 +208,18 @@ export default function Customers() {
                   </div>
 
                   <div className="space-y-1.5">
-                    {customer.pianoType && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Piano className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{customer.pianoType}</span>
-                      </div>
-                    )}
+                    {(() => {
+                      const primaryPiano = pianosByCustomer.get(customer.id);
+                      const pianoLabel = primaryPiano && (primaryPiano.make || primaryPiano.pianoType)
+                        ? [primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")
+                        : customer.pianoType;
+                      return pianoLabel ? (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid={`text-piano-${customer.id}`}>
+                          <Piano className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{pianoLabel}</span>
+                        </div>
+                      ) : null;
+                    })()}
                     {customer.lastTuned && (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <CalendarDays className="h-3 w-3 shrink-0" />

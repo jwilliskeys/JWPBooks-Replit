@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, RefreshCw, UserPlus, Music, PhoneCall, Calendar } from "lucide-react";
+import { LayoutDashboard, Users, RefreshCw, Music, PhoneCall, Calendar } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -21,7 +21,6 @@ const navItems = [
   { title: "Clients", url: "/customers", icon: Users },
   { title: "Appointments", url: "/appointments", icon: Calendar },
   { title: "Call Center", url: "/call-center", icon: PhoneCall },
-  { title: "Add Client", url: "/customers/new", icon: UserPlus },
   { title: "Sync Data", url: "/sync", icon: RefreshCw },
 ];
 

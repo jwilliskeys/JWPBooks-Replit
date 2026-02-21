@@ -5,6 +5,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
@@ -15,8 +22,10 @@ import {
   Search,
   ExternalLink,
   Calendar,
+  ArrowUpDown,
+  Piano,
 } from "lucide-react";
-import type { Customer } from "@shared/schema";
+import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
@@ -57,8 +66,11 @@ function getOverdueBadge(months: number | null) {
   return <Badge className="text-xs bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
 }
 
+type SortOption = "priority" | "lastTuned" | "lastContacted" | "nextAppointment" | "location" | "lastName";
+
 export default function CallCenter() {
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("priority");
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
   const [appointmentCustomerId, setAppointmentCustomerId] = useState<number | undefined>(undefined);
   const [appointmentCustomerName, setAppointmentCustomerName] = useState<string>("");
@@ -67,6 +79,31 @@ export default function CallCenter() {
   const { data: customers, isLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
   });
+
+  const { data: appointments } = useQuery<Appointment[]>({
+    queryKey: ["/api/appointments"],
+  });
+
+  const { data: pianos } = useQuery<PianoType[]>({
+    queryKey: ["/api/pianos"],
+  });
+
+  const pianosByCustomer = new Map<number, PianoType>();
+  pianos?.forEach((p) => {
+    if (!pianosByCustomer.has(p.customerId)) {
+      pianosByCustomer.set(p.customerId, p);
+    }
+  });
+
+  const nextAppointmentMap = new Map<number, string>();
+  appointments
+    ?.filter((a) => a.status === "scheduled")
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .forEach((a) => {
+      if (!nextAppointmentMap.has(a.customerId)) {
+        nextAppointmentMap.set(a.customerId, a.date);
+      }
+    });
 
   const markContactedMutation = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) =>
@@ -91,14 +128,54 @@ export default function CallCenter() {
       );
     })
     .sort((a, b) => {
-      const aContacted = getMonthsSince(a.lastContacted);
-      const bContacted = getMonthsSince(b.lastContacted);
-      const aTuned = getMonthsSince(a.lastTuned);
-      const bTuned = getMonthsSince(b.lastTuned);
-
-      const aScore = Math.max(aContacted ?? 999, aTuned ?? 999);
-      const bScore = Math.max(bContacted ?? 999, bTuned ?? 999);
-      return bScore - aScore;
+      switch (sortBy) {
+        case "priority": {
+          const aContacted = getMonthsSince(a.lastContacted);
+          const bContacted = getMonthsSince(b.lastContacted);
+          const aTuned = getMonthsSince(a.lastTuned);
+          const bTuned = getMonthsSince(b.lastTuned);
+          const aScore = Math.max(aContacted ?? 999, aTuned ?? 999);
+          const bScore = Math.max(bContacted ?? 999, bTuned ?? 999);
+          return bScore - aScore;
+        }
+        case "lastTuned": {
+          const aDate = parseDate(a.lastTuned);
+          const bDate = parseDate(b.lastTuned);
+          if (!aDate && !bDate) return 0;
+          if (!aDate) return 1;
+          if (!bDate) return -1;
+          return aDate.getTime() - bDate.getTime();
+        }
+        case "lastContacted": {
+          const aDate = parseDate(a.lastContacted);
+          const bDate = parseDate(b.lastContacted);
+          if (!aDate && !bDate) return 0;
+          if (!aDate) return 1;
+          if (!bDate) return -1;
+          return aDate.getTime() - bDate.getTime();
+        }
+        case "nextAppointment": {
+          const aAppt = nextAppointmentMap.get(a.id);
+          const bAppt = nextAppointmentMap.get(b.id);
+          if (!aAppt && !bAppt) return 0;
+          if (!aAppt) return 1;
+          if (!bAppt) return -1;
+          return aAppt.localeCompare(bAppt);
+        }
+        case "location": {
+          const aCity = (a.city ?? "").toLowerCase();
+          const bCity = (b.city ?? "").toLowerCase();
+          if (!aCity && !bCity) return 0;
+          if (!aCity) return 1;
+          if (!bCity) return -1;
+          return aCity.localeCompare(bCity);
+        }
+        case "lastName": {
+          return (a.lastName ?? "").localeCompare(b.lastName ?? "");
+        }
+        default:
+          return 0;
+      }
     }) ?? [];
 
   return (
@@ -110,15 +187,33 @@ export default function CallCenter() {
         </p>
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Search by name, phone, or city..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-          data-testid="input-call-search"
-        />
+      <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
+        <div className="relative flex-1 min-w-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, phone, or city..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+            data-testid="input-call-search"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
+          <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
+            <SelectTrigger className="w-full sm:w-[180px]" data-testid="select-call-sort">
+              <SelectValue placeholder="Sort by..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="priority">Priority (Default)</SelectItem>
+              <SelectItem value="lastTuned">Last Tuned</SelectItem>
+              <SelectItem value="lastContacted">Last Contacted</SelectItem>
+              <SelectItem value="nextAppointment">Next Appointment</SelectItem>
+              <SelectItem value="location">Location</SelectItem>
+              <SelectItem value="lastName">Last Name</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {isLoading ? (
@@ -136,6 +231,8 @@ export default function CallCenter() {
         <div className="space-y-2" data-testid="call-list">
           {sorted.map((customer) => {
             const tunedMonths = getMonthsSince(customer.lastTuned);
+            const primaryPiano = pianosByCustomer.get(customer.id);
+            const nextAppt = nextAppointmentMap.get(customer.id);
             return (
               <div
                 key={customer.id}
@@ -157,6 +254,12 @@ export default function CallCenter() {
                         </span>
                       )}
                       {customer.city && <span>{customer.city}, {customer.state}</span>}
+                      {primaryPiano && (primaryPiano.make || primaryPiano.pianoType) && (
+                        <span className="flex items-center gap-1" data-testid={`call-piano-${customer.id}`}>
+                          <Piano className="h-3 w-3 shrink-0" />
+                          {[primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <div className="shrink-0">
@@ -173,6 +276,12 @@ export default function CallCenter() {
                     <span data-testid={`call-contacted-${customer.id}`}>
                       Contacted: {formatDate(customer.lastContacted)}
                     </span>
+                    {nextAppt && (
+                      <span className="flex items-center gap-1 text-primary">
+                        <Calendar className="h-3 w-3 shrink-0" />
+                        Next: {nextAppt}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
