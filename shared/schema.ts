@@ -31,6 +31,7 @@ export const pianos = pgTable("pianos", {
   notes: text("notes"),
   photos: text("photos").array(),
   lastTuned: text("last_tuned"),
+  isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

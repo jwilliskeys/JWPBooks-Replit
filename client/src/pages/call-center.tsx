@@ -89,11 +89,22 @@ export default function CallCenter() {
   });
 
   const pianosByCustomer = new Map<number, PianoType>();
-  pianos?.forEach((p) => {
-    if (!pianosByCustomer.has(p.customerId)) {
-      pianosByCustomer.set(p.customerId, p);
-    }
-  });
+  const customersWithAllInactivePianos = new Set<number>();
+  if (pianos) {
+    const customerPianoMap = new Map<number, PianoType[]>();
+    pianos.forEach((p) => {
+      if (!customerPianoMap.has(p.customerId)) customerPianoMap.set(p.customerId, []);
+      customerPianoMap.get(p.customerId)!.push(p);
+    });
+    customerPianoMap.forEach((pianosArr, custId) => {
+      const activePiano = pianosArr.find(p => p.isActive !== false);
+      if (activePiano) {
+        pianosByCustomer.set(custId, activePiano);
+      } else if (pianosArr.length > 0) {
+        customersWithAllInactivePianos.add(custId);
+      }
+    });
+  }
 
   const nextAppointmentMap = new Map<number, string>();
   appointments
@@ -119,6 +130,7 @@ export default function CallCenter() {
 
   const sorted = customers
     ?.filter((c) => {
+      if (customersWithAllInactivePianos.has(c.id)) return false;
       if (!search) return true;
       const s = search.toLowerCase();
       return (

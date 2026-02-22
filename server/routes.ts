@@ -234,6 +234,54 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/services/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getServiceRecord(id);
+      if (!existing) return res.status(404).json({ message: "Service record not found" });
+      const updateSchema = insertServiceRecordSchema.partial();
+      const parsed = updateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const record = await storage.updateServiceRecord(id, parsed.data);
+      if (!record) return res.status(404).json({ message: "Service record not found" });
+      const isTuning = (parsed.data.serviceType ?? existing.serviceType) === "tuning";
+      const wasTuning = existing.serviceType === "tuning";
+      if (isTuning || wasTuning) {
+        const pianoId = record.pianoId ?? existing.pianoId;
+        if (pianoId) {
+          await storage.syncPianoLastTuned(pianoId);
+          const piano = await storage.getPiano(pianoId);
+          if (piano) await storage.syncCustomerFromPianos(piano.customerId);
+        }
+      }
+      res.json(record);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/services/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getServiceRecord(id);
+      if (!existing) return res.status(404).json({ message: "Service record not found" });
+      const deleted = await storage.deleteServiceRecord(id);
+      if (!deleted) return res.status(404).json({ message: "Service record not found" });
+      if (existing.serviceType === "tuning" && existing.pianoId) {
+        await storage.syncPianoLastTuned(existing.pianoId);
+        const piano = await storage.getPiano(existing.pianoId);
+        if (piano) await storage.syncCustomerFromPianos(piano.customerId);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/pianos/:id/photos", upload.array("photos", 10), async (req, res) => {
     try {
       const pianoId = parseInt(req.params.id as string);

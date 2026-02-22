@@ -30,6 +30,10 @@ export interface IStorage {
   getServiceRecords(customerId: number): Promise<ServiceRecord[]>;
   getServiceRecordsByPiano(pianoId: number): Promise<ServiceRecord[]>;
   createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord>;
+  getServiceRecord(id: number): Promise<ServiceRecord | undefined>;
+  updateServiceRecord(id: number, data: Partial<InsertServiceRecord>): Promise<ServiceRecord | undefined>;
+  deleteServiceRecord(id: number): Promise<boolean>;
+  syncPianoLastTuned(pianoId: number): Promise<void>;
   getAppointments(): Promise<Appointment[]>;
   getAppointmentsByCustomer(customerId: number): Promise<Appointment[]>;
   getAppointment(id: number): Promise<Appointment | undefined>;
@@ -131,6 +135,25 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async getServiceRecord(id: number): Promise<ServiceRecord | undefined> {
+    const [record] = await db.select().from(serviceRecords).where(eq(serviceRecords.id, id));
+    return record;
+  }
+
+  async updateServiceRecord(id: number, data: Partial<InsertServiceRecord>): Promise<ServiceRecord | undefined> {
+    const [updated] = await db
+      .update(serviceRecords)
+      .set(data)
+      .where(eq(serviceRecords.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteServiceRecord(id: number): Promise<boolean> {
+    const result = await db.delete(serviceRecords).where(eq(serviceRecords.id, id)).returning();
+    return result.length > 0;
+  }
+
   async getAllPianos(): Promise<Piano[]> {
     return db.select().from(pianos).orderBy(pianos.createdAt);
   }
@@ -163,18 +186,40 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
+  async syncPianoLastTuned(pianoId: number): Promise<void> {
+    const records = await this.getServiceRecordsByPiano(pianoId);
+    const tuningRecords = records.filter(r => r.serviceType === "tuning");
+    let mostRecentDate: Date | null = null;
+    let mostRecentStr: string | null = null;
+    for (const r of tuningRecords) {
+      if (!r.serviceDate) continue;
+      const parts = r.serviceDate.split("/");
+      if (parts.length === 3) {
+        let year = parseInt(parts[2]);
+        if (year < 100) year += 2000;
+        const d = new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+        if (!mostRecentDate || d > mostRecentDate) {
+          mostRecentDate = d;
+          mostRecentStr = r.serviceDate;
+        }
+      }
+    }
+    await this.updatePiano(pianoId, { lastTuned: mostRecentStr });
+  }
+
   async syncCustomerFromPianos(customerId: number): Promise<void> {
     const customerPianos = await this.getPianos(customerId);
-    if (customerPianos.length === 0) {
+    const activePianos = customerPianos.filter(p => p.isActive !== false);
+    if (activePianos.length === 0) {
       await this.updateCustomer(customerId, { pianoType: null, lastTuned: null });
       return;
     }
-    const pianoTypes = customerPianos.map(p => [p.make, p.model, p.pianoType].filter(Boolean).join(" ")).filter(Boolean);
+    const pianoTypes = activePianos.map(p => [p.make, p.model, p.pianoType].filter(Boolean).join(" ")).filter(Boolean);
     const pianoType = pianoTypes.join(", ") || null;
 
     let mostRecentTuned: string | null = null;
     let mostRecentDate: Date | null = null;
-    for (const p of customerPianos) {
+    for (const p of activePianos) {
       if (!p.lastTuned) continue;
       const parts = p.lastTuned.split("/");
       if (parts.length === 3) {

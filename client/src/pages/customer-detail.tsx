@@ -40,6 +40,8 @@ import {
   Calendar,
   Clock,
   CheckCircle,
+  EyeOff,
+  Eye,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -73,6 +75,7 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [showServiceDialog, setShowServiceDialog] = useState(false);
+  const [editingServiceId, setEditingServiceId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<Piano>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [serviceForm, setServiceForm] = useState({
@@ -86,13 +89,32 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
     queryKey: ["/api/pianos", piano.id, "services"],
   });
 
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/pianos", piano.id, "services"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/pianos"] });
+  };
+
   const updatePianoMutation = useMutation({
     mutationFn: (data: Partial<Piano>) =>
       apiRequest("PATCH", `/api/pianos/${piano.id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
+      invalidateAll();
       setIsEditing(false);
       toast({ title: "Piano updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update piano", variant: "destructive" });
+    },
+  });
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/pianos/${piano.id}`, { isActive: !piano.isActive }),
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: piano.isActive ? "Piano marked inactive" : "Piano marked active" });
     },
     onError: () => {
       toast({ title: "Failed to update piano", variant: "destructive" });
@@ -102,7 +124,7 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
   const deletePianoMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/pianos/${piano.id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
+      invalidateAll();
       toast({ title: "Piano removed" });
     },
     onError: () => {
@@ -114,15 +136,39 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
     mutationFn: (data: any) =>
       apiRequest("POST", `/api/pianos/${piano.id}/services`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/pianos", piano.id, "services"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      invalidateAll();
       setShowServiceDialog(false);
       setServiceForm({ serviceDate: "", serviceType: "tuning", notes: "", cost: "" });
       toast({ title: "Service record added" });
     },
     onError: () => {
       toast({ title: "Failed to add service record", variant: "destructive" });
+    },
+  });
+
+  const updateServiceMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      apiRequest("PATCH", `/api/services/${id}`, data),
+    onSuccess: () => {
+      invalidateAll();
+      setEditingServiceId(null);
+      setShowServiceDialog(false);
+      toast({ title: "Service record updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update service record", variant: "destructive" });
+    },
+  });
+
+  const deleteServiceMutation = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest("DELETE", `/api/services/${id}`),
+    onSuccess: () => {
+      invalidateAll();
+      toast({ title: "Service record deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete service record", variant: "destructive" });
     },
   });
 
@@ -167,24 +213,69 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
     setIsEditing(true);
   };
 
+  const startEditingService = (record: ServiceRecord) => {
+    setServiceForm({
+      serviceDate: record.serviceDate,
+      serviceType: record.serviceType,
+      notes: record.notes || "",
+      cost: record.cost || "",
+    });
+    setEditingServiceId(record.id);
+    setShowServiceDialog(true);
+  };
+
+  const openAddService = () => {
+    setServiceForm({
+      serviceDate: new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }),
+      serviceType: "tuning",
+      notes: "",
+      cost: "",
+    });
+    setEditingServiceId(null);
+    setShowServiceDialog(true);
+  };
+
+  const handleServiceSubmit = () => {
+    if (editingServiceId) {
+      updateServiceMutation.mutate({ id: editingServiceId, data: serviceForm });
+    } else {
+      addServiceMutation.mutate(serviceForm);
+    }
+  };
+
+  const isInactive = piano.isActive === false;
   const pianoLabel = [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || "Unnamed Piano";
 
   return (
-    <Card data-testid={`piano-card-${piano.id}`}>
+    <Card data-testid={`piano-card-${piano.id}`} className={isInactive ? "opacity-60" : ""}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
             <Music className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <CardTitle className="text-base truncate" data-testid={`piano-name-${piano.id}`}>{pianoLabel}</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base truncate" data-testid={`piano-name-${piano.id}`}>{pianoLabel}</CardTitle>
+              {isInactive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
+            </div>
             {piano.year && <p className="text-xs text-muted-foreground">Year: {piano.year}</p>}
           </div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          {getStatusBadge(piano.lastTuned)}
+          {!isInactive && getStatusBadge(piano.lastTuned)}
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={startEditing} data-testid={`button-edit-piano-${piano.id}`}>
             <Edit className="h-3 w-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={() => toggleActiveMutation.mutate()}
+            disabled={toggleActiveMutation.isPending}
+            title={isInactive ? "Mark Active" : "Mark Inactive"}
+            data-testid={`button-toggle-active-${piano.id}`}
+          >
+            {isInactive ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
           </Button>
           <Button
             variant="ghost"
@@ -286,7 +377,7 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
           </div>
         )}
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <input
             ref={fileInputRef}
             type="file"
@@ -328,75 +419,105 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
         <div className="border-t pt-3">
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-medium">Service History</p>
-            <Dialog open={showServiceDialog} onOpenChange={setShowServiceDialog}>
-              <DialogTrigger asChild>
-                <Button size="sm" variant="outline" className="text-xs h-7" data-testid={`button-add-service-${piano.id}`}>
-                  <Plus className="h-3 w-3 mr-1" /> Add Record
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Add Service Record</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 mt-2">
-                  <div className="space-y-2">
-                    <Label>Service Date (M/D/YY)</Label>
-                    <Input
-                      value={serviceForm.serviceDate}
-                      onChange={(e) => setServiceForm({ ...serviceForm, serviceDate: e.target.value })}
-                      placeholder="1/15/25"
-                      data-testid="input-service-date"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Service Type</Label>
-                    <Select value={serviceForm.serviceType} onValueChange={(v) => setServiceForm({ ...serviceForm, serviceType: v })}>
-                      <SelectTrigger data-testid="select-service-type"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="tuning">Tuning</SelectItem>
-                        <SelectItem value="repair">Repair</SelectItem>
-                        <SelectItem value="regulation">Regulation</SelectItem>
-                        <SelectItem value="voicing">Voicing</SelectItem>
-                        <SelectItem value="inspection">Inspection</SelectItem>
-                        <SelectItem value="other">Other</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Cost</Label>
-                    <Input value={serviceForm.cost} onChange={(e) => setServiceForm({ ...serviceForm, cost: e.target.value })} placeholder="$150" data-testid="input-service-cost" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Notes</Label>
-                    <Textarea value={serviceForm.notes} onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })} placeholder="Service details..." data-testid="input-service-notes" />
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Button variant="secondary" onClick={() => setShowServiceDialog(false)}>Cancel</Button>
-                    <Button onClick={() => addServiceMutation.mutate(serviceForm)} disabled={addServiceMutation.isPending} data-testid="button-save-service">
-                      {addServiceMutation.isPending ? "Saving..." : "Save"}
-                    </Button>
-                  </div>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <Button size="sm" variant="outline" className="text-xs h-7" onClick={openAddService} data-testid={`button-add-service-${piano.id}`}>
+              <Plus className="h-3 w-3 mr-1" /> Add Record
+            </Button>
           </div>
           {!serviceRecords || serviceRecords.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-3">No service records yet</p>
           ) : (
             <div className="space-y-1.5">
               {serviceRecords.map((record) => (
-                <div key={record.id} className="flex items-center justify-between gap-2 p-2 rounded bg-muted/40 text-sm" data-testid={`service-record-${record.id}`}>
-                  <div className="min-w-0">
+                <div key={record.id} className="flex items-start justify-between gap-2 p-2 rounded bg-muted/40 text-sm" data-testid={`service-record-${record.id}`}>
+                  <div className="min-w-0 flex-1">
                     <span className="font-medium">{record.serviceType.charAt(0).toUpperCase() + record.serviceType.slice(1)}</span>
                     <span className="text-muted-foreground ml-2 text-xs">{record.serviceDate}</span>
-                    {record.notes && <p className="text-xs text-muted-foreground truncate mt-0.5">{record.notes}</p>}
+                    {record.cost && <span className="text-xs font-medium ml-2">{record.cost}</span>}
+                    {record.notes && <p className="text-xs text-muted-foreground mt-0.5">{record.notes}</p>}
                   </div>
-                  {record.cost && <span className="text-sm font-medium shrink-0">{record.cost}</span>}
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => startEditingService(record)}
+                      data-testid={`button-edit-service-${record.id}`}
+                    >
+                      <Edit className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-destructive"
+                      onClick={() => {
+                        if (confirm("Delete this service record?")) {
+                          deleteServiceMutation.mutate(record.id);
+                        }
+                      }}
+                      data-testid={`button-delete-service-${record.id}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </div>
+
+        <Dialog open={showServiceDialog} onOpenChange={(open) => {
+          setShowServiceDialog(open);
+          if (!open) setEditingServiceId(null);
+        }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{editingServiceId ? "Edit Service Record" : "Add Service Record"}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 mt-2">
+              <div className="space-y-2">
+                <Label>Service Date (M/D/YY)</Label>
+                <Input
+                  value={serviceForm.serviceDate}
+                  onChange={(e) => setServiceForm({ ...serviceForm, serviceDate: e.target.value })}
+                  placeholder="1/15/25"
+                  data-testid="input-service-date"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Service Type</Label>
+                <Select value={serviceForm.serviceType} onValueChange={(v) => setServiceForm({ ...serviceForm, serviceType: v })}>
+                  <SelectTrigger data-testid="select-service-type"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="tuning">Tuning</SelectItem>
+                    <SelectItem value="repair">Repair</SelectItem>
+                    <SelectItem value="regulation">Regulation</SelectItem>
+                    <SelectItem value="voicing">Voicing</SelectItem>
+                    <SelectItem value="inspection">Inspection</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Cost</Label>
+                <Input value={serviceForm.cost} onChange={(e) => setServiceForm({ ...serviceForm, cost: e.target.value })} placeholder="$150" data-testid="input-service-cost" />
+              </div>
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <Textarea value={serviceForm.notes} onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })} placeholder="Service details..." data-testid="input-service-notes" />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={() => { setShowServiceDialog(false); setEditingServiceId(null); }}>Cancel</Button>
+                <Button
+                  onClick={handleServiceSubmit}
+                  disabled={addServiceMutation.isPending || updateServiceMutation.isPending}
+                  data-testid="button-save-service"
+                >
+                  {(addServiceMutation.isPending || updateServiceMutation.isPending) ? "Saving..." : "Save"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
