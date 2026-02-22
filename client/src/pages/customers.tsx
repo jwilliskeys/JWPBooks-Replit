@@ -22,6 +22,11 @@ import {
   CalendarDays,
   Piano,
   SlidersHorizontal,
+  LayoutGrid,
+  List,
+  ArrowUp,
+  ArrowDown,
+  ArrowUpDown,
 } from "lucide-react";
 import type { Customer, Piano as PianoType } from "@shared/schema";
 
@@ -38,6 +43,15 @@ function getMonthsSince(dateStr: string | null | undefined): number | null {
   return (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
 }
 
+function parseDate(dateStr: string | null | undefined): Date | null {
+  if (!dateStr) return null;
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return null;
+  let year = parseInt(parts[2]);
+  if (year < 100) year += 2000;
+  return new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+}
+
 function getStatusBadge(dateStr: string | null | undefined) {
   const months = getMonthsSince(dateStr);
   if (months === null) return <Badge variant="secondary" className="no-default-active-elevate">No record</Badge>;
@@ -47,10 +61,24 @@ function getStatusBadge(dateStr: string | null | undefined) {
   return <Badge className="no-default-active-elevate bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
 }
 
+function getStatusText(dateStr: string | null | undefined): string {
+  const months = getMonthsSince(dateStr);
+  if (months === null) return "No record";
+  if (months >= 12) return "Overdue";
+  if (months >= 6) return "Due soon";
+  return "Recently Tuned";
+}
+
+type SortKey = "name" | "city" | "state" | "phone" | "email" | "pianoType" | "lastTuned" | "status" | "company";
+type SortDir = "asc" | "desc";
+
 export default function Customers() {
   const [search, setSearch] = useState("");
   const [cityFilter, setCityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [viewMode, setViewMode] = useState<"card" | "list">("card");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const { data: customers, isLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
@@ -103,6 +131,109 @@ export default function Customers() {
     });
   }, [customers, search, cityFilter, statusFilter]);
 
+  const sorted = useMemo(() => {
+    if (viewMode !== "list") return filtered;
+    return [...filtered].sort((a, b) => {
+      let cmp = 0;
+      const dir = sortDir === "asc" ? 1 : -1;
+      switch (sortKey) {
+        case "name": {
+          const aName = `${a.lastName} ${a.firstName}`.toLowerCase();
+          const bName = `${b.lastName} ${b.firstName}`.toLowerCase();
+          cmp = aName.localeCompare(bName);
+          break;
+        }
+        case "company": {
+          const aCo = (a.companyName || "").toLowerCase();
+          const bCo = (b.companyName || "").toLowerCase();
+          if (!aCo && !bCo) cmp = 0;
+          else if (!aCo) cmp = 1;
+          else if (!bCo) cmp = -1;
+          else cmp = aCo.localeCompare(bCo);
+          break;
+        }
+        case "city": {
+          const aCity = (a.city || "").toLowerCase();
+          const bCity = (b.city || "").toLowerCase();
+          if (!aCity && !bCity) cmp = 0;
+          else if (!aCity) cmp = 1;
+          else if (!bCity) cmp = -1;
+          else cmp = aCity.localeCompare(bCity);
+          break;
+        }
+        case "state": {
+          const aState = (a.state || "").toLowerCase();
+          const bState = (b.state || "").toLowerCase();
+          if (!aState && !bState) cmp = 0;
+          else if (!aState) cmp = 1;
+          else if (!bState) cmp = -1;
+          else cmp = aState.localeCompare(bState);
+          break;
+        }
+        case "phone": {
+          const aPhone = a.phone || "";
+          const bPhone = b.phone || "";
+          cmp = aPhone.localeCompare(bPhone);
+          break;
+        }
+        case "email": {
+          const aEmail = (a.email || "").toLowerCase();
+          const bEmail = (b.email || "").toLowerCase();
+          if (!aEmail && !bEmail) cmp = 0;
+          else if (!aEmail) cmp = 1;
+          else if (!bEmail) cmp = -1;
+          else cmp = aEmail.localeCompare(bEmail);
+          break;
+        }
+        case "pianoType": {
+          const aPiano = (a.pianoType || "").toLowerCase();
+          const bPiano = (b.pianoType || "").toLowerCase();
+          if (!aPiano && !bPiano) cmp = 0;
+          else if (!aPiano) cmp = 1;
+          else if (!bPiano) cmp = -1;
+          else cmp = aPiano.localeCompare(bPiano);
+          break;
+        }
+        case "lastTuned": {
+          const aDate = parseDate(a.lastTuned);
+          const bDate = parseDate(b.lastTuned);
+          if (!aDate && !bDate) cmp = 0;
+          else if (!aDate) cmp = 1;
+          else if (!bDate) cmp = -1;
+          else cmp = aDate.getTime() - bDate.getTime();
+          break;
+        }
+        case "status": {
+          const aMonths = getMonthsSince(a.lastTuned);
+          const bMonths = getMonthsSince(b.lastTuned);
+          const aPri = aMonths === null ? 999 : aMonths;
+          const bPri = bMonths === null ? 999 : bMonths;
+          cmp = bPri - aPri;
+          break;
+        }
+      }
+      return cmp * dir;
+    });
+  }, [filtered, viewMode, sortKey, sortDir]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  };
+
+  const SortIcon = ({ column }: { column: SortKey }) => {
+    if (sortKey !== column) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />;
+    return sortDir === "asc"
+      ? <ArrowUp className="h-3 w-3 ml-1" />
+      : <ArrowDown className="h-3 w-3 ml-1" />;
+  };
+
+  const displayList = viewMode === "list" ? sorted : filtered;
+
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -111,14 +242,36 @@ export default function Customers() {
           <p className="text-muted-foreground text-sm mt-1">
             {isLoading
               ? "Loading..."
-              : `${filtered.length} of ${customers?.length ?? 0} clients`}
+              : `${displayList.length} of ${customers?.length ?? 0} clients`}
           </p>
         </div>
-        <Link href="/customers/new">
-          <Button data-testid="button-add-customer">
-            <UserPlus className="h-4 w-4 mr-1 sm:mr-2" /> Add Client
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center border rounded-md" data-testid="view-toggle">
+            <Button
+              variant={viewMode === "card" ? "default" : "ghost"}
+              size="icon"
+              className="h-8 w-8 rounded-r-none"
+              onClick={() => setViewMode("card")}
+              data-testid="button-view-card"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "list" ? "default" : "ghost"}
+              size="icon"
+              className="h-8 w-8 rounded-l-none"
+              onClick={() => setViewMode("list")}
+              data-testid="button-view-list"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
+          <Link href="/customers/new">
+            <Button data-testid="button-add-customer">
+              <UserPlus className="h-4 w-4 mr-1 sm:mr-2" /> <span className="hidden sm:inline">Add Client</span>
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3 sm:flex-wrap">
@@ -172,7 +325,7 @@ export default function Customers() {
             </Card>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : displayList.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
@@ -184,9 +337,9 @@ export default function Customers() {
             </p>
           </CardContent>
         </Card>
-      ) : (
+      ) : viewMode === "card" ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((customer) => (
+          {displayList.map((customer) => (
             <Link key={customer.id} href={`/customers/${customer.id}`}>
               <Card className="hover-elevate cursor-pointer h-full" data-testid={`card-customer-${customer.id}`}>
                 <CardContent className="p-4 space-y-3">
@@ -249,6 +402,107 @@ export default function Customers() {
               </Card>
             </Link>
           ))}
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border bg-card" data-testid="list-view-table">
+          <div className="min-w-[900px]">
+            <div className="flex items-center border-b bg-muted/50 text-xs font-medium text-muted-foreground sticky top-0 z-10">
+              <button
+                className="flex items-center px-3 py-2.5 w-[200px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("name")}
+                data-testid="sort-name"
+              >
+                Name <SortIcon column="name" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 w-[130px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("phone")}
+                data-testid="sort-phone"
+              >
+                Phone <SortIcon column="phone" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 w-[180px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("email")}
+                data-testid="sort-email"
+              >
+                Email <SortIcon column="email" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 w-[120px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("city")}
+                data-testid="sort-city"
+              >
+                City <SortIcon column="city" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 w-[60px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("state")}
+                data-testid="sort-state"
+              >
+                ST <SortIcon column="state" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 flex-1 min-w-[140px] hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("pianoType")}
+                data-testid="sort-piano"
+              >
+                Piano <SortIcon column="pianoType" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 w-[100px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("lastTuned")}
+                data-testid="sort-last-tuned"
+              >
+                Last Tuned <SortIcon column="lastTuned" />
+              </button>
+              <button
+                className="flex items-center px-3 py-2.5 w-[110px] shrink-0 hover:text-foreground transition-colors text-left"
+                onClick={() => handleSort("status")}
+                data-testid="sort-status"
+              >
+                Status <SortIcon column="status" />
+              </button>
+            </div>
+            <div>
+              {sorted.map((customer) => (
+                <Link key={customer.id} href={`/customers/${customer.id}`}>
+                  <div
+                    className="flex items-center border-b last:border-b-0 hover:bg-muted/50 cursor-pointer transition-colors text-sm"
+                    data-testid={`row-customer-${customer.id}`}
+                  >
+                    <div className="px-3 py-2.5 w-[200px] shrink-0 font-medium truncate" data-testid={`text-customer-name-${customer.id}`}>
+                      {customer.firstName} {customer.lastName}
+                      {customer.companyName && (
+                        <span className="text-xs text-muted-foreground ml-1">({customer.companyName})</span>
+                      )}
+                    </div>
+                    <div className="px-3 py-2.5 w-[130px] shrink-0 text-muted-foreground truncate">
+                      {customer.phone || "—"}
+                    </div>
+                    <div className="px-3 py-2.5 w-[180px] shrink-0 text-muted-foreground truncate">
+                      {customer.email || "—"}
+                    </div>
+                    <div className="px-3 py-2.5 w-[120px] shrink-0 text-muted-foreground truncate">
+                      {customer.city || "—"}
+                    </div>
+                    <div className="px-3 py-2.5 w-[60px] shrink-0 text-muted-foreground">
+                      {customer.state || "—"}
+                    </div>
+                    <div className="px-3 py-2.5 flex-1 min-w-[140px] text-muted-foreground truncate">
+                      {customer.pianoType || "—"}
+                    </div>
+                    <div className="px-3 py-2.5 w-[100px] shrink-0 text-muted-foreground">
+                      {customer.lastTuned || "—"}
+                    </div>
+                    <div className="px-3 py-2.5 w-[110px] shrink-0">
+                      {getStatusBadge(customer.lastTuned)}
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
         </div>
       )}
     </div>
