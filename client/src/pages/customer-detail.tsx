@@ -42,6 +42,7 @@ import {
   CheckCircle,
   EyeOff,
   Eye,
+  PhoneCall,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -590,6 +591,18 @@ export default function CustomerDetail() {
     },
   });
 
+  const markContactedMutation = useMutation({
+    mutationFn: (date: string) =>
+      apiRequest("PATCH", `/api/customers/${customerId}`, { lastContacted: date }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      toast({ title: "Last contacted date updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update", variant: "destructive" });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/customers/${customerId}`),
     onSuccess: () => {
@@ -818,6 +831,50 @@ export default function CustomerDetail() {
                   </div>
                 </div>
               )}
+            </div>
+            <div className="flex items-center gap-3 pt-2 border-t">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted shrink-0">
+                <PhoneCall className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-muted-foreground">Last Contacted</p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="text-sm font-medium" data-testid="text-last-contacted">
+                    {customer.lastContacted || customer.lastTuned || "Never"}
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-xs px-2"
+                      onClick={() => {
+                        const now = new Date();
+                        const dateStr = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear().toString().slice(-2)}`;
+                        markContactedMutation.mutate(dateStr);
+                      }}
+                      disabled={markContactedMutation.isPending}
+                      data-testid="button-mark-contacted-today"
+                    >
+                      Today
+                    </Button>
+                    <Input
+                      type="text"
+                      placeholder="M/D/YY"
+                      className="h-6 text-xs w-20 px-1.5"
+                      data-testid="input-last-contacted-date"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const val = (e.target as HTMLInputElement).value.trim();
+                          if (val) {
+                            markContactedMutation.mutate(val);
+                            (e.target as HTMLInputElement).value = "";
+                          }
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
             {customer.personalNotes && (
               <div className="flex items-start gap-3 pt-2 border-t">
