@@ -37,7 +37,7 @@ export function AppSidebar() {
           </div>
           <div className="flex flex-col">
             <span className="font-semibold tracking-tight text-[22px]">John Willis Piano</span>
-            <span className="text-xs text-muted-foreground">Customer Manager</span>
+            <span className="text-muted-foreground text-[16px]">Piano Client Software</span>
           </div>
         </Link>
       </SidebarHeader>
