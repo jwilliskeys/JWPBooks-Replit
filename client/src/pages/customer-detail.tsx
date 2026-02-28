@@ -45,6 +45,7 @@ import {
   PhoneCall,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer, Piano, ServiceRecord, Appointment } from "@shared/schema";
 import { Link } from "wouter";
@@ -789,7 +790,7 @@ export default function CustomerDetail() {
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Phone</p>
-                    <a href={`tel:${customer.phone}`} className="text-sm font-medium" data-testid="text-phone">{customer.phone}</a>
+                    <a href={`tel:${customer.phone}`} className="text-sm font-medium" data-testid="text-phone">{formatPhone(customer.phone)}</a>
                   </div>
                 </div>
               )}

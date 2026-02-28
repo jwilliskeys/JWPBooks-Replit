@@ -15,6 +15,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { queryClient } from "@/lib/queryClient";
+import { formatPhone } from "@/lib/utils";
 import {
   Phone,
   CalendarDays,
@@ -262,7 +263,7 @@ export default function CallCenter() {
                     <div className="flex items-center gap-3 text-xs text-muted-foreground mt-0.5 flex-wrap">
                       {customer.phone && (
                         <span className="flex items-center gap-1">
-                          <Phone className="h-3 w-3 shrink-0" /> {customer.phone}
+                          <Phone className="h-3 w-3 shrink-0" /> {formatPhone(customer.phone)}
                         </span>
                       )}
                       {customer.city && <span>{customer.city}, {customer.state}</span>}

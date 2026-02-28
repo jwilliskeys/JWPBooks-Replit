@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
+import { formatPhone } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -388,7 +389,7 @@ export default function Customers() {
                     {customer.phone && (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
                         <Phone className="h-3 w-3 shrink-0" />
-                        <span>{customer.phone}</span>
+                        <span>{formatPhone(customer.phone)}</span>
                       </div>
                     )}
                     {customer.email && (
@@ -478,7 +479,7 @@ export default function Customers() {
                       )}
                     </div>
                     <div className="px-3 py-2.5 w-[130px] shrink-0 text-muted-foreground truncate">
-                      {customer.phone || "—"}
+                      {customer.phone ? formatPhone(customer.phone) : "—"}
                     </div>
                     <div className="px-3 py-2.5 w-[180px] shrink-0 text-muted-foreground truncate">
                       {customer.email || "—"}

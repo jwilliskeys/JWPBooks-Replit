@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { Trip, TripAppointment, Customer, Piano } from "@shared/schema";
 import {
@@ -576,7 +577,7 @@ export default function SlcSchedule() {
                             {cust?.phone && (
                               <p className="text-muted-foreground flex items-center gap-1">
                                 <Phone className="h-3 w-3 shrink-0" />
-                                <span>{cust.phone}</span>
+                                <span>{formatPhone(cust.phone)}</span>
                               </p>
                             )}
                             {pianoStr && (
