@@ -24,11 +24,13 @@ import {
   Search,
   AlertCircle,
   User,
+  Phone,
+  Music,
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Trip, TripAppointment, Customer } from "@shared/schema";
+import type { Trip, TripAppointment, Customer, Piano } from "@shared/schema";
 import {
   getNearbyCities,
   areSameCity,
@@ -115,9 +117,18 @@ export default function SlcSchedule() {
     enabled: !!activeTrip,
   });
 
+  const { data: allPianos } = useQuery<Piano[]>({
+    queryKey: ["/api/pianos"],
+  });
+
   const customerMap = useMemo(
     () => new Map(customers?.map((c) => [c.id, c]) ?? []),
     [customers]
+  );
+
+  const pianoMap = useMemo(
+    () => new Map(allPianos?.map((p) => [p.id, p]) ?? []),
+    [allPianos]
   );
 
   const createTripMutation = useMutation({
@@ -477,7 +488,11 @@ export default function SlcSchedule() {
                   ) : (
                     dayAppts.map((appt) => {
                       const cust = customerMap.get(appt.customerId);
+                      const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
                       const isCompleted = appt.status === "completed";
+                      const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
+                      const addressStr = addressParts.length > 0 ? addressParts.join(", ") : "";
+                      const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
                       return (
                         <div
                           key={appt.id}
@@ -522,6 +537,24 @@ export default function SlcSchedule() {
                             </Link>
                           ) : (
                             <span className="font-medium">Unknown</span>
+                          )}
+                          {addressStr && (
+                            <p className="text-muted-foreground flex items-start gap-1">
+                              <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+                              <span>{addressStr}</span>
+                            </p>
+                          )}
+                          {cust?.phone && (
+                            <p className="text-muted-foreground flex items-center gap-1">
+                              <Phone className="h-3 w-3 shrink-0" />
+                              <span>{cust.phone}</span>
+                            </p>
+                          )}
+                          {pianoStr && (
+                            <p className="text-muted-foreground flex items-center gap-1">
+                              <Music className="h-3 w-3 shrink-0" />
+                              <span>{pianoStr}</span>
+                            </p>
                           )}
                           {appt.servicesRequested && (
                             <p className="text-muted-foreground">{appt.servicesRequested}</p>
