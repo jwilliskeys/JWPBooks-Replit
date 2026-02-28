@@ -20,9 +20,12 @@ Preferred communication style: Simple, everyday language.
 
 ### Pages
 - `/` — Dashboard with stats (total clients, overdue tunings, etc.)
-- `/customers` — Client list with search and filtering
+- `/customers` — Client list with search and filtering (card + sortable list views)
 - `/customers/new` — Create new client form
-- `/customers/:id` — Client detail with multiple piano profiles and per-piano service records
+- `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, and last contacted tracking
+- `/appointments` — Appointment list with search, sort, and status management
+- `/calendar` — Monthly calendar grid showing appointments and personal notes; completed appointments faded; click dates to add notes
+- `/slc-schedule` — Trip planner for SLC visits; day-by-day itinerary targeting 4 × 2-hour appointments/day grouped by service area; deletable/recreatable trips
 - `/call-center` — Call center with contact priority list and last contacted tracking
 - `/sync` — Google Sheets sync interface
 
@@ -41,6 +44,9 @@ Preferred communication style: Simple, everyday language.
   - `GET /api/pianos` — List all pianos
   - `GET/POST/PATCH/DELETE /api/appointments` — Appointment CRUD
   - `GET /api/customers/:id/appointments` — Appointments per client
+  - `GET/POST /api/calendar-notes`, `PATCH/DELETE /api/calendar-notes/:id` — Personal calendar notes
+  - `GET/POST /api/trips`, `GET/PATCH/DELETE /api/trips/:id` — Trip CRUD
+  - `GET/POST /api/trips/:id/appointments`, `PATCH/DELETE /api/trip-appointments/:id` — Trip appointment CRUD
   - `POST /api/sync` — Sync data from Google Sheets
 
 ### Data Storage
@@ -49,9 +55,12 @@ Preferred communication style: Simple, everyday language.
 - **Schema location**: `shared/schema.ts` (shared between client and server)
 - **Tables**:
   - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, lastContacted, createdAt
-  - `pianos` — id, customerId, make, model, pianoType, year, notes, photos (text[]), lastTuned, createdAt
+  - `pianos` — id, customerId, make, model, pianoType, year, notes, photos (text[]), lastTuned, isActive, createdAt
   - `service_records` — id, customerId, pianoId, serviceDate, serviceType, notes, cost, createdAt
   - `appointments` — id, customerId, pianoId, date, time, servicesRequested, priceEstimate, notes, isTuning, status, createdAt
+  - `calendar_notes` — id, date, title, notes, createdAt
+  - `trips` — id, name, startDate, endDate, notes, createdAt
+  - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, createdAt
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory
 - **Schema push**: Use `npm run db:push` to push schema changes directly
 

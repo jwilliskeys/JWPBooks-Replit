@@ -15,6 +15,8 @@ import CustomerForm from "@/pages/customer-form";
 import SyncPage from "@/pages/sync";
 import CallCenter from "@/pages/call-center";
 import AppointmentsPage from "@/pages/appointments";
+import CalendarPage from "@/pages/calendar";
+import SlcSchedule from "@/pages/slc-schedule";
 
 function Router() {
   return (
@@ -25,6 +27,8 @@ function Router() {
       <Route path="/customers/:id" component={CustomerDetail} />
       <Route path="/call-center" component={CallCenter} />
       <Route path="/appointments" component={AppointmentsPage} />
+      <Route path="/calendar" component={CalendarPage} />
+      <Route path="/slc-schedule" component={SlcSchedule} />
       <Route path="/sync" component={SyncPage} />
       <Route component={NotFound} />
     </Switch>

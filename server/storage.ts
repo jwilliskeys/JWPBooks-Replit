@@ -5,6 +5,9 @@ import {
   pianos,
   serviceRecords,
   appointments,
+  calendarNotes,
+  trips,
+  tripAppointments,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -13,6 +16,12 @@ import {
   type InsertServiceRecord,
   type Appointment,
   type InsertAppointment,
+  type CalendarNote,
+  type InsertCalendarNote,
+  type Trip,
+  type InsertTrip,
+  type TripAppointment,
+  type InsertTripAppointment,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -40,6 +49,19 @@ export interface IStorage {
   createAppointment(appointment: InsertAppointment): Promise<Appointment>;
   updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined>;
   deleteAppointment(id: number): Promise<boolean>;
+  getCalendarNotes(): Promise<CalendarNote[]>;
+  createCalendarNote(note: InsertCalendarNote): Promise<CalendarNote>;
+  updateCalendarNote(id: number, data: Partial<InsertCalendarNote>): Promise<CalendarNote | undefined>;
+  deleteCalendarNote(id: number): Promise<boolean>;
+  getTrips(): Promise<Trip[]>;
+  getTrip(id: number): Promise<Trip | undefined>;
+  createTrip(trip: InsertTrip): Promise<Trip>;
+  updateTrip(id: number, data: Partial<InsertTrip>): Promise<Trip | undefined>;
+  deleteTrip(id: number): Promise<boolean>;
+  getTripAppointments(tripId: number): Promise<TripAppointment[]>;
+  createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment>;
+  updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
+  deleteTripAppointment(id: number): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -205,6 +227,69 @@ export class DatabaseStorage implements IStorage {
       }
     }
     await this.updatePiano(pianoId, { lastTuned: mostRecentStr });
+  }
+
+  async getCalendarNotes(): Promise<CalendarNote[]> {
+    return db.select().from(calendarNotes).orderBy(calendarNotes.date);
+  }
+
+  async createCalendarNote(note: InsertCalendarNote): Promise<CalendarNote> {
+    const [created] = await db.insert(calendarNotes).values(note).returning();
+    return created;
+  }
+
+  async updateCalendarNote(id: number, data: Partial<InsertCalendarNote>): Promise<CalendarNote | undefined> {
+    const [updated] = await db.update(calendarNotes).set(data).where(eq(calendarNotes.id, id)).returning();
+    return updated;
+  }
+
+  async deleteCalendarNote(id: number): Promise<boolean> {
+    const result = await db.delete(calendarNotes).where(eq(calendarNotes.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getTrips(): Promise<Trip[]> {
+    return db.select().from(trips).orderBy(trips.createdAt);
+  }
+
+  async getTrip(id: number): Promise<Trip | undefined> {
+    const [trip] = await db.select().from(trips).where(eq(trips.id, id));
+    return trip;
+  }
+
+  async createTrip(trip: InsertTrip): Promise<Trip> {
+    const [created] = await db.insert(trips).values(trip).returning();
+    return created;
+  }
+
+  async updateTrip(id: number, data: Partial<InsertTrip>): Promise<Trip | undefined> {
+    const [updated] = await db.update(trips).set(data).where(eq(trips.id, id)).returning();
+    return updated;
+  }
+
+  async deleteTrip(id: number): Promise<boolean> {
+    await db.delete(tripAppointments).where(eq(tripAppointments.tripId, id));
+    const result = await db.delete(trips).where(eq(trips.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getTripAppointments(tripId: number): Promise<TripAppointment[]> {
+    return db.select().from(tripAppointments).where(eq(tripAppointments.tripId, tripId)).orderBy(tripAppointments.date, tripAppointments.time);
+  }
+
+  async createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment> {
+    const [created] = await db.insert(tripAppointments).values(appointment).returning();
+    return created;
+  }
+
+  async updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined> {
+    const [updated] = await db.update(tripAppointments).set(data).where(eq(tripAppointments.id, id)).returning();
+    return updated;
+  }
+
+  async deleteTripAppointment(id: number): Promise<boolean> {
+    const result = await db.delete(tripAppointments).where(eq(tripAppointments.id, id)).returning();
+    return result.length > 0;
   }
 
   async syncCustomerFromPianos(customerId: number): Promise<void> {
