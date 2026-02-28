@@ -531,8 +531,8 @@ export default function SlcSchedule() {
                     </Badge>
                   )}
                   {dayRevenue > 0 && (
-                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-                      <DollarSign className="h-3 w-3" />${dayRevenue.toFixed(0)}
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Expected ${dayRevenue.toFixed(0)}
                     </div>
                   )}
                 </div>
