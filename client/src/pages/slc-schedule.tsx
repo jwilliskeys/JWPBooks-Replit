@@ -440,8 +440,8 @@ export default function SlcSchedule() {
         </div>
       </div>
 
-      <div className="overflow-x-auto pb-4 -mx-4 px-4">
-        <div className="flex gap-3" style={{ minWidth: `${dates.length * 220}px` }}>
+      <div className="pb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {dates.map((dateStr) => {
             const dayDate = parseDateStr(dateStr);
             const dayNameShort = getDayName(dayDate);
@@ -452,7 +452,7 @@ export default function SlcSchedule() {
             return (
               <div
                 key={dateStr}
-                className="flex-1 min-w-[200px] max-w-[280px] flex flex-col border rounded-lg bg-card"
+                className="flex flex-col border rounded-lg bg-card"
                 data-testid={`column-day-${dateStr}`}
               >
                 <div className="p-3 border-b bg-muted/30 rounded-t-lg">
