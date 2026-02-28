@@ -1,33 +1,38 @@
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Slider } from "@/components/ui/slider";
 import { Link } from "wouter";
 import {
   Users,
   Piano,
   Clock,
-  AlertTriangle,
   ArrowRight,
   CalendarDays,
   MapPin,
   Calendar,
+  AlertTriangle,
 } from "lucide-react";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
+import {
+  getServiceArea,
+  getServiceRegion,
+  SERVICE_REGIONS,
+} from "@/lib/scheduling";
 
 function StatCard({
   title,
   value,
   icon: Icon,
-  description,
   loading,
   href,
 }: {
   title: string;
   value: string | number;
   icon: any;
-  description: string;
   loading: boolean;
   href: string;
 }) {
@@ -71,7 +76,12 @@ function getMonthsSinceLastTuned(dateStr: string | null | undefined): number | n
   return months;
 }
 
+const ATTENTION_THRESHOLDS = [12, 9, 6];
+const ATTENTION_LABELS = ["Low", "Medium", "High"];
+
 export default function Dashboard() {
+  const [attentionLevel, setAttentionLevel] = useState(0);
+
   const { data: customers, isLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
   });
@@ -85,38 +95,56 @@ export default function Dashboard() {
   });
 
   const totalCustomers = customers?.length ?? 0;
-
-  const scheduledTunings = allAppointments?.filter((a) => a.isTuning && a.status === "scheduled") ?? [];
-
-  const overdueCustomers = customers?.filter((c) => {
-    const months = getMonthsSinceLastTuned(c.lastTuned);
-    return months !== null && months >= 12;
-  }) ?? [];
-
   const totalPianos = allPianos?.length ?? 0;
 
-  const needsAttention = customers
-    ?.filter((c) => {
+  const scheduledAppointments = useMemo(() =>
+    allAppointments?.filter((a) => a.status === "scheduled") ?? [],
+    [allAppointments]
+  );
+
+  const overdueCustomers = useMemo(() =>
+    customers?.filter((c) => {
       const months = getMonthsSinceLastTuned(c.lastTuned);
-      return months !== null && months >= 6;
-    })
-    .sort((a, b) => {
-      const ma = getMonthsSinceLastTuned(a.lastTuned) ?? 0;
-      const mb = getMonthsSinceLastTuned(b.lastTuned) ?? 0;
-      return mb - ma;
-    })
-    .slice(0, 8) ?? [];
+      return months !== null && months >= 12;
+    }) ?? [],
+    [customers]
+  );
 
-  const cityCounts = customers?.reduce<Record<string, number>>((acc, c) => {
-    if (c.city) {
-      acc[c.city] = (acc[c.city] || 0) + 1;
+  const threshold = ATTENTION_THRESHOLDS[attentionLevel];
+  const needsAttention = useMemo(() =>
+    customers
+      ?.filter((c) => {
+        const months = getMonthsSinceLastTuned(c.lastTuned);
+        return months !== null && months >= threshold;
+      })
+      .sort((a, b) => {
+        const ma = getMonthsSinceLastTuned(a.lastTuned) ?? 0;
+        const mb = getMonthsSinceLastTuned(b.lastTuned) ?? 0;
+        return mb - ma;
+      })
+      .slice(0, 10) ?? [],
+    [customers, threshold]
+  );
+
+  const serviceAreaCounts = useMemo(() => {
+    const counts: Record<string, Record<string, number>> = {};
+    customers?.forEach((c) => {
+      if (!c.city) return;
+      const region = getServiceRegion(c.city);
+      const area = getServiceArea(c.city);
+      if (!counts[region]) counts[region] = {};
+      counts[region][area] = (counts[region][area] || 0) + 1;
+    });
+    return counts;
+  }, [customers]);
+
+  const regionTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const [region, areas] of Object.entries(serviceAreaCounts)) {
+      totals[region] = Object.values(areas).reduce((s, c) => s + c, 0);
     }
-    return acc;
-  }, {}) ?? {};
-
-  const topCities = Object.entries(cityCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
+    return totals;
+  }, [serviceAreaCounts]);
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
@@ -139,7 +167,6 @@ export default function Dashboard() {
           title="Total Clients"
           value={totalCustomers}
           icon={Users}
-          description="Active client accounts"
           loading={isLoading}
           href="/customers"
         />
@@ -147,85 +174,195 @@ export default function Dashboard() {
           title="Total Pianos"
           value={totalPianos}
           icon={Piano}
-          description="Pianos under service"
           loading={pianosLoading}
           href="/customers"
         />
-        <StatCard
-          title="Scheduled Appointments"
-          value={scheduledTunings.length}
-          icon={Calendar}
-          description="Upcoming appointments"
-          loading={appointmentsLoading}
-          href="/appointments"
-        />
-        <StatCard
-          title="Overdue"
-          value={overdueCustomers.length}
-          icon={AlertTriangle}
-          description="Over 12 months since last tuning"
-          loading={isLoading}
-          href="/call-center"
-        />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0">
-            <CardTitle className="text-base font-semibold">Needs Attention</CardTitle>
-            <Link href="/customers">
-              <Button variant="ghost" size="sm" data-testid="link-view-all-customers">
-                View All <ArrowRight className="ml-1 h-3 w-3" />
-              </Button>
-            </Link>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <Calendar className="h-4 w-4" /> Appointments & Overdue
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium flex items-center gap-1.5">
+                  <span className="flex h-5 w-5 items-center justify-center rounded bg-primary/10 text-primary text-xs font-bold">
+                    {scheduledAppointments.length}
+                  </span>
+                  Scheduled
+                </h3>
+                <Link href="/appointments">
+                  <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-view-appointments">
+                    View All <ArrowRight className="ml-1 h-3 w-3" />
+                  </Button>
+                </Link>
+              </div>
+              {appointmentsLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 w-full" />
+                  ))}
+                </div>
+              ) : scheduledAppointments.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-3 text-center">No scheduled appointments</p>
+              ) : (
+                <div className="space-y-1">
+                  {scheduledAppointments.slice(0, 5).map((appt) => {
+                    const cust = customers?.find((c) => c.id === appt.customerId);
+                    return (
+                      <Link key={appt.id} href={cust ? `/customers/${cust.id}` : "/appointments"}>
+                        <div className="flex items-center justify-between gap-2 p-2 rounded-md hover:bg-accent text-xs cursor-pointer" data-testid={`scheduled-appt-${appt.id}`}>
+                          <span className="font-medium truncate">
+                            {cust ? `${cust.firstName} ${cust.lastName}` : "Unknown"}
+                          </span>
+                          <span className="text-muted-foreground shrink-0">
+                            {appt.date} {appt.time && `· ${appt.time}`}
+                          </span>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                  {scheduledAppointments.length > 5 && (
+                    <p className="text-xs text-muted-foreground text-center pt-1">+{scheduledAppointments.length - 5} more</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium flex items-center gap-1.5">
+                  <span className="flex h-5 w-5 items-center justify-center rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-bold">
+                    {overdueCustomers.length}
+                  </span>
+                  Overdue
+                  <span className="text-xs text-muted-foreground font-normal">12+ months</span>
+                </h3>
+                <Link href="/call-center">
+                  <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-view-overdue">
+                    Call Center <ArrowRight className="ml-1 h-3 w-3" />
+                  </Button>
+                </Link>
+              </div>
+              {isLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-8 w-full" />
+                  ))}
+                </div>
+              ) : overdueCustomers.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-3 text-center">All clients up to date</p>
+              ) : (
+                <div className="space-y-1">
+                  {overdueCustomers.slice(0, 5).map((customer) => {
+                    const months = getMonthsSinceLastTuned(customer.lastTuned);
+                    return (
+                      <Link key={customer.id} href={`/customers/${customer.id}`}>
+                        <div className="flex items-center justify-between gap-2 p-2 rounded-md hover:bg-accent text-xs cursor-pointer" data-testid={`overdue-customer-${customer.id}`}>
+                          <span className="font-medium truncate">
+                            {customer.firstName} {customer.lastName}
+                          </span>
+                          <Badge variant="outline" className="text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-600 text-[10px] shrink-0">
+                            {months}mo
+                          </Badge>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                  {overdueCustomers.length > 5 && (
+                    <p className="text-xs text-muted-foreground text-center pt-1">+{overdueCustomers.length - 5} more</p>
+                  )}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4" /> Needs Attention
+              </CardTitle>
+              <Link href="/customers">
+                <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-view-all-customers">
+                  View All <ArrowRight className="ml-1 h-3 w-3" />
+                </Button>
+              </Link>
+            </div>
+            <div className="pt-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
+                <span>Attention Level</span>
+                <span className="font-medium text-foreground">{ATTENTION_LABELS[attentionLevel]} ({threshold}+ months)</span>
+              </div>
+              <Slider
+                value={[attentionLevel]}
+                onValueChange={([v]) => setAttentionLevel(v)}
+                min={0}
+                max={2}
+                step={1}
+                className="w-full"
+                data-testid="slider-attention-level"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                <span>Low</span>
+                <span>Med</span>
+                <span>High</span>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-14 w-full" />
+                  <Skeleton key={i} className="h-10 w-full" />
                 ))}
               </div>
             ) : needsAttention.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Clock className="h-8 w-8 mx-auto mb-2 opacity-40" />
-                <p className="text-sm">All clients are up to date!</p>
+              <div className="text-center py-6 text-muted-foreground">
+                <Clock className="h-6 w-6 mx-auto mb-2 opacity-40" />
+                <p className="text-xs">All clients are up to date!</p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {needsAttention.map((customer) => {
                   const months = getMonthsSinceLastTuned(customer.lastTuned);
                   return (
-                    <Link
-                      key={customer.id}
-                      href={`/customers/${customer.id}`}
-                    >
+                    <Link key={customer.id} href={`/customers/${customer.id}`}>
                       <div
-                        className="flex items-center justify-between gap-3 p-3 rounded-md hover-elevate cursor-pointer bg-card border border-card-border"
+                        className="flex items-center justify-between gap-2 p-2 rounded-md hover:bg-accent cursor-pointer"
                         data-testid={`customer-row-${customer.id}`}
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-sm font-medium">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-medium">
                             {customer.firstName?.[0]}{customer.lastName?.[0]}
                           </div>
                           <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">
+                            <p className="text-xs font-medium truncate">
                               {customer.firstName} {customer.lastName}
                             </p>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {customer.pianoType || "Unknown piano"}
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {customer.city || customer.pianoType || "Unknown"}
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge
-                            variant={months !== null && months >= 24 ? "destructive" : "outline"}
-                            className={`no-default-active-elevate ${months !== null && months >= 12 && months < 24 ? "bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500" : ""}`}
-                          >
-                            <CalendarDays className="h-3 w-3 mr-1" />
-                            {months}mo ago
-                          </Badge>
-                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] shrink-0 ${
+                            months !== null && months >= 24
+                              ? "text-amber-700 dark:text-amber-300 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950"
+                              : months !== null && months >= 12
+                              ? "text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-600"
+                              : "text-muted-foreground"
+                          }`}
+                        >
+                          <CalendarDays className="h-2.5 w-2.5 mr-0.5" />
+                          {months}mo
+                        </Badge>
                       </div>
                     </Link>
                   );
@@ -234,47 +371,72 @@ export default function Dashboard() {
             )}
           </CardContent>
         </Card>
+      </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold flex items-center gap-2">
-              <MapPin className="h-4 w-4" /> Service Areas
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="space-y-3">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="h-8 w-full" />
-                ))}
-              </div>
-            ) : topCities.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No location data</p>
-            ) : (
-              <div className="space-y-3">
-                {topCities.map(([city, count]) => (
-                  <div key={city} className="flex items-center justify-between gap-2">
-                    <span className="text-sm truncate">{city}</span>
-                    <div className="flex items-center gap-2">
-                      <div className="h-2 bg-primary/20 rounded-full w-16 relative">
-                        <div
-                          className="h-2 bg-primary rounded-full absolute inset-y-0 left-0"
-                          style={{
-                            width: `${Math.min(100, (count / totalCustomers) * 100)}%`,
-                          }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground w-6 text-right">
-                        {count}
-                      </span>
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <MapPin className="h-4 w-4" /> Service Areas
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-8 w-full" />
+              ))}
+            </div>
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {Object.entries(SERVICE_REGIONS).map(([region, subAreas]) => {
+                const regionCount = regionTotals[region] || 0;
+                const areaCounts = serviceAreaCounts[region] || {};
+                return (
+                  <div key={region} className="space-y-2" data-testid={`region-${region.toLowerCase().replace(/\s+/g, '-')}`}>
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">{region}</h3>
+                      <span className="text-xs text-muted-foreground">{regionCount} clients</span>
+                    </div>
+                    <div className="space-y-1.5 pl-3 border-l-2 border-muted">
+                      {subAreas.map((area) => {
+                        const count = areaCounts[area] || 0;
+                        return (
+                          <div key={area} className="flex items-center justify-between gap-2">
+                            <span className="text-xs truncate">{area}</span>
+                            <div className="flex items-center gap-2">
+                              <div className="h-1.5 bg-primary/15 rounded-full w-12 relative">
+                                <div
+                                  className="h-1.5 bg-primary rounded-full absolute inset-y-0 left-0"
+                                  style={{
+                                    width: `${regionCount > 0 ? Math.min(100, (count / regionCount) * 100) : 0}%`,
+                                  }}
+                                />
+                              </div>
+                              <span className="text-[10px] text-muted-foreground w-4 text-right">
+                                {count}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                );
+              })}
+              {serviceAreaCounts["Other"] && (
+                <div className="space-y-2" data-testid="region-other">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">Other</h3>
+                    <span className="text-xs text-muted-foreground">
+                      {Object.values(serviceAreaCounts["Other"]).reduce((s, c) => s + c, 0)} clients
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

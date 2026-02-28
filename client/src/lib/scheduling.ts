@@ -1,12 +1,16 @@
-const CITY_CLUSTERS: string[][] = [
-  ["Salt Lake City", "SLC", "Midvale", "Taylorsville"],
-  ["South Jordan", "Herriman", "Bluffdale", "Riverton", "Copperton"],
-  ["Sandy", "Cottonwood Heights", "Draper", "Highland"],
-  ["Bountiful", "Centerville", "North Salt Lake", "Kaysville", "Farmington", "Layton", "Syracuse"],
-  ["West Jordan", "Lehi"],
-  ["Ogden", "Farr West"],
-  ["Kamas", "Heber City", "Midway", "Alpine"],
-];
+export const SERVICE_AREA_CLUSTERS: Record<string, string[]> = {
+  "Davis County": ["Bountiful", "Centerville", "North Salt Lake", "Kaysville", "Farmington", "Layton", "Syracuse", "Ogden", "Farr West"],
+  "Salt Lake City": ["Salt Lake City", "SLC", "Midvale", "Taylorsville", "Sandy", "Cottonwood Heights", "Draper", "Highland", "West Jordan", "Kamas", "Heber City", "Midway", "Alpine"],
+  "South Jordan": ["South Jordan", "Herriman", "Bluffdale", "Riverton", "Copperton", "Lehi"],
+  "Boston": ["Somerville", "Boston", "Cambridge", "Brookline"],
+};
+
+export const SERVICE_REGIONS: Record<string, string[]> = {
+  "Salt Lake City": ["Davis County", "Salt Lake City", "South Jordan"],
+  "Boston": ["Boston"],
+};
+
+const CITY_CLUSTERS: string[][] = Object.values(SERVICE_AREA_CLUSTERS);
 
 function normalizeCity(city: string): string {
   const trimmed = city.trim();
@@ -22,6 +26,25 @@ function findCluster(city: string): string[] | null {
     }
   }
   return null;
+}
+
+export function getServiceArea(city: string): string {
+  if (!city) return "Other";
+  const norm = normalizeCity(city).toLowerCase();
+  for (const [area, cities] of Object.entries(SERVICE_AREA_CLUSTERS)) {
+    if (cities.some((c) => c.toLowerCase() === norm)) {
+      return area;
+    }
+  }
+  return "Other";
+}
+
+export function getServiceRegion(city: string): string {
+  const area = getServiceArea(city);
+  for (const [region, areas] of Object.entries(SERVICE_REGIONS)) {
+    if (areas.includes(area)) return region;
+  }
+  return "Other";
 }
 
 export function getNearbyCities(city: string): string[] {
@@ -47,11 +70,7 @@ export function areNearby(city1: string, city2: string): boolean {
 
 export function getClusterName(city: string): string {
   if (!city) return "";
-  const norm = normalizeCity(city);
-  const cluster = findCluster(norm);
-  if (!cluster) return norm;
-  const filtered = cluster.filter((c) => c !== "SLC");
-  return filtered[0] || norm;
+  return getServiceArea(city);
 }
 
 export function parseTimeToMinutes(timeStr: string): number {
