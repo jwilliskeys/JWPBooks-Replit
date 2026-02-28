@@ -26,6 +26,7 @@ import {
   User,
   Phone,
   Music,
+  Pencil,
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -101,6 +102,13 @@ export default function SlcSchedule() {
   const [apptPrice, setApptPrice] = useState("$180");
   const [apptNotes, setApptNotes] = useState("");
   const [conflictError, setConflictError] = useState("");
+  const [editingAppt, setEditingAppt] = useState<TripAppointment | null>(null);
+  const [editTime, setEditTime] = useState("");
+  const [editDuration, setEditDuration] = useState("");
+  const [editServices, setEditServices] = useState("");
+  const [editPrice, setEditPrice] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editConflictError, setEditConflictError] = useState("");
 
   const { data: trips, isLoading: tripsLoading } = useQuery<Trip[]>({
     queryKey: ["/api/trips"],
@@ -186,6 +194,52 @@ export default function SlcSchedule() {
       toast({ title: "Appointment deleted" });
     },
   });
+
+  const editAppointmentMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) =>
+      apiRequest("PATCH", `/api/trip-appointments/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", activeTrip?.id, "appointments"] });
+      toast({ title: "Appointment updated" });
+      setEditingAppt(null);
+    },
+    onError: () => {
+      toast({ title: "Failed to update appointment", variant: "destructive" });
+    },
+  });
+
+  function openEditDialog(appt: TripAppointment) {
+    setEditingAppt(appt);
+    setEditTime(appt.time || "");
+    setEditDuration(appt.duration || "2 hours");
+    setEditServices(appt.servicesRequested || "");
+    setEditPrice(appt.priceEstimate || "$180");
+    setEditNotes(appt.notes || "");
+    setEditConflictError("");
+  }
+
+  function handleSaveEdit() {
+    if (!editingAppt) return;
+    const cust = customerMap.get(editingAppt.customerId);
+    const custCity = cust?.city || "";
+    const existing = getDayExistingAppointments(editingAppt.date)
+      .filter((e) => e.time !== (editingAppt.time || ""));
+    const result = checkTimeConflict(editTime, editDuration, custCity, existing);
+    if (!result.valid) {
+      setEditConflictError(result.message || "Time conflict");
+      return;
+    }
+    editAppointmentMutation.mutate({
+      id: editingAppt.id,
+      data: {
+        time: editTime,
+        duration: editDuration,
+        servicesRequested: editServices || undefined,
+        priceEstimate: editPrice || undefined,
+        notes: editNotes || undefined,
+      },
+    });
+  }
 
   const dates = activeTrip ? getDatesInRange(activeTrip.startDate, activeTrip.endDate) : [];
 
@@ -496,15 +550,61 @@ export default function SlcSchedule() {
                       return (
                         <div
                           key={appt.id}
-                          className={`rounded-md border p-2 text-xs space-y-1 ${isCompleted ? "opacity-60" : ""}`}
+                          className={`rounded-md border p-2 text-xs flex gap-2 ${isCompleted ? "opacity-60" : ""}`}
                           data-testid={`trip-appointment-${appt.id}`}
                         >
-                          <div className="flex items-center justify-between gap-1">
+                          <div className="flex-1 space-y-1 min-w-0">
                             <span className="flex items-center gap-1 text-muted-foreground">
                               <Clock className="h-3 w-3" />
                               {appt.time}
                             </span>
-                            <div className="flex items-center gap-0.5">
+                            {cust ? (
+                              <Link href={`/customers/${cust.id}`}>
+                                <span className="font-medium hover:underline cursor-pointer block truncate" data-testid={`text-appt-customer-${appt.id}`}>
+                                  {cust.firstName} {cust.lastName}
+                                </span>
+                              </Link>
+                            ) : (
+                              <span className="font-medium">Unknown</span>
+                            )}
+                            {addressStr && (
+                              <p className="text-muted-foreground flex items-start gap-1">
+                                <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+                                <span>{addressStr}</span>
+                              </p>
+                            )}
+                            {cust?.phone && (
+                              <p className="text-muted-foreground flex items-center gap-1">
+                                <Phone className="h-3 w-3 shrink-0" />
+                                <span>{cust.phone}</span>
+                              </p>
+                            )}
+                            {pianoStr && (
+                              <p className="text-muted-foreground flex items-center gap-1">
+                                <Music className="h-3 w-3 shrink-0" />
+                                <span>{pianoStr}</span>
+                              </p>
+                            )}
+                            {appt.servicesRequested && (
+                              <p className="text-muted-foreground">{appt.servicesRequested}</p>
+                            )}
+                            {appt.priceEstimate && (
+                              <p className="text-muted-foreground flex items-center gap-1">
+                                <DollarSign className="h-3 w-3" />{appt.priceEstimate}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex flex-col justify-between items-center shrink-0">
+                            <div className="flex flex-col gap-0.5">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-5 w-5"
+                                onClick={() => openEditDialog(appt)}
+                                data-testid={`button-edit-trip-appt-${appt.id}`}
+                              >
+                                <Pencil className="h-3 w-3" />
+                              </Button>
                               {!isCompleted && (
                                 <Button
                                   variant="ghost"
@@ -516,54 +616,19 @@ export default function SlcSchedule() {
                                   <CheckCircle className="h-3 w-3" />
                                 </Button>
                               )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5 text-destructive"
-                                onClick={() => {
-                                  if (confirm("Delete?")) deleteAppointmentMutation.mutate(appt.id);
-                                }}
-                                data-testid={`button-delete-trip-appt-${appt.id}`}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
                             </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 text-destructive"
+                              onClick={() => {
+                                if (confirm("Delete?")) deleteAppointmentMutation.mutate(appt.id);
+                              }}
+                              data-testid={`button-delete-trip-appt-${appt.id}`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </div>
-                          {cust ? (
-                            <Link href={`/customers/${cust.id}`}>
-                              <span className="font-medium hover:underline cursor-pointer block" data-testid={`text-appt-customer-${appt.id}`}>
-                                {cust.firstName} {cust.lastName}
-                              </span>
-                            </Link>
-                          ) : (
-                            <span className="font-medium">Unknown</span>
-                          )}
-                          {addressStr && (
-                            <p className="text-muted-foreground flex items-start gap-1">
-                              <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-                              <span>{addressStr}</span>
-                            </p>
-                          )}
-                          {cust?.phone && (
-                            <p className="text-muted-foreground flex items-center gap-1">
-                              <Phone className="h-3 w-3 shrink-0" />
-                              <span>{cust.phone}</span>
-                            </p>
-                          )}
-                          {pianoStr && (
-                            <p className="text-muted-foreground flex items-center gap-1">
-                              <Music className="h-3 w-3 shrink-0" />
-                              <span>{pianoStr}</span>
-                            </p>
-                          )}
-                          {appt.servicesRequested && (
-                            <p className="text-muted-foreground">{appt.servicesRequested}</p>
-                          )}
-                          {appt.priceEstimate && (
-                            <p className="text-muted-foreground flex items-center gap-1">
-                              <DollarSign className="h-3 w-3" />{appt.priceEstimate}
-                            </p>
-                          )}
                         </div>
                       );
                     })
@@ -759,6 +824,101 @@ export default function SlcSchedule() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!editingAppt} onOpenChange={(open) => { if (!open) setEditingAppt(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5" />
+              Edit Appointment
+            </DialogTitle>
+          </DialogHeader>
+          {editingAppt && (
+            <div className="space-y-4">
+              <div className="text-sm text-muted-foreground">
+                {(() => {
+                  const c = customerMap.get(editingAppt.customerId);
+                  return c ? `${c.firstName} ${c.lastName}` : "Unknown client";
+                })()}
+                {" · "}{editingAppt.date}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-time">Time</Label>
+                  <Input
+                    id="edit-time"
+                    value={editTime}
+                    onChange={(e) => { setEditTime(e.target.value); setEditConflictError(""); }}
+                    placeholder="10:00 AM"
+                    data-testid="input-edit-time"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-duration">Duration</Label>
+                  <Input
+                    id="edit-duration"
+                    value={editDuration}
+                    onChange={(e) => { setEditDuration(e.target.value); setEditConflictError(""); }}
+                    placeholder="2 hours"
+                    data-testid="input-edit-duration"
+                  />
+                </div>
+              </div>
+
+              {editConflictError && (
+                <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive" data-testid="text-edit-conflict-error">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{editConflictError}</span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-services">Services Requested</Label>
+                <Input
+                  id="edit-services"
+                  value={editServices}
+                  onChange={(e) => setEditServices(e.target.value)}
+                  placeholder="Tuning, voicing..."
+                  data-testid="input-edit-services"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-price">Price Estimate</Label>
+                <Input
+                  id="edit-price"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(e.target.value)}
+                  placeholder="$180"
+                  data-testid="input-edit-price"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-notes">Notes</Label>
+                <Textarea
+                  id="edit-notes"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Any notes..."
+                  data-testid="input-edit-notes"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button variant="outline" onClick={() => setEditingAppt(null)} data-testid="button-cancel-edit">
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSaveEdit}
+                  disabled={editAppointmentMutation.isPending}
+                  data-testid="button-save-edit"
+                >
+                  Save Changes
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
