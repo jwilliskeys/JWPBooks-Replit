@@ -36,6 +36,7 @@ import {
   getClusterName,
   checkTimeConflict,
   getNextAvailableTime,
+  parseTimeToMinutes,
   type ExistingAppointment,
 } from "@/lib/scheduling";
 
@@ -186,9 +187,7 @@ export default function SlcSchedule() {
     });
     for (const [key, list] of map) {
       map.set(key, list.sort((a, b) => {
-        const ta = a.time || "";
-        const tb = b.time || "";
-        return ta.localeCompare(tb);
+        return parseTimeToMinutes(a.time || "") - parseTimeToMinutes(b.time || "");
       }));
     }
     return map;

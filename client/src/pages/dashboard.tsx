@@ -44,7 +44,6 @@ function StatCard({
           ) : (
             <div className="text-xl font-bold" data-testid={`stat-${title.toLowerCase().replace(/\s+/g, '-')}`}>{value}</div>
           )}
-          <p className="text-[11px] text-muted-foreground mt-0.5">{description}</p>
         </CardContent>
       </Card>
     </Link>

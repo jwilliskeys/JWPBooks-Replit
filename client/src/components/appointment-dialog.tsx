@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Dialog,
@@ -18,9 +18,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { AlertCircle } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer, Piano } from "@shared/schema";
+import type { Customer, Piano, Appointment } from "@shared/schema";
+import {
+  checkTimeConflict,
+  type ExistingAppointment,
+} from "@/lib/scheduling";
 
 interface AppointmentDialogProps {
   open: boolean;
@@ -38,6 +43,7 @@ export function AppointmentDialog({
   customerName,
 }: AppointmentDialogProps) {
   const { toast } = useToast();
+  const [conflictError, setConflictError] = useState("");
   const defaultForm = {
     customerId: customerId ?? 0,
     pianoId: pianoId ?? null as number | null,
@@ -62,12 +68,17 @@ export function AppointmentDialog({
         notes: "",
         isTuning: false,
       });
+      setConflictError("");
     }
   }, [open, customerId, pianoId]);
 
   const { data: customers } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
-    enabled: !customerId,
+  });
+
+  const { data: allAppointments } = useQuery<Appointment[]>({
+    queryKey: ["/api/appointments"],
+    enabled: open,
   });
 
   const selectedCustomerId = customerId ?? form.customerId;
@@ -76,6 +87,31 @@ export function AppointmentDialog({
     queryKey: ["/api/customers", String(selectedCustomerId), "pianos"],
     enabled: !!selectedCustomerId,
   });
+
+  const customerMap = useMemo(
+    () => new Map(customers?.map((c) => [c.id, c]) ?? []),
+    [customers]
+  );
+
+  const selectedCustomerCity = useMemo(() => {
+    if (!selectedCustomerId) return "";
+    const cust = customerMap.get(selectedCustomerId);
+    return cust?.city || "";
+  }, [selectedCustomerId, customerMap]);
+
+  const existingApptsForDate = useMemo((): ExistingAppointment[] => {
+    if (!form.date || !allAppointments) return [];
+    return allAppointments
+      .filter((a) => a.date === form.date && a.status !== "cancelled")
+      .map((a) => {
+        const cust = customerMap.get(a.customerId);
+        return {
+          time: a.time,
+          duration: "2 hours",
+          city: cust?.city || "",
+        };
+      });
+  }, [form.date, allAppointments, customerMap]);
 
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/appointments", data),
@@ -103,6 +139,14 @@ export function AppointmentDialog({
   });
 
   const handleSubmit = () => {
+    if (form.time && form.date) {
+      const result = checkTimeConflict(form.time, "2 hours", selectedCustomerCity, existingApptsForDate);
+      if (!result.valid) {
+        setConflictError(result.message || "Time conflict detected.");
+        return;
+      }
+    }
+
     const submitData = {
       ...form,
       customerId: selectedCustomerId,
@@ -123,7 +167,7 @@ export function AppointmentDialog({
               <Label>Client</Label>
               <Select
                 value={form.customerId ? String(form.customerId) : ""}
-                onValueChange={(v) => setForm({ ...form, customerId: parseInt(v), pianoId: null })}
+                onValueChange={(v) => { setForm({ ...form, customerId: parseInt(v), pianoId: null }); setConflictError(""); }}
               >
                 <SelectTrigger data-testid="select-appointment-client">
                   <SelectValue placeholder="Select a client..." />
@@ -173,7 +217,7 @@ export function AppointmentDialog({
               <Label>Date (M/D/YY)</Label>
               <Input
                 value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
+                onChange={(e) => { setForm({ ...form, date: e.target.value }); setConflictError(""); }}
                 placeholder="3/15/26"
                 data-testid="input-appointment-date"
               />
@@ -182,12 +226,19 @@ export function AppointmentDialog({
               <Label>Time</Label>
               <Input
                 value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })}
+                onChange={(e) => { setForm({ ...form, time: e.target.value }); setConflictError(""); }}
                 placeholder="10:00 AM"
                 data-testid="input-appointment-time"
               />
             </div>
           </div>
+
+          {conflictError && (
+            <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive" data-testid="text-conflict-error">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{conflictError}</span>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>Services Requested</Label>
