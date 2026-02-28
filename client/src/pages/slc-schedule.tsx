@@ -96,7 +96,7 @@ export default function SlcSchedule() {
   const [apptTime, setApptTime] = useState("8:00 AM");
   const [apptDuration, setApptDuration] = useState("2 hours");
   const [apptServices, setApptServices] = useState("");
-  const [apptPrice, setApptPrice] = useState("");
+  const [apptPrice, setApptPrice] = useState("$180");
   const [apptNotes, setApptNotes] = useState("");
   const [conflictError, setConflictError] = useState("");
 
@@ -223,7 +223,7 @@ export default function SlcSchedule() {
     setCustomerSearch("");
     setApptDuration("2 hours");
     setApptServices("");
-    setApptPrice("");
+    setApptPrice("$180");
     setApptNotes("");
     setConflictError("");
 

@@ -50,7 +50,7 @@ export function AppointmentDialog({
     date: "",
     time: "",
     servicesRequested: "",
-    priceEstimate: "",
+    priceEstimate: "$180",
     notes: "",
     isTuning: false,
   };
@@ -64,7 +64,7 @@ export function AppointmentDialog({
         date: "",
         time: "",
         servicesRequested: "",
-        priceEstimate: "",
+        priceEstimate: "$180",
         notes: "",
         isTuning: false,
       });
@@ -127,7 +127,7 @@ export function AppointmentDialog({
         date: "",
         time: "",
         servicesRequested: "",
-        priceEstimate: "",
+        priceEstimate: "$180",
         notes: "",
         isTuning: false,
       });
