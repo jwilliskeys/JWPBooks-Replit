@@ -8,7 +8,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -24,10 +26,14 @@ import {
   ExternalLink,
   Calendar,
   ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
   Piano,
+  MapPin,
 } from "lucide-react";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
+import { SERVICE_AREA_CLUSTERS, getServiceArea } from "@/lib/scheduling";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
@@ -67,11 +73,23 @@ function getOverdueBadge(months: number | null) {
   return <Badge className="text-xs bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
 }
 
-type SortOption = "priority" | "lastTuned" | "lastContacted" | "nextAppointment" | "location" | "lastName";
+type SortOption = "priority" | "lastTuned" | "lastContacted" | "nextAppointment" | "location" | "lastName" | "pianoType";
+
+const DEFAULT_DIRECTIONS: Record<SortOption, "asc" | "desc"> = {
+  priority: "desc",
+  lastTuned: "asc",
+  lastContacted: "asc",
+  nextAppointment: "asc",
+  location: "asc",
+  lastName: "asc",
+  pianoType: "asc",
+};
 
 export default function CallCenter() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("priority");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [areaFilter, setAreaFilter] = useState<string>("all");
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
   const [appointmentCustomerId, setAppointmentCustomerId] = useState<number | undefined>(undefined);
   const [appointmentCustomerName, setAppointmentCustomerName] = useState<string>("");
@@ -129,18 +147,47 @@ export default function CallCenter() {
     },
   });
 
+  function handleSortChange(newSort: SortOption) {
+    if (newSort === sortBy) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(newSort);
+      setSortDir(DEFAULT_DIRECTIONS[newSort]);
+    }
+  }
+
+  function matchesAreaFilter(customer: Customer): boolean {
+    if (areaFilter === "all") return true;
+
+    const isAreaKey = areaFilter in SERVICE_AREA_CLUSTERS;
+    if (isAreaKey) {
+      const cities = SERVICE_AREA_CLUSTERS[areaFilter];
+      const custCity = (customer.city ?? "").trim().toLowerCase();
+      if (custCity === "slc") return cities.some(c => c.toLowerCase() === "salt lake city");
+      return cities.some(c => c.toLowerCase() === custCity);
+    }
+
+    const custCity = (customer.city ?? "").trim().toLowerCase();
+    const filterCity = areaFilter.toLowerCase();
+    if (custCity === "slc" && filterCity === "salt lake city") return true;
+    return custCity === filterCity;
+  }
+
   const sorted = customers
     ?.filter((c) => {
       if (customersWithAllInactivePianos.has(c.id)) return false;
+      if (!matchesAreaFilter(c)) return false;
       if (!search) return true;
       const s = search.toLowerCase();
       return (
         `${c.firstName} ${c.lastName}`.toLowerCase().includes(s) ||
         c.phone?.includes(search) ||
-        c.city?.toLowerCase().includes(s)
+        c.city?.toLowerCase().includes(s) ||
+        c.pianoType?.toLowerCase().includes(s)
       );
     })
     .sort((a, b) => {
+      let cmp = 0;
       switch (sortBy) {
         case "priority": {
           const aContacted = getMonthsSince(a.lastContacted);
@@ -149,46 +196,62 @@ export default function CallCenter() {
           const bTuned = getMonthsSince(b.lastTuned);
           const aScore = Math.max(aContacted ?? 999, aTuned ?? 999);
           const bScore = Math.max(bContacted ?? 999, bTuned ?? 999);
-          return bScore - aScore;
+          cmp = aScore - bScore;
+          break;
         }
         case "lastTuned": {
           const aDate = parseDate(a.lastTuned);
           const bDate = parseDate(b.lastTuned);
-          if (!aDate && !bDate) return 0;
-          if (!aDate) return 1;
-          if (!bDate) return -1;
-          return aDate.getTime() - bDate.getTime();
+          if (!aDate && !bDate) cmp = 0;
+          else if (!aDate) cmp = 1;
+          else if (!bDate) cmp = -1;
+          else cmp = aDate.getTime() - bDate.getTime();
+          break;
         }
         case "lastContacted": {
           const aDate = parseDate(a.lastContacted);
           const bDate = parseDate(b.lastContacted);
-          if (!aDate && !bDate) return 0;
-          if (!aDate) return 1;
-          if (!bDate) return -1;
-          return aDate.getTime() - bDate.getTime();
+          if (!aDate && !bDate) cmp = 0;
+          else if (!aDate) cmp = 1;
+          else if (!bDate) cmp = -1;
+          else cmp = aDate.getTime() - bDate.getTime();
+          break;
         }
         case "nextAppointment": {
           const aAppt = nextAppointmentMap.get(a.id);
           const bAppt = nextAppointmentMap.get(b.id);
-          if (!aAppt && !bAppt) return 0;
-          if (!aAppt) return 1;
-          if (!bAppt) return -1;
-          return aAppt.localeCompare(bAppt);
+          if (!aAppt && !bAppt) cmp = 0;
+          else if (!aAppt) cmp = 1;
+          else if (!bAppt) cmp = -1;
+          else cmp = aAppt.localeCompare(bAppt);
+          break;
         }
         case "location": {
           const aCity = (a.city ?? "").toLowerCase();
           const bCity = (b.city ?? "").toLowerCase();
-          if (!aCity && !bCity) return 0;
-          if (!aCity) return 1;
-          if (!bCity) return -1;
-          return aCity.localeCompare(bCity);
+          if (!aCity && !bCity) cmp = 0;
+          else if (!aCity) cmp = 1;
+          else if (!bCity) cmp = -1;
+          else cmp = aCity.localeCompare(bCity);
+          break;
         }
         case "lastName": {
-          return (a.lastName ?? "").localeCompare(b.lastName ?? "");
+          cmp = (a.lastName ?? "").localeCompare(b.lastName ?? "");
+          break;
+        }
+        case "pianoType": {
+          const aType = (a.pianoType ?? "").toLowerCase();
+          const bType = (b.pianoType ?? "").toLowerCase();
+          if (!aType && !bType) cmp = 0;
+          else if (!aType) cmp = 1;
+          else if (!bType) cmp = -1;
+          else cmp = aType.localeCompare(bType);
+          break;
         }
         default:
-          return 0;
+          cmp = 0;
       }
+      return sortDir === "asc" ? cmp : -cmp;
     }) ?? [];
 
   return (
@@ -200,32 +263,67 @@ export default function CallCenter() {
         </p>
       </div>
 
-      <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3">
-        <div className="relative flex-1 min-w-0">
+      <div className="space-y-3">
+        <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search by name, phone, or city..."
+            placeholder="Search by name, phone, city, or piano type..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
             data-testid="input-call-search"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <ArrowUpDown className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
-          <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortOption)}>
-            <SelectTrigger className="w-full sm:w-[180px]" data-testid="select-call-sort">
-              <SelectValue placeholder="Sort by..." />
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={areaFilter} onValueChange={setAreaFilter}>
+            <SelectTrigger className="w-full sm:w-[200px]" data-testid="select-area-filter">
+              <MapPin className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="Filter by area..." />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="priority">Priority (Default)</SelectItem>
-              <SelectItem value="lastTuned">Last Tuned</SelectItem>
-              <SelectItem value="lastContacted">Last Contacted</SelectItem>
-              <SelectItem value="nextAppointment">Next Appointment</SelectItem>
-              <SelectItem value="location">Location</SelectItem>
-              <SelectItem value="lastName">Last Name</SelectItem>
+              <SelectItem value="all">All Areas</SelectItem>
+              {Object.entries(SERVICE_AREA_CLUSTERS).map(([area, cities]) => (
+                <SelectGroup key={area}>
+                  <SelectLabel className="text-xs font-semibold">{area}</SelectLabel>
+                  <SelectItem value={area} className="font-medium">All {area}</SelectItem>
+                  {cities.filter(c => c !== "SLC").map((city) => (
+                    <SelectItem key={city} value={city} className="pl-6">{city}</SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
             </SelectContent>
           </Select>
+
+          <div className="flex items-center gap-1 flex-1 sm:flex-none">
+            <Select value={sortBy} onValueChange={(v) => handleSortChange(v as SortOption)}>
+              <SelectTrigger className="w-full sm:w-[180px]" data-testid="select-call-sort">
+                <ArrowUpDown className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="Sort by..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="priority">Priority (Default)</SelectItem>
+                <SelectItem value="lastTuned">Last Tuned</SelectItem>
+                <SelectItem value="lastContacted">Last Contacted</SelectItem>
+                <SelectItem value="nextAppointment">Next Appointment</SelectItem>
+                <SelectItem value="location">Location</SelectItem>
+                <SelectItem value="lastName">Last Name</SelectItem>
+                <SelectItem value="pianoType">Piano Type</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0"
+              onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
+              data-testid="button-sort-direction"
+            >
+              {sortDir === "asc" ? (
+                <ArrowUp className="h-4 w-4" />
+              ) : (
+                <ArrowDown className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -242,6 +340,7 @@ export default function CallCenter() {
         </div>
       ) : (
         <div className="space-y-2" data-testid="call-list">
+          <p className="text-xs text-muted-foreground">{sorted.length} clients</p>
           {sorted.map((customer) => {
             const tunedMonths = getMonthsSince(customer.lastTuned);
             const primaryPiano = pianosByCustomer.get(customer.id);

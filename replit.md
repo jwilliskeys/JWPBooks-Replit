@@ -19,14 +19,14 @@ Preferred communication style: Simple, everyday language.
 - **Path aliases**: `@/` maps to `client/src/`, `@shared/` maps to `shared/`
 
 ### Pages
-- `/` — Dashboard with stats (total clients, overdue tunings, etc.)
+- `/` — Dashboard with stats (Total Clients, Total Pianos), Service Areas (hierarchical: SLC with 3 sub-areas + Boston), and Appointments & Overdue panel
 - `/customers` — Client list with search and filtering (card + sortable list views)
 - `/customers/new` — Create new client form
 - `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, and last contacted tracking
 - `/appointments` — Appointment list with search, sort, and status management
 - `/calendar` — Monthly calendar grid showing appointments and personal notes; completed appointments faded; click dates to add notes
 - `/slc-schedule` — Trip planner for SLC visits; vertical column layout (each day = a column), auto-detected service area per day, smart client suggestions (nearby cities), scheduling conflict validation; deletable/recreatable trips
-- `/call-center` — Call center with contact priority list and last contacted tracking
+- `/call-center` — Call center with contact priority list, last contacted tracking, area/city filter dropdown (grouped by 4 service areas), ascending/descending sort toggle, and piano type sort option
 - `/sync` — Google Sheets sync interface
 
 ### Backend
