@@ -61,6 +61,8 @@ Preferred communication style: Simple, everyday language.
   - `calendar_notes` — id, date, title, notes, createdAt
   - `trips` — id, name, startDate, endDate, notes, createdAt
   - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, createdAt
+  - `users` — id (varchar UUID), email, firstName, lastName, profileImageUrl, createdAt, updatedAt (Replit Auth)
+  - `sessions` — sid, sess (jsonb), expire (Replit Auth session store)
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory
 - **Schema push**: Use `npm run db:push` to push schema changes directly
 
@@ -89,6 +91,17 @@ Preferred communication style: Simple, everyday language.
 - Uses Replit Connectors for OAuth token management (accesses tokens via `REPLIT_CONNECTORS_HOSTNAME`)
 - Hardcoded spreadsheet ID: `1_jLnnmtX2iXXxbsNMxZb-Ug-QrD5GCLnrayz2T7K4tg`
 - Used to sync/import customer data from a Google Sheet into the database
+
+### Authentication
+- **Replit Auth** via OpenID Connect (`openid-client` + Passport.js)
+- Auth module at `server/replit_integrations/auth/` (setupAuth, isAuthenticated middleware, auth routes)
+- Session storage in PostgreSQL `sessions` table via `connect-pg-simple`
+- User records in `users` table (id, email, firstName, lastName, profileImageUrl)
+- Auth schema defined in `shared/models/auth.ts`, re-exported from `shared/schema.ts`
+- Frontend auth hook at `client/src/hooks/use-auth.ts` (useAuth)
+- Auth utility at `client/src/lib/auth-utils.ts`
+- All `/api/` routes protected by `isAuthenticated` middleware (except `/api/login`, `/api/logout`, `/api/callback`, `/api/auth/user`)
+- Login page shown when unauthenticated; authenticated users see user avatar + logout button in header
 
 ### Replit-Specific Integrations
 - `@replit/vite-plugin-runtime-error-modal` — Runtime error overlay in dev

@@ -143,3 +143,5 @@ export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
 export type TripAppointment = typeof tripAppointments.$inferSelect;
 export type InsertTripAppointment = z.infer<typeof insertTripAppointmentSchema>;
+
+export * from "./models/auth";

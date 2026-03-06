@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
 import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertTripSchema, insertTripAppointmentSchema } from "@shared/schema";
+import { isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -31,6 +32,13 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.use("/api", (req, res, next) => {
+    if (req.path === "/login" || req.path === "/logout" || req.path === "/callback" || req.path === "/auth/user") {
+      return next();
+    }
+    return isAuthenticated(req, res, next);
+  });
 
   app.get("/api/customers", async (_req, res) => {
     try {
