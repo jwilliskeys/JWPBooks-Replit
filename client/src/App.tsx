@@ -17,7 +17,6 @@ import Customers from "@/pages/customers";
 import CustomerDetail from "@/pages/customer-detail";
 import CustomerForm from "@/pages/customer-form";
 import SyncPage from "@/pages/sync";
-import CallCenter from "@/pages/call-center";
 import AppointmentsPage from "@/pages/appointments";
 import CalendarPage from "@/pages/calendar";
 import SlcSchedule from "@/pages/slc-schedule";
@@ -29,7 +28,6 @@ function Router() {
       <Route path="/customers" component={Customers} />
       <Route path="/customers/new" component={CustomerForm} />
       <Route path="/customers/:id" component={CustomerDetail} />
-      <Route path="/call-center" component={CallCenter} />
       <Route path="/appointments" component={AppointmentsPage} />
       <Route path="/calendar" component={CalendarPage} />
       <Route path="/slc-schedule" component={SlcSchedule} />

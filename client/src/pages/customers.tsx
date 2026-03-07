@@ -1,7 +1,9 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { formatPhone } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -18,96 +22,167 @@ import {
   Search,
   UserPlus,
   Phone,
-  Mail,
   MapPin,
   CalendarDays,
   Piano,
-  SlidersHorizontal,
   LayoutGrid,
   List,
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  CheckCircle,
+  Calendar,
 } from "lucide-react";
-import type { Customer, Piano as PianoType } from "@shared/schema";
-
-function getMonthsSince(dateStr: string | null | undefined): number | null {
-  if (!dateStr) return null;
-  const parts = dateStr.split("/");
-  if (parts.length !== 3) return null;
-  const month = parseInt(parts[0]) - 1;
-  const day = parseInt(parts[1]);
-  let year = parseInt(parts[2]);
-  if (year < 100) year += 2000;
-  const date = new Date(year, month, day);
-  const now = new Date();
-  return (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
-}
+import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
+import { AppointmentDialog } from "@/components/appointment-dialog";
+import { SERVICE_AREA_CLUSTERS } from "@/lib/scheduling";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
   const parts = dateStr.split("/");
-  if (parts.length !== 3) return null;
-  let year = parseInt(parts[2]);
-  if (year < 100) year += 2000;
-  return new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+  if (parts.length === 3) {
+    const month = parseInt(parts[0]) - 1;
+    const day = parseInt(parts[1]);
+    let year = parseInt(parts[2]);
+    if (year < 100) year += 2000;
+    const d = new Date(year, month, day);
+    if (isNaN(d.getTime())) return null;
+    return d;
+  }
+  const tryParse = new Date(dateStr);
+  if (!isNaN(tryParse.getTime())) return tryParse;
+  return null;
+}
+
+function getMonthsSince(dateStr: string | null | undefined): number | null {
+  const date = parseDate(dateStr);
+  if (!date) return null;
+  const now = new Date();
+  return (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
 }
 
 function getStatusBadge(dateStr: string | null | undefined) {
   const months = getMonthsSince(dateStr);
-  if (months === null) return <Badge variant="secondary" className="no-default-active-elevate">No record</Badge>;
-  if (months >= 24) return <Badge variant="destructive" className="no-default-active-elevate">Overdue</Badge>;
-  if (months >= 12) return <Badge className="no-default-active-elevate bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500">Overdue</Badge>;
-  if (months >= 6) return <Badge variant="secondary" className="no-default-active-elevate">Due soon</Badge>;
-  return <Badge className="no-default-active-elevate bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
+  if (months === null) return <Badge variant="secondary" className="no-default-active-elevate text-xs">No record</Badge>;
+  if (months >= 24) return <Badge variant="destructive" className="no-default-active-elevate text-xs">Overdue {months}mo</Badge>;
+  if (months >= 12) return <Badge className="no-default-active-elevate text-xs bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500">Overdue {months}mo</Badge>;
+  if (months >= 6) return <Badge variant="secondary" className="no-default-active-elevate text-xs">Due soon</Badge>;
+  return <Badge className="no-default-active-elevate text-xs bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
 }
 
-function getStatusText(dateStr: string | null | undefined): string {
-  const months = getMonthsSince(dateStr);
-  if (months === null) return "No record";
-  if (months >= 12) return "Overdue";
-  if (months >= 6) return "Due soon";
-  return "Recently Tuned";
+function formatDateDisplay(dateStr: string | null | undefined): string {
+  if (!dateStr) return "Never";
+  return dateStr;
 }
 
-type SortKey = "name" | "city" | "state" | "phone" | "email" | "pianoType" | "lastTuned" | "status" | "company";
-type SortDir = "asc" | "desc";
+function todayFormatted(): string {
+  const now = new Date();
+  return `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear()}`;
+}
+
+type SortOption = "priority" | "lastTuned" | "lastContacted" | "nextAppointment" | "location" | "lastName" | "pianoType";
+
+const DEFAULT_DIRECTIONS: Record<SortOption, "asc" | "desc"> = {
+  priority: "desc",
+  lastTuned: "asc",
+  lastContacted: "asc",
+  nextAppointment: "asc",
+  location: "asc",
+  lastName: "asc",
+  pianoType: "asc",
+};
 
 export default function Customers() {
   const [search, setSearch] = useState("");
-  const [cityFilter, setCityFilter] = useState("all");
+  const [areaFilter, setAreaFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [viewMode, setViewMode] = useState<"card" | "list">("card");
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortBy, setSortBy] = useState<SortOption>("lastName");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  const [appointmentCustomerId, setAppointmentCustomerId] = useState<number | undefined>(undefined);
+  const [appointmentCustomerName, setAppointmentCustomerName] = useState<string>("");
+  const { toast } = useToast();
 
   const { data: customers, isLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
+  });
+
+  const { data: appointments } = useQuery<Appointment[]>({
+    queryKey: ["/api/appointments"],
   });
 
   const { data: pianos } = useQuery<PianoType[]>({
     queryKey: ["/api/pianos"],
   });
 
-  const pianosByCustomer = useMemo(() => {
+  const { pianosByCustomer, customersWithAllInactivePianos } = useMemo(() => {
     const map = new Map<number, PianoType>();
-    pianos?.forEach((p) => {
-      if (!map.has(p.customerId)) {
-        map.set(p.customerId, p);
-      }
-    });
-    return map;
+    const allInactive = new Set<number>();
+    if (pianos) {
+      const customerPianoMap = new Map<number, PianoType[]>();
+      pianos.forEach((p) => {
+        if (!customerPianoMap.has(p.customerId)) customerPianoMap.set(p.customerId, []);
+        customerPianoMap.get(p.customerId)!.push(p);
+      });
+      customerPianoMap.forEach((pianosArr, custId) => {
+        const activePiano = pianosArr.find(p => p.isActive !== false);
+        if (activePiano) {
+          map.set(custId, activePiano);
+        } else if (pianosArr.length > 0) {
+          allInactive.add(custId);
+        }
+      });
+    }
+    return { pianosByCustomer: map, customersWithAllInactivePianos: allInactive };
   }, [pianos]);
 
-  const cities = useMemo(() => {
-    if (!customers) return [];
-    const set = new Set(customers.map((c) => c.city).filter(Boolean) as string[]);
-    return Array.from(set).sort();
-  }, [customers]);
+  const nextAppointmentMap = useMemo(() => {
+    const map = new Map<number, string>();
+    appointments
+      ?.filter((a) => a.status === "scheduled")
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((a) => {
+        if (!map.has(a.customerId)) {
+          map.set(a.customerId, a.date);
+        }
+      });
+    return map;
+  }, [appointments]);
+
+  const markContactedMutation = useMutation({
+    mutationFn: ({ id, date }: { id: number; date: string }) =>
+      apiRequest("PATCH", `/api/customers/${id}`, { lastContacted: date }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      toast({ title: "Marked as contacted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update", variant: "destructive" });
+    },
+  });
+
+  function matchesAreaFilter(customer: Customer): boolean {
+    if (areaFilter === "all") return true;
+    const isAreaKey = areaFilter in SERVICE_AREA_CLUSTERS;
+    if (isAreaKey) {
+      const cities = SERVICE_AREA_CLUSTERS[areaFilter];
+      const custCity = (customer.city ?? "").trim().toLowerCase();
+      if (custCity === "slc") return cities.some(c => c.toLowerCase() === "salt lake city");
+      return cities.some(c => c.toLowerCase() === custCity);
+    }
+    const custCity = (customer.city ?? "").trim().toLowerCase();
+    const filterCity = areaFilter.toLowerCase();
+    if (custCity === "slc" && filterCity === "salt lake city") return true;
+    return custCity === filterCity;
+  }
 
   const filtered = useMemo(() => {
     if (!customers) return [];
     return customers.filter((c) => {
+      if (customersWithAllInactivePianos.has(c.id)) return false;
+      if (!matchesAreaFilter(c)) return false;
+
       const searchLower = search.toLowerCase();
       const matchesSearch =
         !search ||
@@ -118,8 +193,6 @@ export default function Customers() {
         c.city?.toLowerCase().includes(searchLower) ||
         c.companyName?.toLowerCase().includes(searchLower);
 
-      const matchesCity = cityFilter === "all" || c.city === cityFilter;
-
       const months = getMonthsSince(c.lastTuned);
       const matchesStatus =
         statusFilter === "all" ||
@@ -128,71 +201,22 @@ export default function Customers() {
         (statusFilter === "current" && months !== null && months < 6) ||
         (statusFilter === "unknown" && months === null);
 
-      return matchesSearch && matchesCity && matchesStatus;
+      return matchesSearch && matchesStatus;
     });
-  }, [customers, search, cityFilter, statusFilter]);
+  }, [customers, search, areaFilter, statusFilter, customersWithAllInactivePianos]);
 
   const sorted = useMemo(() => {
-    if (viewMode !== "list") return filtered;
     return [...filtered].sort((a, b) => {
       let cmp = 0;
-      const dir = sortDir === "asc" ? 1 : -1;
-      switch (sortKey) {
-        case "name": {
-          const aName = `${a.lastName} ${a.firstName}`.toLowerCase();
-          const bName = `${b.lastName} ${b.firstName}`.toLowerCase();
-          cmp = aName.localeCompare(bName);
-          break;
-        }
-        case "company": {
-          const aCo = (a.companyName || "").toLowerCase();
-          const bCo = (b.companyName || "").toLowerCase();
-          if (!aCo && !bCo) cmp = 0;
-          else if (!aCo) cmp = 1;
-          else if (!bCo) cmp = -1;
-          else cmp = aCo.localeCompare(bCo);
-          break;
-        }
-        case "city": {
-          const aCity = (a.city || "").toLowerCase();
-          const bCity = (b.city || "").toLowerCase();
-          if (!aCity && !bCity) cmp = 0;
-          else if (!aCity) cmp = 1;
-          else if (!bCity) cmp = -1;
-          else cmp = aCity.localeCompare(bCity);
-          break;
-        }
-        case "state": {
-          const aState = (a.state || "").toLowerCase();
-          const bState = (b.state || "").toLowerCase();
-          if (!aState && !bState) cmp = 0;
-          else if (!aState) cmp = 1;
-          else if (!bState) cmp = -1;
-          else cmp = aState.localeCompare(bState);
-          break;
-        }
-        case "phone": {
-          const aPhone = a.phone || "";
-          const bPhone = b.phone || "";
-          cmp = aPhone.localeCompare(bPhone);
-          break;
-        }
-        case "email": {
-          const aEmail = (a.email || "").toLowerCase();
-          const bEmail = (b.email || "").toLowerCase();
-          if (!aEmail && !bEmail) cmp = 0;
-          else if (!aEmail) cmp = 1;
-          else if (!bEmail) cmp = -1;
-          else cmp = aEmail.localeCompare(bEmail);
-          break;
-        }
-        case "pianoType": {
-          const aPiano = (a.pianoType || "").toLowerCase();
-          const bPiano = (b.pianoType || "").toLowerCase();
-          if (!aPiano && !bPiano) cmp = 0;
-          else if (!aPiano) cmp = 1;
-          else if (!bPiano) cmp = -1;
-          else cmp = aPiano.localeCompare(bPiano);
+      switch (sortBy) {
+        case "priority": {
+          const aContacted = getMonthsSince(a.lastContacted);
+          const bContacted = getMonthsSince(b.lastContacted);
+          const aTuned = getMonthsSince(a.lastTuned);
+          const bTuned = getMonthsSince(b.lastTuned);
+          const aScore = Math.max(aContacted ?? 999, aTuned ?? 999);
+          const bScore = Math.max(bContacted ?? 999, bTuned ?? 999);
+          cmp = aScore - bScore;
           break;
         }
         case "lastTuned": {
@@ -204,36 +228,61 @@ export default function Customers() {
           else cmp = aDate.getTime() - bDate.getTime();
           break;
         }
-        case "status": {
-          const aMonths = getMonthsSince(a.lastTuned);
-          const bMonths = getMonthsSince(b.lastTuned);
-          const aPri = aMonths === null ? 999 : aMonths;
-          const bPri = bMonths === null ? 999 : bMonths;
-          cmp = bPri - aPri;
+        case "lastContacted": {
+          const aDate = parseDate(a.lastContacted);
+          const bDate = parseDate(b.lastContacted);
+          if (!aDate && !bDate) cmp = 0;
+          else if (!aDate) cmp = 1;
+          else if (!bDate) cmp = -1;
+          else cmp = aDate.getTime() - bDate.getTime();
+          break;
+        }
+        case "nextAppointment": {
+          const aAppt = nextAppointmentMap.get(a.id);
+          const bAppt = nextAppointmentMap.get(b.id);
+          if (!aAppt && !bAppt) cmp = 0;
+          else if (!aAppt) cmp = 1;
+          else if (!bAppt) cmp = -1;
+          else cmp = aAppt.localeCompare(bAppt);
+          break;
+        }
+        case "location": {
+          const aCity = (a.city ?? "").toLowerCase();
+          const bCity = (b.city ?? "").toLowerCase();
+          if (!aCity && !bCity) cmp = 0;
+          else if (!aCity) cmp = 1;
+          else if (!bCity) cmp = -1;
+          else cmp = aCity.localeCompare(bCity);
+          break;
+        }
+        case "lastName": {
+          cmp = (a.lastName ?? "").localeCompare(b.lastName ?? "");
+          break;
+        }
+        case "pianoType": {
+          const aPiano = pianosByCustomer.get(a.id);
+          const bPiano = pianosByCustomer.get(b.id);
+          const aType = (aPiano?.pianoType ?? a.pianoType ?? "").toLowerCase();
+          const bType = (bPiano?.pianoType ?? b.pianoType ?? "").toLowerCase();
+          if (!aType && !bType) cmp = 0;
+          else if (!aType) cmp = 1;
+          else if (!bType) cmp = -1;
+          else cmp = aType.localeCompare(bType);
           break;
         }
       }
-      return cmp * dir;
+      return sortDir === "asc" ? cmp : -cmp;
     });
-  }, [filtered, viewMode, sortKey, sortDir]);
+  }, [filtered, sortBy, sortDir, nextAppointmentMap, pianosByCustomer]);
 
-  const handleSort = (key: SortKey) => {
-    if (sortKey === key) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
+  function handleSortChange(newSort: SortOption) {
+    if (newSort === sortBy) {
+      setSortDir(d => d === "asc" ? "desc" : "asc");
     } else {
-      setSortKey(key);
-      setSortDir("asc");
+      setSortBy(newSort);
+      setSortDir(DEFAULT_DIRECTIONS[newSort]);
     }
-  };
-
-  const SortIcon = ({ column }: { column: SortKey }) => {
-    if (sortKey !== column) return <ArrowUpDown className="h-3 w-3 ml-1 opacity-40" />;
-    return sortDir === "asc"
-      ? <ArrowUp className="h-3 w-3 ml-1" />
-      : <ArrowDown className="h-3 w-3 ml-1" />;
-  };
-
-  const displayList = viewMode === "list" ? sorted : filtered;
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
@@ -243,7 +292,7 @@ export default function Customers() {
           <p className="text-muted-foreground text-sm mt-1">
             {isLoading
               ? "Loading..."
-              : `${displayList.length} of ${customers?.length ?? 0} clients`}
+              : `${sorted.length} of ${customers?.length ?? 0} clients`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -286,16 +335,22 @@ export default function Customers() {
             data-testid="input-search"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <SlidersHorizontal className="h-4 w-4 text-muted-foreground shrink-0 hidden sm:block" />
-          <Select value={cityFilter} onValueChange={setCityFilter}>
-            <SelectTrigger className="w-full sm:w-[140px]" data-testid="select-city-filter">
-              <SelectValue placeholder="All Cities" />
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={areaFilter} onValueChange={setAreaFilter}>
+            <SelectTrigger className="w-full sm:w-[180px]" data-testid="select-area-filter">
+              <MapPin className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="All Areas" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Cities</SelectItem>
-              {cities.map((city) => (
-                <SelectItem key={city} value={city}>{city}</SelectItem>
+              <SelectItem value="all">All Areas</SelectItem>
+              {Object.entries(SERVICE_AREA_CLUSTERS).map(([area, cities]) => (
+                <SelectGroup key={area}>
+                  <SelectLabel className="text-xs font-semibold">{area}</SelectLabel>
+                  <SelectItem value={area} className="font-medium">All {area}</SelectItem>
+                  {cities.filter(c => c !== "SLC").map((city) => (
+                    <SelectItem key={city} value={city} className="pl-6">{city}</SelectItem>
+                  ))}
+                </SelectGroup>
               ))}
             </SelectContent>
           </Select>
@@ -311,6 +366,36 @@ export default function Customers() {
               <SelectItem value="unknown">No Record</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex items-center gap-1">
+            <Select value={sortBy} onValueChange={(v) => handleSortChange(v as SortOption)}>
+              <SelectTrigger className="w-full sm:w-[170px]" data-testid="select-sort">
+                <ArrowUpDown className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
+                <SelectValue placeholder="Sort by..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="lastName">Last Name</SelectItem>
+                <SelectItem value="priority">Priority</SelectItem>
+                <SelectItem value="lastTuned">Last Tuned</SelectItem>
+                <SelectItem value="lastContacted">Last Contacted</SelectItem>
+                <SelectItem value="nextAppointment">Next Appointment</SelectItem>
+                <SelectItem value="location">Location</SelectItem>
+                <SelectItem value="pianoType">Piano Type</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-9 w-9 shrink-0"
+              onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
+              data-testid="button-sort-direction"
+            >
+              {sortDir === "asc" ? (
+                <ArrowUp className="h-4 w-4" />
+              ) : (
+                <ArrowDown className="h-4 w-4" />
+              )}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -326,33 +411,162 @@ export default function Customers() {
             </Card>
           ))}
         </div>
-      ) : displayList.length === 0 ? (
+      ) : sorted.length === 0 ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-12">
             <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
             <h3 className="font-medium text-sm">No clients found</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              {search || cityFilter !== "all" || statusFilter !== "all"
+              {search || areaFilter !== "all" || statusFilter !== "all"
                 ? "Try adjusting your filters"
                 : "Import from Google Sheets or add clients manually"}
             </p>
           </CardContent>
         </Card>
-      ) : viewMode === "card" ? (
+      ) : viewMode === "list" ? (
+        <div className="overflow-x-auto border rounded-lg" data-testid="list-view">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/50">
+                {([
+                  ["lastName", "Name"],
+                  ["location", "Location"],
+                  ["pianoType", "Piano"],
+                  ["lastTuned", "Last Tuned"],
+                  ["lastContacted", "Contacted"],
+                  ["nextAppointment", "Next Appt"],
+                ] as [SortOption, string][]).map(([key, label]) => (
+                  <th
+                    key={key}
+                    className="text-left px-3 py-2 font-medium text-xs text-muted-foreground cursor-pointer hover:text-foreground select-none whitespace-nowrap"
+                    onClick={() => handleSortChange(key)}
+                    data-testid={`th-sort-${key}`}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {label}
+                      {sortBy === key ? (
+                        sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+                      ) : (
+                        <ArrowUpDown className="h-3 w-3 opacity-30" />
+                      )}
+                    </span>
+                  </th>
+                ))}
+                <th className="text-left px-3 py-2 font-medium text-xs text-muted-foreground whitespace-nowrap">Status</th>
+                <th className="text-right px-3 py-2 font-medium text-xs text-muted-foreground whitespace-nowrap">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((customer) => {
+                const primaryPiano = pianosByCustomer.get(customer.id);
+                const pianoLabel = primaryPiano && (primaryPiano.make || primaryPiano.pianoType)
+                  ? [primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")
+                  : customer.pianoType;
+                const nextAppt = nextAppointmentMap.get(customer.id);
+
+                return (
+                  <tr
+                    key={customer.id}
+                    className="border-b last:border-b-0 hover:bg-muted/30 transition-colors"
+                    data-testid={`row-customer-${customer.id}`}
+                  >
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      <Link href={`/customers/${customer.id}`}>
+                        <span className="font-medium hover:underline cursor-pointer" data-testid={`text-customer-name-${customer.id}`}>
+                          {customer.firstName} {customer.lastName}
+                        </span>
+                      </Link>
+                      {customer.phone && (
+                        <div className="text-xs text-muted-foreground">{formatPhone(customer.phone)}</div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                      {customer.city}{customer.state ? `, ${customer.state}` : ""}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground" data-testid={`text-piano-${customer.id}`}>
+                      {pianoLabel || "—"}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground">
+                      {formatDateDisplay(customer.lastTuned)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs text-muted-foreground" data-testid={`text-contacted-${customer.id}`}>
+                      {formatDateDisplay(customer.lastContacted)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-xs">
+                      {nextAppt ? (
+                        <span className="text-primary">{nextAppt}</span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {getStatusBadge(customer.lastTuned)}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs h-7"
+                          disabled={markContactedMutation.isPending}
+                          onClick={() =>
+                            markContactedMutation.mutate({
+                              id: customer.id,
+                              date: todayFormatted(),
+                            })
+                          }
+                          data-testid={`button-contacted-${customer.id}`}
+                        >
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          Contacted
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs h-7"
+                          onClick={() => {
+                            setAppointmentCustomerId(customer.id);
+                            setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
+                            setShowAppointmentDialog(true);
+                          }}
+                          data-testid={`button-schedule-${customer.id}`}
+                        >
+                          <Calendar className="h-3 w-3 mr-1" />
+                          Appt
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {displayList.map((customer) => (
-            <Link key={customer.id} href={`/customers/${customer.id}`}>
-              <Card className="hover-elevate cursor-pointer h-full" data-testid={`card-customer-${customer.id}`}>
+          {sorted.map((customer) => {
+            const primaryPiano = pianosByCustomer.get(customer.id);
+            const pianoLabel = primaryPiano && (primaryPiano.make || primaryPiano.pianoType)
+              ? [primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")
+              : customer.pianoType;
+            const nextAppt = nextAppointmentMap.get(customer.id);
+
+            return (
+              <Card key={customer.id} className="h-full" data-testid={`card-customer-${customer.id}`}>
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary text-sm font-semibold">
-                        {customer.firstName?.[0]}{customer.lastName?.[0]}
-                      </div>
+                      <Link href={`/customers/${customer.id}`}>
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary text-sm font-semibold cursor-pointer hover:bg-primary/20 transition-colors">
+                          {customer.firstName?.[0]}{customer.lastName?.[0]}
+                        </div>
+                      </Link>
                       <div className="min-w-0">
-                        <p className="font-semibold text-sm truncate" data-testid={`text-customer-name-${customer.id}`}>
-                          {customer.firstName} {customer.lastName}
-                        </p>
+                        <Link href={`/customers/${customer.id}`}>
+                          <p className="font-semibold text-sm truncate hover:underline cursor-pointer" data-testid={`text-customer-name-${customer.id}`}>
+                            {customer.firstName} {customer.lastName}
+                          </p>
+                        </Link>
                         {customer.companyName && (
                           <p className="text-xs text-muted-foreground truncate">{customer.companyName}</p>
                         )}
@@ -362,28 +576,10 @@ export default function Customers() {
                   </div>
 
                   <div className="space-y-1.5">
-                    {(() => {
-                      const primaryPiano = pianosByCustomer.get(customer.id);
-                      const pianoLabel = primaryPiano && (primaryPiano.make || primaryPiano.pianoType)
-                        ? [primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")
-                        : customer.pianoType;
-                      return pianoLabel ? (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid={`text-piano-${customer.id}`}>
-                          <Piano className="h-3 w-3 shrink-0" />
-                          <span className="truncate">{pianoLabel}</span>
-                        </div>
-                      ) : null;
-                    })()}
-                    {customer.lastTuned && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <CalendarDays className="h-3 w-3 shrink-0" />
-                        <span>Last tuned: {customer.lastTuned}</span>
-                      </div>
-                    )}
-                    {customer.city && (
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <MapPin className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{customer.city}, {customer.state}</span>
+                    {pianoLabel && (
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid={`text-piano-${customer.id}`}>
+                        <Piano className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{pianoLabel}</span>
                       </div>
                     )}
                     {customer.phone && (
@@ -392,120 +588,73 @@ export default function Customers() {
                         <span>{formatPhone(customer.phone)}</span>
                       </div>
                     )}
-                    {customer.email && (
+                    {customer.city && (
                       <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Mail className="h-3 w-3 shrink-0" />
-                        <span className="truncate">{customer.email}</span>
+                        <MapPin className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{customer.city}{customer.state ? `, ${customer.state}` : ""}</span>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <CalendarDays className="h-3 w-3 shrink-0" />
+                      <span>Tuned: {formatDateDisplay(customer.lastTuned)}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid={`text-contacted-${customer.id}`}>
+                      <Phone className="h-3 w-3 shrink-0" />
+                      <span>Contacted: {formatDateDisplay(customer.lastContacted)}</span>
+                    </div>
+                    {nextAppt && (
+                      <div className="flex items-center gap-2 text-xs text-primary">
+                        <Calendar className="h-3 w-3 shrink-0" />
+                        <span>Next appt: {nextAppt}</span>
                       </div>
                     )}
                   </div>
+
+                  <div className="flex items-center gap-1 pt-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 flex-1"
+                      disabled={markContactedMutation.isPending}
+                      onClick={() =>
+                        markContactedMutation.mutate({
+                          id: customer.id,
+                          date: todayFormatted(),
+                        })
+                      }
+                      data-testid={`button-contacted-${customer.id}`}
+                    >
+                      <CheckCircle className="h-3 w-3 mr-1" />
+                      Contacted
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 flex-1"
+                      onClick={() => {
+                        setAppointmentCustomerId(customer.id);
+                        setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
+                        setShowAppointmentDialog(true);
+                      }}
+                      data-testid={`button-schedule-${customer.id}`}
+                    >
+                      <Calendar className="h-3 w-3 mr-1" />
+                      Appt
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
-            </Link>
-          ))}
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border bg-card" data-testid="list-view-table">
-          <div className="min-w-[900px]">
-            <div className="flex items-center border-b bg-muted/50 text-xs font-medium text-muted-foreground sticky top-0 z-10">
-              <button
-                className="flex items-center px-3 py-2.5 w-[200px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("name")}
-                data-testid="sort-name"
-              >
-                Name <SortIcon column="name" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 w-[130px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("phone")}
-                data-testid="sort-phone"
-              >
-                Phone <SortIcon column="phone" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 w-[180px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("email")}
-                data-testid="sort-email"
-              >
-                Email <SortIcon column="email" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 w-[120px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("city")}
-                data-testid="sort-city"
-              >
-                City <SortIcon column="city" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 w-[60px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("state")}
-                data-testid="sort-state"
-              >
-                ST <SortIcon column="state" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 flex-1 min-w-[140px] hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("pianoType")}
-                data-testid="sort-piano"
-              >
-                Piano <SortIcon column="pianoType" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 w-[100px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("lastTuned")}
-                data-testid="sort-last-tuned"
-              >
-                Last Tuned <SortIcon column="lastTuned" />
-              </button>
-              <button
-                className="flex items-center px-3 py-2.5 w-[110px] shrink-0 hover:text-foreground transition-colors text-left"
-                onClick={() => handleSort("status")}
-                data-testid="sort-status"
-              >
-                Status <SortIcon column="status" />
-              </button>
-            </div>
-            <div>
-              {sorted.map((customer) => (
-                <Link key={customer.id} href={`/customers/${customer.id}`}>
-                  <div
-                    className="flex items-center border-b last:border-b-0 hover:bg-muted/50 cursor-pointer transition-colors text-sm"
-                    data-testid={`row-customer-${customer.id}`}
-                  >
-                    <div className="px-3 py-2.5 w-[200px] shrink-0 font-medium truncate" data-testid={`text-customer-name-${customer.id}`}>
-                      {customer.firstName} {customer.lastName}
-                      {customer.companyName && (
-                        <span className="text-xs text-muted-foreground ml-1">({customer.companyName})</span>
-                      )}
-                    </div>
-                    <div className="px-3 py-2.5 w-[130px] shrink-0 text-muted-foreground truncate">
-                      {customer.phone ? formatPhone(customer.phone) : "—"}
-                    </div>
-                    <div className="px-3 py-2.5 w-[180px] shrink-0 text-muted-foreground truncate">
-                      {customer.email || "—"}
-                    </div>
-                    <div className="px-3 py-2.5 w-[120px] shrink-0 text-muted-foreground truncate">
-                      {customer.city || "—"}
-                    </div>
-                    <div className="px-3 py-2.5 w-[60px] shrink-0 text-muted-foreground">
-                      {customer.state || "—"}
-                    </div>
-                    <div className="px-3 py-2.5 flex-1 min-w-[140px] text-muted-foreground truncate">
-                      {customer.pianoType || "—"}
-                    </div>
-                    <div className="px-3 py-2.5 w-[100px] shrink-0 text-muted-foreground">
-                      {customer.lastTuned || "—"}
-                    </div>
-                    <div className="px-3 py-2.5 w-[110px] shrink-0">
-                      {getStatusBadge(customer.lastTuned)}
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
+            );
+          })}
         </div>
       )}
+
+      <AppointmentDialog
+        open={showAppointmentDialog}
+        onOpenChange={setShowAppointmentDialog}
+        customerId={appointmentCustomerId}
+        customerName={appointmentCustomerName}
+      />
     </div>
   );
 }

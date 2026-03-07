@@ -20,13 +20,12 @@ Preferred communication style: Simple, everyday language.
 
 ### Pages
 - `/` — Dashboard with stats (Total Clients, Total Pianos), Service Areas (hierarchical: SLC with 3 sub-areas + Boston), and Appointments & Overdue panel
-- `/customers` — Client list with search and filtering (card + sortable list views)
+- `/customers` — Unified client list (merged call center) with card + list views, service area grouped filter (Davis County, SLC, South Jordan, Boston), status filter, sorting (Last Name, Priority, Last Tuned, Last Contacted, Next Appointment, Location, Piano Type) with asc/desc toggle, "Contacted" and "Appt" action buttons per client, search by name/phone/city/piano/email/company
 - `/customers/new` — Create new client form
 - `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, and last contacted tracking
 - `/appointments` — Appointment list with search, sort, and status management
 - `/calendar` — Monthly calendar grid showing appointments and personal notes; completed appointments faded; click dates to add notes
 - `/slc-schedule` — Trip planner for SLC visits; vertical column layout (each day = a column), auto-detected service area per day, smart client suggestions (nearby cities), scheduling conflict validation; deletable/recreatable trips
-- `/call-center` — Call center with contact priority list, last contacted tracking, area/city filter dropdown (grouped by 4 service areas), ascending/descending sort toggle, and piano type sort option
 - `/sync` — Google Sheets sync interface
 
 ### Backend

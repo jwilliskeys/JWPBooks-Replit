@@ -1,4 +1,4 @@
-import { LayoutDashboard, Users, RefreshCw, Music, PhoneCall, Calendar, MapPin } from "lucide-react";
+import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -22,7 +22,6 @@ const navItems = [
   { title: "Appointments", url: "/appointments", icon: Calendar },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "SLC Schedule", url: "/slc-schedule", icon: MapPin },
-  { title: "Call Center", url: "/call-center", icon: PhoneCall },
   { title: "Sync Data", url: "/sync", icon: RefreshCw },
 ];
 
