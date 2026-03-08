@@ -43,6 +43,7 @@ import {
   EyeOff,
   Eye,
   PhoneCall,
+  Star,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
@@ -604,6 +605,19 @@ export default function CustomerDetail() {
     },
   });
 
+  const toggleStarMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/customers/${customerId}`, { isStarred: !customer?.isStarred }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId] });
+      toast({ title: customer?.isStarred ? "Removed from starred" : "Added to starred" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update", variant: "destructive" });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: () => apiRequest("DELETE", `/api/customers/${customerId}`),
     onSuccess: () => {
@@ -681,9 +695,22 @@ export default function CustomerDetail() {
             </Button>
           </Link>
           <div className="flex-1 min-w-0">
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate" data-testid="text-customer-name">
-              {customer.firstName} {customer.lastName}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate" data-testid="text-customer-name">
+                {customer.firstName} {customer.lastName}
+              </h1>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => toggleStarMutation.mutate()}
+                disabled={toggleStarMutation.isPending}
+                data-testid="button-toggle-star"
+              >
+                <Star
+                  className={`h-5 w-5 ${customer.isStarred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
+                />
+              </Button>
+            </div>
             {customer.companyName && (
               <p className="text-muted-foreground text-sm mt-0.5 truncate">{customer.companyName}</p>
             )}

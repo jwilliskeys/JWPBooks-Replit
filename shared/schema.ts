@@ -18,6 +18,7 @@ export const customers = pgTable("customers", {
   lastTuned: text("last_tuned"),
   personalNotes: text("personal_notes"),
   lastContacted: text("last_contacted"),
+  isStarred: boolean("is_starred").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -20,9 +20,9 @@ Preferred communication style: Simple, everyday language.
 
 ### Pages
 - `/` — Dashboard with stats (Total Clients, Total Pianos), Service Areas (hierarchical: SLC with 3 sub-areas + Boston), and Appointments & Overdue panel
-- `/customers` — Unified client list (merged call center) with card + list views, service area grouped filter (Davis County, SLC, South Jordan, Boston), status filter, sorting (Last Name, Priority, Last Tuned, Last Contacted, Next Appointment, Location, Piano Type) with asc/desc toggle, "Contacted" and "Appt" action buttons per client, search by name/phone/city/piano/email/company
+- `/customers` — Unified client list (merged call center) with card + list views (list default), call center stats box (starred need call, overdue tuning, never contacted), star/favorite toggle per client, service area grouped filter (Davis County, SLC, South Jordan, Boston), status filter, sorting (Last Name, Priority, Last Tuned, Last Contacted, Next Appointment, Location, Piano Type) with asc/desc toggle, "Contacted" and "Appt" action buttons per client, search by name/phone/city/piano/email/company. Priority sort boosts starred clients.
 - `/customers/new` — Create new client form
-- `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, and last contacted tracking
+- `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, last contacted tracking, and star/favorite toggle
 - `/appointments` — Appointment list with search, sort, and status management
 - `/calendar` — Monthly calendar grid showing appointments and personal notes; completed appointments faded; click dates to add notes
 - `/slc-schedule` — Trip planner for SLC visits; vertical column layout (each day = a column), auto-detected service area per day, smart client suggestions (nearby cities), scheduling conflict validation; deletable/recreatable trips
@@ -53,7 +53,7 @@ Preferred communication style: Simple, everyday language.
 - **ORM**: Drizzle ORM with `drizzle-zod` for schema validation
 - **Schema location**: `shared/schema.ts` (shared between client and server)
 - **Tables**:
-  - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, lastContacted, createdAt
+  - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, lastContacted, isStarred, createdAt
   - `pianos` — id, customerId, make, model, pianoType, year, notes, photos (text[]), lastTuned, isActive, createdAt
   - `service_records` — id, customerId, pianoId, serviceDate, serviceType, notes, cost, createdAt
   - `appointments` — id, customerId, pianoId, date, time, servicesRequested, priceEstimate, notes, isTuning, status, createdAt

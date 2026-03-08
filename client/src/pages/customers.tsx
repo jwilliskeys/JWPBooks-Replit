@@ -32,6 +32,9 @@ import {
   ArrowUpDown,
   CheckCircle,
   Calendar,
+  Star,
+  AlertTriangle,
+  PhoneOff,
 } from "lucide-react";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
@@ -96,7 +99,7 @@ export default function Customers() {
   const [search, setSearch] = useState("");
   const [areaFilter, setAreaFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [viewMode, setViewMode] = useState<"card" | "list">("card");
+  const [viewMode, setViewMode] = useState<"card" | "list">("list");
   const [sortBy, setSortBy] = useState<SortOption>("lastName");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
@@ -162,6 +165,17 @@ export default function Customers() {
     },
   });
 
+  const toggleStarMutation = useMutation({
+    mutationFn: ({ id, isStarred }: { id: number; isStarred: boolean }) =>
+      apiRequest("PATCH", `/api/customers/${id}`, { isStarred }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+    },
+    onError: () => {
+      toast({ title: "Failed to update", variant: "destructive" });
+    },
+  });
+
   function matchesAreaFilter(customer: Customer): boolean {
     if (areaFilter === "all") return true;
     const isAreaKey = areaFilter in SERVICE_AREA_CLUSTERS;
@@ -210,6 +224,12 @@ export default function Customers() {
       let cmp = 0;
       switch (sortBy) {
         case "priority": {
+          const aStarred = a.isStarred ? 1 : 0;
+          const bStarred = b.isStarred ? 1 : 0;
+          if (aStarred !== bStarred) {
+            cmp = aStarred - bStarred;
+            break;
+          }
           const aContacted = getMonthsSince(a.lastContacted);
           const bContacted = getMonthsSince(b.lastContacted);
           const aTuned = getMonthsSince(a.lastTuned);
@@ -284,44 +304,82 @@ export default function Customers() {
     }
   }
 
+  const callCenterStats = useMemo(() => {
+    if (!filtered.length) return { starredNotContacted6Mo: 0, overdueTuning: 0, neverContacted: 0 };
+    let starredNotContacted6Mo = 0;
+    let overdueTuning = 0;
+    let neverContacted = 0;
+    for (const c of filtered) {
+      const contactedMonths = getMonthsSince(c.lastContacted);
+      const tunedMonths = getMonthsSince(c.lastTuned);
+      if (c.isStarred && (contactedMonths === null || contactedMonths >= 6)) starredNotContacted6Mo++;
+      if (tunedMonths === null || tunedMonths >= 12) overdueTuning++;
+      if (contactedMonths === null) neverContacted++;
+    }
+    return { starredNotContacted6Mo, overdueTuning, neverContacted };
+  }, [filtered]);
+
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Clients</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {isLoading
-              ? "Loading..."
-              : `${sorted.length} of ${customers?.length ?? 0} clients`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center border rounded-md" data-testid="view-toggle">
-            <Button
-              variant={viewMode === "card" ? "default" : "ghost"}
-              size="icon"
-              className="h-8 w-8 rounded-r-none"
-              onClick={() => setViewMode("card")}
-              data-testid="button-view-card"
-            >
-              <LayoutGrid className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={viewMode === "list" ? "default" : "ghost"}
-              size="icon"
-              className="h-8 w-8 rounded-l-none"
-              onClick={() => setViewMode("list")}
-              data-testid="button-view-list"
-            >
-              <List className="h-4 w-4" />
-            </Button>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Clients</h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              {isLoading
+                ? "Loading..."
+                : `${sorted.length} of ${customers?.length ?? 0} clients`}
+            </p>
           </div>
-          <Link href="/customers/new">
-            <Button data-testid="button-add-customer">
-              <UserPlus className="h-4 w-4 mr-1 sm:mr-2" /> <span className="hidden sm:inline">Add Client</span>
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <div className="flex items-center border rounded-md" data-testid="view-toggle">
+              <Button
+                variant={viewMode === "card" ? "default" : "ghost"}
+                size="icon"
+                className="h-8 w-8 rounded-r-none"
+                onClick={() => setViewMode("card")}
+                data-testid="button-view-card"
+              >
+                <LayoutGrid className="h-4 w-4" />
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "default" : "ghost"}
+                size="icon"
+                className="h-8 w-8 rounded-l-none"
+                onClick={() => setViewMode("list")}
+                data-testid="button-view-list"
+              >
+                <List className="h-4 w-4" />
+              </Button>
+            </div>
+            <Link href="/customers/new">
+              <Button data-testid="button-add-customer">
+                <UserPlus className="h-4 w-4 mr-1 sm:mr-2" /> <span className="hidden sm:inline">Add Client</span>
+              </Button>
+            </Link>
+          </div>
         </div>
+        {!isLoading && (
+          <Card className="shrink-0" data-testid="card-call-center-stats">
+            <CardContent className="p-3 flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-1.5" data-testid="stat-starred-not-contacted">
+                <Star className="h-3.5 w-3.5 text-yellow-500" />
+                <span className="text-muted-foreground">Starred need call:</span>
+                <span className="font-semibold">{callCenterStats.starredNotContacted6Mo}</span>
+              </div>
+              <div className="flex items-center gap-1.5" data-testid="stat-overdue-tuning">
+                <AlertTriangle className="h-3.5 w-3.5 text-orange-500" />
+                <span className="text-muted-foreground">Overdue tuning:</span>
+                <span className="font-semibold">{callCenterStats.overdueTuning}</span>
+              </div>
+              <div className="flex items-center gap-1.5" data-testid="stat-never-contacted">
+                <PhoneOff className="h-3.5 w-3.5 text-muted-foreground" />
+                <span className="text-muted-foreground">Never contacted:</span>
+                <span className="font-semibold">{callCenterStats.neverContacted}</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3 sm:flex-wrap">
@@ -428,6 +486,9 @@ export default function Customers() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
+                <th className="text-left px-2 py-2 font-medium text-xs text-muted-foreground w-8">
+                  <Star className="h-3 w-3" />
+                </th>
                 {([
                   ["lastName", "Name"],
                   ["location", "Location"],
@@ -470,6 +531,15 @@ export default function Customers() {
                     className="border-b last:border-b-0 hover:bg-muted/30 transition-colors"
                     data-testid={`row-customer-${customer.id}`}
                   >
+                    <td className="px-2 py-2 whitespace-nowrap">
+                      <button
+                        className="flex items-center justify-center"
+                        onClick={() => toggleStarMutation.mutate({ id: customer.id, isStarred: !customer.isStarred })}
+                        data-testid={`button-star-${customer.id}`}
+                      >
+                        <Star className={`h-4 w-4 ${customer.isStarred ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground/40"}`} />
+                      </button>
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap">
                       <Link href={`/customers/${customer.id}`}>
                         <span className="font-medium hover:underline cursor-pointer" data-testid={`text-customer-name-${customer.id}`}>
@@ -556,6 +626,13 @@ export default function Customers() {
                 <CardContent className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3 min-w-0">
+                      <button
+                        className="shrink-0"
+                        onClick={() => toggleStarMutation.mutate({ id: customer.id, isStarred: !customer.isStarred })}
+                        data-testid={`button-star-${customer.id}`}
+                      >
+                        <Star className={`h-4 w-4 ${customer.isStarred ? "fill-yellow-500 text-yellow-500" : "text-muted-foreground/40"}`} />
+                      </button>
                       <Link href={`/customers/${customer.id}`}>
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary text-sm font-semibold cursor-pointer hover:bg-primary/20 transition-colors">
                           {customer.firstName?.[0]}{customer.lastName?.[0]}
