@@ -33,8 +33,8 @@ import {
   CheckCircle,
   Calendar,
   Star,
-  AlertTriangle,
-  PhoneOff,
+  RefreshCw,
+  Filter,
 } from "lucide-react";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
@@ -98,8 +98,9 @@ const DEFAULT_DIRECTIONS: Record<SortOption, "asc" | "desc"> = {
 export default function Customers() {
   const [search, setSearch] = useState("");
   const [areaFilter, setAreaFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [quickFilter, setQuickFilter] = useState("all");
   const [viewMode, setViewMode] = useState<"card" | "list">("list");
+  const [shuffleSeed, setShuffleSeed] = useState(0);
   const [sortBy, setSortBy] = useState<SortOption>("lastName");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
@@ -207,17 +208,44 @@ export default function Customers() {
         c.city?.toLowerCase().includes(searchLower) ||
         c.companyName?.toLowerCase().includes(searchLower);
 
-      const months = getMonthsSince(c.lastTuned);
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "overdue" && months !== null && months >= 12) ||
-        (statusFilter === "due" && months !== null && months >= 6 && months < 12) ||
-        (statusFilter === "current" && months !== null && months < 6) ||
-        (statusFilter === "unknown" && months === null);
+      let matchesQuickFilter = true;
+      if (quickFilter !== "all") {
+        const piano = pianosByCustomer.get(c.id);
+        const pianoTypeStr = (piano?.pianoType ?? c.pianoType ?? "").toLowerCase();
+        const bostonCities = SERVICE_AREA_CLUSTERS["Boston"]?.map(ct => ct.toLowerCase()) ?? [];
+        switch (quickFilter) {
+          case "grand":
+            matchesQuickFilter = pianoTypeStr.includes("grand");
+            break;
+          case "upright":
+            matchesQuickFilter = pianoTypeStr.includes("upright") || pianoTypeStr.includes("spinet");
+            break;
+          case "not-contacted-6mo": {
+            const contactedMonths = getMonthsSince(c.lastContacted);
+            matchesQuickFilter = contactedMonths === null || contactedMonths >= 6;
+            break;
+          }
+          case "slc-only": {
+            const slcCities = [
+              ...SERVICE_AREA_CLUSTERS["Davis County"] ?? [],
+              ...SERVICE_AREA_CLUSTERS["Salt Lake City"] ?? [],
+              ...SERVICE_AREA_CLUSTERS["South Jordan"] ?? [],
+            ].map(ct => ct.toLowerCase());
+            const custCitySlc = (c.city ?? "").trim().toLowerCase();
+            matchesQuickFilter = slcCities.includes(custCitySlc) || custCitySlc === "slc";
+            break;
+          }
+          case "boston-only": {
+            const custCity = (c.city ?? "").trim().toLowerCase();
+            matchesQuickFilter = bostonCities.includes(custCity);
+            break;
+          }
+        }
+      }
 
-      return matchesSearch && matchesStatus;
+      return matchesSearch && matchesQuickFilter;
     });
-  }, [customers, search, areaFilter, statusFilter, customersWithAllInactivePianos]);
+  }, [customers, search, areaFilter, quickFilter, customersWithAllInactivePianos, pianosByCustomer]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -304,20 +332,29 @@ export default function Customers() {
     }
   }
 
-  const callCenterStats = useMemo(() => {
-    if (!filtered.length) return { starredNotContacted6Mo: 0, overdueTuning: 0, neverContacted: 0 };
-    let starredNotContacted6Mo = 0;
-    let overdueTuning = 0;
-    let neverContacted = 0;
-    for (const c of filtered) {
-      const contactedMonths = getMonthsSince(c.lastContacted);
-      const tunedMonths = getMonthsSince(c.lastTuned);
-      if (c.isStarred && (contactedMonths === null || contactedMonths >= 6)) starredNotContacted6Mo++;
-      if (tunedMonths === null || tunedMonths >= 12) overdueTuning++;
-      if (contactedMonths === null) neverContacted++;
+  const topStarredClients = useMemo(() => {
+    if (!customers) return [];
+    const starred = customers
+      .filter(c => c.isStarred && !customersWithAllInactivePianos.has(c.id))
+      .map(c => {
+        const contactedMonths = getMonthsSince(c.lastContacted);
+        const tunedMonths = getMonthsSince(c.lastTuned);
+        const score = Math.max(contactedMonths ?? 999, tunedMonths ?? 999);
+        const piano = pianosByCustomer.get(c.id);
+        const pianoLabel = piano && (piano.make || piano.pianoType)
+          ? [piano.make, piano.pianoType].filter(Boolean).join(" · ")
+          : c.pianoType;
+        return { ...c, score, pianoLabel };
+      })
+      .sort((a, b) => b.score - a.score);
+    if (starred.length <= 3) return starred;
+    const offset = (shuffleSeed * 3) % starred.length;
+    const result: typeof starred = [];
+    for (let i = 0; i < 3; i++) {
+      result.push(starred[(offset + i) % starred.length]);
     }
-    return { starredNotContacted6Mo, overdueTuning, neverContacted };
-  }, [filtered]);
+    return result;
+  }, [customers, customersWithAllInactivePianos, pianosByCustomer, shuffleSeed]);
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
@@ -360,23 +397,40 @@ export default function Customers() {
           </div>
         </div>
         {!isLoading && (
-          <Card className="shrink-0" data-testid="card-call-center-stats">
-            <CardContent className="p-3 flex items-center gap-4 text-xs">
-              <div className="flex items-center gap-1.5" data-testid="stat-starred-not-contacted">
-                <Star className="h-3.5 w-3.5 text-yellow-500" />
-                <span className="text-muted-foreground">Starred need call:</span>
-                <span className="font-semibold">{callCenterStats.starredNotContacted6Mo}</span>
+          <Card className="shrink-0 min-w-[260px]" data-testid="card-call-center">
+            <CardContent className="p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Call Center</span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setShuffleSeed(s => s + 1)}
+                  data-testid="button-shuffle-call-center"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </Button>
               </div>
-              <div className="flex items-center gap-1.5" data-testid="stat-overdue-tuning">
-                <AlertTriangle className="h-3.5 w-3.5 text-orange-500" />
-                <span className="text-muted-foreground">Overdue tuning:</span>
-                <span className="font-semibold">{callCenterStats.overdueTuning}</span>
-              </div>
-              <div className="flex items-center gap-1.5" data-testid="stat-never-contacted">
-                <PhoneOff className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-muted-foreground">Never contacted:</span>
-                <span className="font-semibold">{callCenterStats.neverContacted}</span>
-              </div>
+              {topStarredClients.length === 0 ? (
+                <p className="text-xs text-muted-foreground" data-testid="text-no-starred">Star clients to see them here</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {topStarredClients.map(c => (
+                    <Link key={c.id} href={`/customers/${c.id}`}>
+                      <div className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 hover:bg-accent cursor-pointer" data-testid={`call-center-client-${c.id}`}>
+                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <span className="font-medium truncate block">{c.firstName} {c.lastName}</span>
+                          <span className="text-muted-foreground truncate block">
+                            {c.phone ? formatPhone(c.phone) : "No phone"}
+                            {c.pianoLabel ? ` · ${c.pianoLabel}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -412,16 +466,18 @@ export default function Customers() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-full sm:w-[140px]" data-testid="select-status-filter">
-              <SelectValue placeholder="All Status" />
+          <Select value={quickFilter} onValueChange={setQuickFilter}>
+            <SelectTrigger className="w-full sm:w-[200px]" data-testid="select-quick-filter">
+              <Filter className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
+              <SelectValue placeholder="All Clients" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="current">Recently Tuned</SelectItem>
-              <SelectItem value="due">Due Soon</SelectItem>
-              <SelectItem value="overdue">Overdue</SelectItem>
-              <SelectItem value="unknown">No Record</SelectItem>
+              <SelectItem value="all">All Clients</SelectItem>
+              <SelectItem value="grand">Grand Piano</SelectItem>
+              <SelectItem value="upright">Upright Piano</SelectItem>
+              <SelectItem value="not-contacted-6mo">Not contacted 6+ months</SelectItem>
+              <SelectItem value="slc-only">SLC only</SelectItem>
+              <SelectItem value="boston-only">Boston only</SelectItem>
             </SelectContent>
           </Select>
           <div className="flex items-center gap-1">
@@ -475,7 +531,7 @@ export default function Customers() {
             <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
             <h3 className="font-medium text-sm">No clients found</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              {search || areaFilter !== "all" || statusFilter !== "all"
+              {search || areaFilter !== "all" || quickFilter !== "all"
                 ? "Try adjusting your filters"
                 : "Import from Google Sheets or add clients manually"}
             </p>

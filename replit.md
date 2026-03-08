@@ -20,7 +20,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Pages
 - `/` — Dashboard with stats (Total Clients, Total Pianos), Service Areas (hierarchical: SLC with 3 sub-areas + Boston), and Appointments & Overdue panel
-- `/customers` — Unified client list (merged call center) with card + list views (list default), call center stats box (starred need call, overdue tuning, never contacted), star/favorite toggle per client, service area grouped filter (Davis County, SLC, South Jordan, Boston), status filter, sorting (Last Name, Priority, Last Tuned, Last Contacted, Next Appointment, Location, Piano Type) with asc/desc toggle, "Contacted" and "Appt" action buttons per client, search by name/phone/city/piano/email/company. Priority sort boosts starred clients.
+- `/customers` — Unified client list (merged call center) with card + list views (list default), Call Center window showing top 3 starred clients (name, phone, piano) with shuffle/refresh button, star/favorite toggle per client, service area grouped filter (Davis County, SLC, South Jordan, Boston), quick filter (All Clients, Grand Piano, Upright Piano, Not contacted 6+ months, SLC only, Boston only), sorting (Last Name, Priority, Last Tuned, Last Contacted, Next Appointment, Location, Piano Type) with asc/desc toggle, "Contacted" and "Appt" action buttons per client, search by name/phone/city/piano/email/company. Priority sort boosts starred clients.
 - `/customers/new` — Create new client form
 - `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, last contacted tracking, and star/favorite toggle
 - `/appointments` — Appointment list with search, sort, and status management
