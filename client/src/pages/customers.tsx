@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useSearch, useLocation } from "wouter";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -33,7 +33,6 @@ import {
   CheckCircle,
   Calendar,
   Star,
-  RefreshCw,
   Filter,
 } from "lucide-react";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
@@ -95,14 +94,35 @@ const DEFAULT_DIRECTIONS: Record<SortOption, "asc" | "desc"> = {
   pianoType: "asc",
 };
 
+const PARAM_DEFAULTS: Record<string, string> = {
+  q: "", area: "all", filter: "all", view: "list", sort: "lastName", dir: "asc",
+};
+
 export default function Customers() {
-  const [search, setSearch] = useState("");
-  const [areaFilter, setAreaFilter] = useState("all");
-  const [quickFilter, setQuickFilter] = useState("all");
-  const [viewMode, setViewMode] = useState<"card" | "list">("list");
-  const [shuffleSeed, setShuffleSeed] = useState(0);
-  const [sortBy, setSortBy] = useState<SortOption>("lastName");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const rawSearch = useSearch();
+  const [, navigate] = useLocation();
+  const params = useMemo(() => new URLSearchParams(rawSearch), [rawSearch]);
+
+  const search = params.get("q") ?? "";
+  const areaFilter = params.get("area") ?? "all";
+  const quickFilter = params.get("filter") ?? "all";
+  const viewMode = (params.get("view") ?? "list") as "card" | "list";
+  const sortBy = (params.get("sort") ?? "lastName") as SortOption;
+  const sortDir = (params.get("dir") ?? "asc") as "asc" | "desc";
+
+  function setParams(updates: Record<string, string>) {
+    const p = new URLSearchParams(rawSearch);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === (PARAM_DEFAULTS[key] ?? "")) {
+        p.delete(key);
+      } else {
+        p.set(key, value);
+      }
+    }
+    const qs = p.toString();
+    navigate(`/customers${qs ? `?${qs}` : ""}`, { replace: true });
+  }
+
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
   const [appointmentCustomerId, setAppointmentCustomerId] = useState<number | undefined>(undefined);
   const [appointmentCustomerName, setAppointmentCustomerName] = useState<string>("");
@@ -325,36 +345,11 @@ export default function Customers() {
 
   function handleSortChange(newSort: SortOption) {
     if (newSort === sortBy) {
-      setSortDir(d => d === "asc" ? "desc" : "asc");
+      setParams({ dir: sortDir === "asc" ? "desc" : "asc" });
     } else {
-      setSortBy(newSort);
-      setSortDir(DEFAULT_DIRECTIONS[newSort]);
+      setParams({ sort: newSort, dir: DEFAULT_DIRECTIONS[newSort] });
     }
   }
-
-  const topStarredClients = useMemo(() => {
-    if (!customers) return [];
-    const starred = customers
-      .filter(c => c.isStarred && !customersWithAllInactivePianos.has(c.id))
-      .map(c => {
-        const contactedMonths = getMonthsSince(c.lastContacted);
-        const tunedMonths = getMonthsSince(c.lastTuned);
-        const score = Math.max(contactedMonths ?? 999, tunedMonths ?? 999);
-        const piano = pianosByCustomer.get(c.id);
-        const pianoLabel = piano && (piano.make || piano.pianoType)
-          ? [piano.make, piano.pianoType].filter(Boolean).join(" · ")
-          : c.pianoType;
-        return { ...c, score, pianoLabel };
-      })
-      .sort((a, b) => b.score - a.score);
-    if (starred.length <= 3) return starred;
-    const offset = (shuffleSeed * 3) % starred.length;
-    const result: typeof starred = [];
-    for (let i = 0; i < 3; i++) {
-      result.push(starred[(offset + i) % starred.length]);
-    }
-    return result;
-  }, [customers, customersWithAllInactivePianos, pianosByCustomer, shuffleSeed]);
 
   return (
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
@@ -374,7 +369,7 @@ export default function Customers() {
                 variant={viewMode === "card" ? "default" : "ghost"}
                 size="icon"
                 className="h-8 w-8 rounded-r-none"
-                onClick={() => setViewMode("card")}
+                onClick={() => setParams({ view: "card" })}
                 data-testid="button-view-card"
               >
                 <LayoutGrid className="h-4 w-4" />
@@ -383,7 +378,7 @@ export default function Customers() {
                 variant={viewMode === "list" ? "default" : "ghost"}
                 size="icon"
                 className="h-8 w-8 rounded-l-none"
-                onClick={() => setViewMode("list")}
+                onClick={() => setParams({ view: "list" })}
                 data-testid="button-view-list"
               >
                 <List className="h-4 w-4" />
@@ -396,44 +391,6 @@ export default function Customers() {
             </Link>
           </div>
         </div>
-        {!isLoading && (
-          <Card className="shrink-0 min-w-[260px]" data-testid="card-call-center">
-            <CardContent className="p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Call Center</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6"
-                  onClick={() => setShuffleSeed(s => s + 1)}
-                  data-testid="button-shuffle-call-center"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-              {topStarredClients.length === 0 ? (
-                <p className="text-xs text-muted-foreground" data-testid="text-no-starred">Star clients to see them here</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {topStarredClients.map(c => (
-                    <Link key={c.id} href={`/customers/${c.id}`}>
-                      <div className="flex items-center gap-2 text-xs rounded-md px-2 py-1.5 hover:bg-accent cursor-pointer" data-testid={`call-center-client-${c.id}`}>
-                        <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <span className="font-medium truncate block">{c.firstName} {c.lastName}</span>
-                          <span className="text-muted-foreground truncate block">
-                            {c.phone ? formatPhone(c.phone) : "No phone"}
-                            {c.pianoLabel ? ` · ${c.pianoLabel}` : ""}
-                          </span>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
       </div>
 
       <div className="space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-3 sm:flex-wrap">
@@ -442,13 +399,13 @@ export default function Customers() {
           <Input
             placeholder="Search clients..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => setParams({ q: e.target.value })}
             className="pl-9"
             data-testid="input-search"
           />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Select value={areaFilter} onValueChange={setAreaFilter}>
+          <Select value={areaFilter} onValueChange={(v) => setParams({ area: v })}>
             <SelectTrigger className="w-full sm:w-[180px]" data-testid="select-area-filter">
               <MapPin className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
               <SelectValue placeholder="All Areas" />
@@ -466,7 +423,7 @@ export default function Customers() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={quickFilter} onValueChange={setQuickFilter}>
+          <Select value={quickFilter} onValueChange={(v) => setParams({ filter: v })}>
             <SelectTrigger className="w-full sm:w-[200px]" data-testid="select-quick-filter">
               <Filter className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
               <SelectValue placeholder="All Clients" />
@@ -500,7 +457,7 @@ export default function Customers() {
               variant="outline"
               size="icon"
               className="h-9 w-9 shrink-0"
-              onClick={() => setSortDir(d => d === "asc" ? "desc" : "asc")}
+              onClick={() => setParams({ dir: sortDir === "asc" ? "desc" : "asc" })}
               data-testid="button-sort-direction"
             >
               {sortDir === "asc" ? (

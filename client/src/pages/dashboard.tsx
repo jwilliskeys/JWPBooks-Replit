@@ -182,22 +182,24 @@ export default function Dashboard() {
                       {subAreas.map((area) => {
                         const count = areaCounts[area] || 0;
                         return (
-                          <div key={area} className="flex items-center justify-between gap-2">
-                            <span className="text-xs truncate">{area}</span>
-                            <div className="flex items-center gap-2">
-                              <div className="h-1.5 bg-primary/15 rounded-full w-12 relative">
-                                <div
-                                  className="h-1.5 bg-primary rounded-full absolute inset-y-0 left-0"
-                                  style={{
-                                    width: `${regionCount > 0 ? Math.min(100, (count / regionCount) * 100) : 0}%`,
-                                  }}
-                                />
+                          <Link key={area} href={`/customers?area=${encodeURIComponent(area)}`}>
+                            <div className="flex items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-accent cursor-pointer" data-testid={`area-link-${area.toLowerCase().replace(/\s+/g, '-')}`}>
+                              <span className="text-xs truncate">{area}</span>
+                              <div className="flex items-center gap-2">
+                                <div className="h-1.5 bg-primary/15 rounded-full w-12 relative">
+                                  <div
+                                    className="h-1.5 bg-primary rounded-full absolute inset-y-0 left-0"
+                                    style={{
+                                      width: `${regionCount > 0 ? Math.min(100, (count / regionCount) * 100) : 0}%`,
+                                    }}
+                                  />
+                                </div>
+                                <span className="text-[10px] text-muted-foreground w-4 text-right">
+                                  {count}
+                                </span>
                               </div>
-                              <span className="text-[10px] text-muted-foreground w-4 text-right">
-                                {count}
-                              </span>
                             </div>
-                          </div>
+                          </Link>
                         );
                       })}
                     </div>
