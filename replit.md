@@ -25,7 +25,7 @@ Preferred communication style: Simple, everyday language.
 - `/customers/:id` — Client detail with multiple piano profiles, per-piano service records, last contacted tracking, and star/favorite toggle
 - `/appointments` — Appointment list with search, sort, and status management
 - `/calendar` — Monthly calendar grid showing appointments and personal notes; completed appointments faded; click dates to add notes
-- `/slc-schedule` — Trip planner for SLC visits; vertical column layout (each day = a column), auto-detected service area per day, smart client suggestions (nearby cities), scheduling conflict validation; deletable/recreatable trips
+- `/slc-schedule` — Trip planner for SLC visits; horizontal single-row column layout (all days side by side, scrolls horizontally if needed), each day = 220px wide column, auto-detected service area per day, smart client suggestions (nearby cities), overlapping appointments allowed with orange "Overlapping" badge warning; deletable/recreatable trips
 - `/sync` — Google Sheets sync interface
 
 ### Backend

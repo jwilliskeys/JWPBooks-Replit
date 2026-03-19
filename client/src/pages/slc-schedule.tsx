@@ -228,7 +228,6 @@ export default function SlcSchedule() {
     const result = checkTimeConflict(editTime, editDuration, custCity, existing);
     if (!result.valid) {
       setEditConflictError(result.message || "Time conflict");
-      return;
     }
     editAppointmentMutation.mutate({
       id: editingAppt.id,
@@ -318,7 +317,6 @@ export default function SlcSchedule() {
     const result = checkTimeConflict(apptTime, apptDuration, custCity, existing);
     if (!result.valid) {
       setConflictError(result.message || "Time conflict");
-      return;
     }
 
     createAppointmentMutation.mutate({
@@ -506,8 +504,8 @@ export default function SlcSchedule() {
         </div>
       </div>
 
-      <div className="pb-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className="pb-4 overflow-x-auto">
+        <div className="flex flex-nowrap gap-3" style={{ minWidth: "max-content" }}>
           {dates.map((dateStr) => {
             const dayDate = parseDateStr(dateStr);
             const dayNameShort = getDayName(dayDate);
@@ -518,7 +516,7 @@ export default function SlcSchedule() {
             return (
               <div
                 key={dateStr}
-                className="flex flex-col border rounded-lg bg-card"
+                className="w-[220px] shrink-0 flex flex-col border rounded-lg bg-card"
                 data-testid={`column-day-${dateStr}`}
               >
                 <div className="p-3 border-b bg-muted/30 rounded-t-lg">
@@ -548,17 +546,31 @@ export default function SlcSchedule() {
                       const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
                       const addressStr = addressParts.length > 0 ? addressParts.join(", ") : "";
                       const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
+                      const otherAppts: ExistingAppointment[] = dayAppts
+                        .filter(a => a.id !== appt.id && a.time)
+                        .map(a => ({ time: a.time!, duration: a.duration || "2 hours", city: "" }));
+                      const isOverlapping = appt.time
+                        ? !checkTimeConflict(appt.time, appt.duration || "2 hours", "", otherAppts).valid
+                        : false;
                       return (
                         <div
                           key={appt.id}
-                          className={`rounded-md border p-2 text-xs flex gap-2 ${isCompleted ? "opacity-60" : ""}`}
+                          className={`rounded-md border p-2 text-xs flex gap-2 ${isCompleted ? "opacity-60" : ""} ${isOverlapping ? "border-orange-300 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/10" : ""}`}
                           data-testid={`trip-appointment-${appt.id}`}
                         >
                           <div className="flex-1 space-y-1 min-w-0">
-                            <span className="flex items-center gap-1 text-muted-foreground">
-                              <Clock className="h-3 w-3" />
-                              {appt.time}
-                            </span>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <span className="flex items-center gap-1 text-muted-foreground">
+                                <Clock className="h-3 w-3" />
+                                {appt.time}
+                              </span>
+                              {isOverlapping && (
+                                <span className="inline-flex items-center gap-0.5 text-orange-600 dark:text-orange-400 font-medium" data-testid={`badge-overlap-${appt.id}`}>
+                                  <AlertCircle className="h-2.5 w-2.5" />
+                                  <span className="text-[10px]">Overlapping</span>
+                                </span>
+                              )}
+                            </div>
                             {cust ? (
                               <Link href={`/customers/${cust.id}`}>
                                 <span className="font-medium hover:underline cursor-pointer block truncate" data-testid={`text-appt-customer-${appt.id}`}>
@@ -775,9 +787,9 @@ export default function SlcSchedule() {
             </div>
 
             {conflictError && (
-              <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive" data-testid="text-conflict-error">
+              <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-conflict-error">
                 <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>{conflictError}</span>
+                <span>{conflictError} — saved anyway.</span>
               </div>
             )}
 
@@ -870,9 +882,9 @@ export default function SlcSchedule() {
               </div>
 
               {editConflictError && (
-                <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive" data-testid="text-edit-conflict-error">
+                <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-edit-conflict-error">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <span>{editConflictError}</span>
+                  <span>{editConflictError} — saved anyway.</span>
                 </div>
               )}
 
