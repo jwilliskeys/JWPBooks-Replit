@@ -609,8 +609,8 @@ export default function SlcSchedule() {
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
       toast({ title: "Appointment confirmed and added to calendar" });
     },
-    onError: () => {
-      toast({ title: "Failed to confirm appointment", variant: "destructive" });
+    onError: (error: any) => {
+      toast({ title: error?.message || "Failed to confirm appointment", variant: "destructive" });
     },
   });
 
@@ -619,7 +619,7 @@ export default function SlcSchedule() {
       const icsContent = generateIcs(appt, cust, piano);
       const custName = cust ? `${cust.firstName}_${cust.lastName}`.replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
-      toast({ title: "Already confirmed — calendar file re-downloaded" });
+      toast({ title: "Already added to appointments — calendar file re-downloaded" });
       return;
     }
     confirmAppointmentMutation.mutate({ appt, cust, piano });
