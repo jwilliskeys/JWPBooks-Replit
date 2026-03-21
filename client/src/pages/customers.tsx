@@ -12,9 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -33,11 +31,10 @@ import {
   CheckCircle,
   Calendar,
   Star,
-  Filter,
 } from "lucide-react";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
-import { SERVICE_AREA_CLUSTERS } from "@/lib/scheduling";
+import { SERVICE_AREA_CLUSTERS, getServiceArea } from "@/lib/scheduling";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
@@ -105,7 +102,11 @@ export default function Customers() {
 
   const search = params.get("q") ?? "";
   const areaFilter = params.get("area") ?? "all";
-  const quickFilter = params.get("filter") ?? "all";
+  const quickFiltersRaw = params.get("filter") ?? "";
+  const activeFilters = useMemo(
+    () => new Set(quickFiltersRaw ? quickFiltersRaw.split(",") : []),
+    [quickFiltersRaw]
+  );
   const viewMode = (params.get("view") ?? "list") as "card" | "list";
   const sortBy = (params.get("sort") ?? "lastName") as SortOption;
   const sortDir = (params.get("dir") ?? "asc") as "asc" | "desc";
@@ -118,6 +119,24 @@ export default function Customers() {
       } else {
         p.set(key, value);
       }
+    }
+    const qs = p.toString();
+    navigate(`/customers${qs ? `?${qs}` : ""}`, { replace: true });
+  }
+
+  function toggleQuickFilter(key: string) {
+    const next = new Set(activeFilters);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+    }
+    const joined = [...next].join(",");
+    const p = new URLSearchParams(rawSearch);
+    if (joined) {
+      p.set("filter", joined);
+    } else {
+      p.delete("filter");
     }
     const qs = p.toString();
     navigate(`/customers${qs ? `?${qs}` : ""}`, { replace: true });
@@ -199,17 +218,8 @@ export default function Customers() {
 
   function matchesAreaFilter(customer: Customer): boolean {
     if (areaFilter === "all") return true;
-    const isAreaKey = areaFilter in SERVICE_AREA_CLUSTERS;
-    if (isAreaKey) {
-      const cities = SERVICE_AREA_CLUSTERS[areaFilter];
-      const custCity = (customer.city ?? "").trim().toLowerCase();
-      if (custCity === "slc") return cities.some(c => c.toLowerCase() === "salt lake city");
-      return cities.some(c => c.toLowerCase() === custCity);
-    }
-    const custCity = (customer.city ?? "").trim().toLowerCase();
-    const filterCity = areaFilter.toLowerCase();
-    if (custCity === "slc" && filterCity === "salt lake city") return true;
-    return custCity === filterCity;
+    const custArea = getServiceArea(customer.city ?? "", customer.state ?? "");
+    return custArea === areaFilter;
   }
 
   const filtered = useMemo(() => {
@@ -229,43 +239,29 @@ export default function Customers() {
         c.companyName?.toLowerCase().includes(searchLower);
 
       let matchesQuickFilter = true;
-      if (quickFilter !== "all") {
+      if (activeFilters.size > 0) {
         const piano = pianosByCustomer.get(c.id);
         const pianoTypeStr = (piano?.pianoType ?? c.pianoType ?? "").toLowerCase();
-        const bostonCities = SERVICE_AREA_CLUSTERS["Boston"]?.map(ct => ct.toLowerCase()) ?? [];
-        switch (quickFilter) {
-          case "grand":
-            matchesQuickFilter = pianoTypeStr.includes("grand");
-            break;
-          case "upright":
-            matchesQuickFilter = pianoTypeStr.includes("upright") || pianoTypeStr.includes("spinet");
-            break;
-          case "not-contacted-6mo": {
-            const contactedMonths = getMonthsSince(c.lastContacted);
-            matchesQuickFilter = contactedMonths === null || contactedMonths >= 6;
-            break;
-          }
-          case "slc-only": {
-            const slcCities = [
-              ...SERVICE_AREA_CLUSTERS["Davis County"] ?? [],
-              ...SERVICE_AREA_CLUSTERS["Salt Lake City"] ?? [],
-              ...SERVICE_AREA_CLUSTERS["South Jordan"] ?? [],
-            ].map(ct => ct.toLowerCase());
-            const custCitySlc = (c.city ?? "").trim().toLowerCase();
-            matchesQuickFilter = slcCities.includes(custCitySlc) || custCitySlc === "slc";
-            break;
-          }
-          case "boston-only": {
-            const custCity = (c.city ?? "").trim().toLowerCase();
-            matchesQuickFilter = bostonCities.includes(custCity);
-            break;
-          }
+        if (activeFilters.has("grand")) {
+          if (!pianoTypeStr.includes("grand")) matchesQuickFilter = false;
+        }
+        if (activeFilters.has("upright")) {
+          if (!pianoTypeStr.includes("upright") && !pianoTypeStr.includes("spinet")) matchesQuickFilter = false;
+        }
+        if (activeFilters.has("not-contacted-6mo")) {
+          const contactedMonths = getMonthsSince(c.lastContacted);
+          if (!(contactedMonths === null || contactedMonths >= 6)) matchesQuickFilter = false;
+        }
+        if (activeFilters.has("slc-only")) {
+          const custArea = getServiceArea(c.city ?? "", c.state ?? "");
+          const isSlc = custArea === "Davis County" || custArea === "Salt Lake City" || custArea === "South Jordan";
+          if (!isSlc) matchesQuickFilter = false;
         }
       }
 
       return matchesSearch && matchesQuickFilter;
     });
-  }, [customers, search, areaFilter, quickFilter, customersWithAllInactivePianos, pianosByCustomer]);
+  }, [customers, search, areaFilter, activeFilters, customersWithAllInactivePianos, pianosByCustomer]);
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -412,31 +408,30 @@ export default function Customers() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Areas</SelectItem>
-              {Object.entries(SERVICE_AREA_CLUSTERS).map(([area, cities]) => (
-                <SelectGroup key={area}>
-                  <SelectLabel className="text-xs font-semibold">{area}</SelectLabel>
-                  <SelectItem value={area} className="font-medium">All {area}</SelectItem>
-                  {cities.filter(c => c !== "SLC").map((city) => (
-                    <SelectItem key={city} value={city} className="pl-6">{city}</SelectItem>
-                  ))}
-                </SelectGroup>
+              {Object.keys(SERVICE_AREA_CLUSTERS).map((area) => (
+                <SelectItem key={area} value={area}>{area}</SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Select value={quickFilter} onValueChange={(v) => setParams({ filter: v })}>
-            <SelectTrigger className="w-full sm:w-[200px]" data-testid="select-quick-filter">
-              <Filter className="h-3.5 w-3.5 mr-1 text-muted-foreground shrink-0" />
-              <SelectValue placeholder="All Clients" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Clients</SelectItem>
-              <SelectItem value="grand">Grand Piano</SelectItem>
-              <SelectItem value="upright">Upright Piano</SelectItem>
-              <SelectItem value="not-contacted-6mo">Not contacted 6+ months</SelectItem>
-              <SelectItem value="slc-only">SLC only</SelectItem>
-              <SelectItem value="boston-only">Boston only</SelectItem>
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-1.5 flex-wrap" data-testid="quick-filters">
+            {([ 
+              { key: "grand", label: "Grand Piano" },
+              { key: "upright", label: "Upright Piano" },
+              { key: "not-contacted-6mo", label: "Not contacted 6+ mo" },
+              { key: "slc-only", label: "SLC only" },
+            ] as const).map(({ key, label }) => (
+              <Button
+                key={key}
+                variant={activeFilters.has(key) ? "default" : "outline"}
+                size="sm"
+                className="h-8 text-xs rounded-full px-3"
+                onClick={() => toggleQuickFilter(key)}
+                data-testid={`filter-chip-${key}`}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
           <div className="flex items-center gap-1">
             <Select value={sortBy} onValueChange={(v) => handleSortChange(v as SortOption)}>
               <SelectTrigger className="w-full sm:w-[170px]" data-testid="select-sort">
@@ -488,7 +483,7 @@ export default function Customers() {
             <Search className="h-10 w-10 text-muted-foreground/30 mb-3" />
             <h3 className="font-medium text-sm">No clients found</h3>
             <p className="text-sm text-muted-foreground mt-1">
-              {search || areaFilter !== "all" || quickFilter !== "all"
+              {search || areaFilter !== "all" || activeFilters.size > 0
                 ? "Try adjusting your filters"
                 : "Import from Google Sheets or add clients manually"}
             </p>

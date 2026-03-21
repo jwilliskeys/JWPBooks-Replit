@@ -5,6 +5,15 @@ export const SERVICE_AREA_CLUSTERS: Record<string, string[]> = {
   "Boston": ["Somerville", "Boston", "Cambridge", "Brookline"],
 };
 
+export const SERVICE_AREA_STATES: Record<string, string> = {
+  MA: "Boston",
+  RI: "Boston",
+  CT: "Boston",
+  VA: "Boston",
+  NH: "Boston",
+  ME: "Boston",
+};
+
 export const SERVICE_REGIONS: Record<string, string[]> = {
   "Salt Lake City": ["Davis County", "Salt Lake City", "South Jordan"],
   "Boston": ["Boston"],
@@ -28,7 +37,13 @@ function findCluster(city: string): string[] | null {
   return null;
 }
 
-export function getServiceArea(city: string): string {
+export function getServiceArea(city: string, state?: string): string {
+  if (state) {
+    const stateUpper = state.trim().toUpperCase();
+    if (stateUpper in SERVICE_AREA_STATES) {
+      return SERVICE_AREA_STATES[stateUpper];
+    }
+  }
   if (!city) return "Other";
   const norm = normalizeCity(city).toLowerCase();
   for (const [area, cities] of Object.entries(SERVICE_AREA_CLUSTERS)) {
