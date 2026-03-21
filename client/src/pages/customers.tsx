@@ -92,7 +92,7 @@ const DEFAULT_DIRECTIONS: Record<SortOption, "asc" | "desc"> = {
 };
 
 const PARAM_DEFAULTS: Record<string, string> = {
-  q: "", area: "all", filter: "all", view: "list", sort: "lastName", dir: "asc",
+  q: "", area: "all", filter: "", view: "list", sort: "lastName", dir: "asc",
 };
 
 export default function Customers() {
