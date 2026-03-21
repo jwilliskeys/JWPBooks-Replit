@@ -7,6 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -27,6 +34,9 @@ import {
   Phone,
   Music,
   Pencil,
+  Home,
+  Car,
+  Star,
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -41,8 +51,35 @@ import {
   checkTimeConflict,
   getNextAvailableTime,
   parseTimeToMinutes,
+  minutesToTimeStr,
   type ExistingAppointment,
 } from "@/lib/scheduling";
+
+const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
+
+const TIME_SLOTS: string[] = [];
+for (let h = 8; h <= 18; h++) {
+  for (const m of [0, 30]) {
+    if (h === 18 && m === 30) break;
+    const period = h < 12 ? "AM" : "PM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    TIME_SLOTS.push(`${h12}:${String(m).padStart(2, "0")} ${period}`);
+  }
+}
+
+function buildCustomerAddress(cust: { address?: string | null; city?: string | null; state?: string | null; zipCode?: string | null } | undefined): string {
+  if (!cust) return HOME_ADDRESS;
+  const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean) as string[];
+  return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
+}
+
+function roundToSlot(timeStr: string): string {
+  const mins = parseTimeToMinutes(timeStr);
+  if (mins < 0) return "8:00 AM";
+  const rounded = Math.round(mins / 30) * 30;
+  const clamped = Math.max(8 * 60, Math.min(18 * 60, rounded));
+  return minutesToTimeStr(clamped);
+}
 
 function parseDateStr(dateStr: string): Date {
   if (!dateStr) return new Date(NaN);
@@ -87,6 +124,246 @@ function parsePrice(str: string | null | undefined): number {
   return isNaN(num) ? 0 : num;
 }
 
+interface DayScheduleColumnProps {
+  dateStr: string;
+  dayDate: Date;
+  dayAppts: TripAppointment[];
+  dayArea: string;
+  dayRevenue: number;
+  customerMap: Map<number, Customer>;
+  pianoMap: Map<number, Piano>;
+  onOpenDialog: (dateStr: string) => void;
+  onOpenEditDialog: (appt: TripAppointment) => void;
+  onCompleteAppointment: (id: number) => void;
+  onDeleteAppointment: (id: number) => void;
+}
+
+function DayScheduleColumn({
+  dateStr,
+  dayDate,
+  dayAppts,
+  dayArea,
+  dayRevenue,
+  customerMap,
+  pianoMap,
+  onOpenDialog,
+  onOpenEditDialog,
+  onCompleteAppointment,
+  onDeleteAppointment,
+}: DayScheduleColumnProps) {
+  const addresses = useMemo(() => {
+    if (dayAppts.length === 0) return [];
+    const apptAddresses = dayAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
+    return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
+  }, [dayAppts, customerMap]);
+
+  const { data: drivingData } = useQuery<{ durations: number[] | null; error?: string }>({
+    queryKey: ["/api/driving-times", addresses.join("|")],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/driving-times", { addresses });
+      return res.json();
+    },
+    enabled: addresses.length >= 2,
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const drivingTimes = drivingData?.durations ?? null;
+
+  const leaveByTime = useMemo(() => {
+    if (!dayAppts.length || !drivingTimes || drivingTimes[0] == null || drivingTimes[0] < 0) return null;
+    const firstMins = parseTimeToMinutes(dayAppts[0].time || "");
+    if (firstMins < 0) return null;
+    const leaveMins = firstMins - drivingTimes[0];
+    return leaveMins > 0 ? minutesToTimeStr(leaveMins) : null;
+  }, [dayAppts, drivingTimes]);
+
+  const dayNameShort = getDayName(dayDate);
+
+  return (
+    <div
+      key={dateStr}
+      className="w-[220px] shrink-0 flex flex-col border rounded-lg bg-card"
+      data-testid={`column-day-${dateStr}`}
+    >
+      <div className="p-3 border-b bg-muted/30 rounded-t-lg">
+        <div className="font-semibold text-sm">{dayNameShort}</div>
+        <div className="text-xs text-muted-foreground">{dateStr}</div>
+        {dayArea && (
+          <Badge variant="secondary" className="mt-1.5 text-xs gap-1" data-testid={`badge-area-${dateStr}`}>
+            <MapPin className="h-3 w-3" />
+            {getClusterName(dayArea)}
+          </Badge>
+        )}
+        {dayRevenue > 0 && (
+          <div className="text-xs text-muted-foreground mt-1">Expected ${dayRevenue.toFixed(0)}</div>
+        )}
+      </div>
+
+      <div className="flex-1 p-2 min-h-[200px]">
+        {dayAppts.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-8">No appointments</p>
+        ) : (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 px-1 py-1">
+              <Home className="h-3 w-3 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-medium text-muted-foreground">Start of day</div>
+                {leaveByTime && (
+                  <div className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
+                    Leave by {leaveByTime}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {dayAppts.map((appt, i) => {
+              const cust = customerMap.get(appt.customerId);
+              const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+              const isCompleted = appt.status === "completed";
+              const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
+              const addressStr = addressParts.join(", ");
+              const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
+              const otherAppts: ExistingAppointment[] = dayAppts
+                .filter(a => a.id !== appt.id && a.time)
+                .map(a => ({ time: a.time!, duration: a.duration || "2 hours", city: "" }));
+              const isOverlapping = appt.time
+                ? !checkTimeConflict(appt.time, appt.duration || "2 hours", "", otherAppts).valid
+                : false;
+              const driveMinutes = drivingTimes ? drivingTimes[i] : null;
+
+              return (
+                <div key={appt.id}>
+                  {driveMinutes != null && driveMinutes >= 0 && (
+                    <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground">
+                      <Car className="h-2.5 w-2.5 shrink-0" />
+                      <span>Driving ({driveMinutes}m)</span>
+                      <div className="flex-1 border-t border-dashed border-muted-foreground/25 ml-0.5" />
+                    </div>
+                  )}
+                  <div
+                    className={`rounded-md border p-2 text-xs flex gap-2 ${isCompleted ? "opacity-60" : ""} ${isOverlapping ? "border-orange-300 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/10" : ""}`}
+                    data-testid={`trip-appointment-${appt.id}`}
+                  >
+                    <div className="flex-1 space-y-1 min-w-0">
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          {appt.time}
+                        </span>
+                        {isOverlapping && (
+                          <span className="inline-flex items-center gap-0.5 text-orange-600 dark:text-orange-400 font-medium" data-testid={`badge-overlap-${appt.id}`}>
+                            <AlertCircle className="h-2.5 w-2.5" />
+                            <span className="text-[10px]">Overlapping</span>
+                          </span>
+                        )}
+                      </div>
+                      {cust ? (
+                        <Link href={`/customers/${cust.id}`}>
+                          <span className="font-medium hover:underline cursor-pointer block truncate" data-testid={`text-appt-customer-${appt.id}`}>
+                            {cust.firstName} {cust.lastName}
+                          </span>
+                        </Link>
+                      ) : (
+                        <span className="font-medium">Unknown</span>
+                      )}
+                      {addressStr && (
+                        <p className="text-muted-foreground flex items-start gap-1">
+                          <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+                          <span>{addressStr}</span>
+                        </p>
+                      )}
+                      {cust?.phone && (
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <Phone className="h-3 w-3 shrink-0" />
+                          <span>{formatPhone(cust.phone)}</span>
+                        </p>
+                      )}
+                      {pianoStr && (
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <Music className="h-3 w-3 shrink-0" />
+                          <span>{pianoStr}</span>
+                        </p>
+                      )}
+                      {appt.servicesRequested && (
+                        <p className="text-muted-foreground">{appt.servicesRequested}</p>
+                      )}
+                      {appt.priceEstimate && (
+                        <p className="text-muted-foreground flex items-center gap-1">
+                          <DollarSign className="h-3 w-3" />{appt.priceEstimate}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col justify-between items-center shrink-0">
+                      <div className="flex flex-col gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5"
+                          onClick={() => onOpenEditDialog(appt)}
+                          data-testid={`button-edit-trip-appt-${appt.id}`}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        {!isCompleted && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-5 w-5"
+                            onClick={() => onCompleteAppointment(appt.id)}
+                            data-testid={`button-complete-trip-appt-${appt.id}`}
+                          >
+                            <CheckCircle className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-5 w-5 text-destructive"
+                        onClick={() => onDeleteAppointment(appt.id)}
+                        data-testid={`button-delete-trip-appt-${appt.id}`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+
+            {drivingTimes && drivingTimes[dayAppts.length] != null && drivingTimes[dayAppts.length] >= 0 && (
+              <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground">
+                <Car className="h-2.5 w-2.5 shrink-0" />
+                <span>Driving ({drivingTimes[dayAppts.length]}m) home</span>
+                <div className="flex-1 border-t border-dashed border-muted-foreground/25 ml-0.5" />
+              </div>
+            )}
+            {drivingTimes && (
+              <div className="flex items-center gap-1.5 px-1 py-0.5">
+                <Home className="h-3 w-3 text-muted-foreground shrink-0" />
+                <span className="text-[10px] text-muted-foreground">Return home</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="p-2 border-t">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full text-xs"
+          onClick={() => onOpenDialog(dateStr)}
+          data-testid={`button-add-appointment-${dateStr}`}
+        >
+          <Plus className="h-3 w-3 mr-1" />
+          Add Appointment
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function SlcSchedule() {
   const { toast } = useToast();
   const [tripName, setTripName] = useState("");
@@ -99,7 +376,7 @@ export default function SlcSchedule() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [apptTime, setApptTime] = useState("8:00 AM");
   const [apptDuration, setApptDuration] = useState("2 hours");
-  const [apptServices, setApptServices] = useState("");
+  const [apptServices, setApptServices] = useState("Tuning");
   const [apptPrice, setApptPrice] = useState("$180");
   const [apptNotes, setApptNotes] = useState("");
   const [conflictError, setConflictError] = useState("");
@@ -211,7 +488,7 @@ export default function SlcSchedule() {
 
   function openEditDialog(appt: TripAppointment) {
     setEditingAppt(appt);
-    setEditTime(appt.time || "");
+    setEditTime(roundToSlot(appt.time || "8:00 AM"));
     setEditDuration(appt.duration || "2 hours");
     setEditServices(appt.servicesRequested || "");
     setEditPrice(appt.priceEstimate || "$180");
@@ -287,7 +564,7 @@ export default function SlcSchedule() {
     setSelectedCustomerId("");
     setCustomerSearch("");
     setApptDuration("2 hours");
-    setApptServices("");
+    setApptServices("Tuning");
     setApptPrice("$180");
     setApptNotes("");
     setConflictError("");
@@ -295,7 +572,7 @@ export default function SlcSchedule() {
     const existing = getDayExistingAppointments(dateStr);
     const dayArea = getDayServiceArea(dateStr);
     const nextTime = getNextAvailableTime(dayArea, "2 hours", existing);
-    setApptTime(nextTime);
+    setApptTime(roundToSlot(nextTime));
     setDialogOpen(true);
   }
 
@@ -374,6 +651,13 @@ export default function SlcSchedule() {
         rest.push(c);
       }
     }
+    sugg.sort((a, b) => {
+      if (a.isStarred && !b.isStarred) return -1;
+      if (!a.isStarred && b.isStarred) return 1;
+      return `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`);
+    });
+    const overflow = sugg.splice(3);
+    rest.unshift(...overflow);
     return { suggested: sugg, other: rest };
   }, [customers, customerSearch, dialogDayArea, dialogNearbyCities]);
 
@@ -508,159 +792,24 @@ export default function SlcSchedule() {
         <div className="flex flex-nowrap gap-3" style={{ minWidth: "max-content" }}>
           {dates.map((dateStr) => {
             const dayDate = parseDateStr(dateStr);
-            const dayNameShort = getDayName(dayDate);
             const dayAppts = appointmentsByDate.get(dateStr) ?? [];
             const dayArea = getDayServiceArea(dateStr);
             const dayRevenue = dayAppts.reduce((s, a) => s + parsePrice(a.priceEstimate), 0);
-
             return (
-              <div
+              <DayScheduleColumn
                 key={dateStr}
-                className="w-[220px] shrink-0 flex flex-col border rounded-lg bg-card"
-                data-testid={`column-day-${dateStr}`}
-              >
-                <div className="p-3 border-b bg-muted/30 rounded-t-lg">
-                  <div className="font-semibold text-sm">{dayNameShort}</div>
-                  <div className="text-xs text-muted-foreground">{dateStr}</div>
-                  {dayArea && (
-                    <Badge variant="secondary" className="mt-1.5 text-xs gap-1" data-testid={`badge-area-${dateStr}`}>
-                      <MapPin className="h-3 w-3" />
-                      {getClusterName(dayArea)}
-                    </Badge>
-                  )}
-                  {dayRevenue > 0 && (
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Expected ${dayRevenue.toFixed(0)}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex-1 p-2 space-y-2 min-h-[200px]">
-                  {dayAppts.length === 0 ? (
-                    <p className="text-xs text-muted-foreground text-center py-8">No appointments</p>
-                  ) : (
-                    dayAppts.map((appt) => {
-                      const cust = customerMap.get(appt.customerId);
-                      const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
-                      const isCompleted = appt.status === "completed";
-                      const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
-                      const addressStr = addressParts.length > 0 ? addressParts.join(", ") : "";
-                      const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
-                      const otherAppts: ExistingAppointment[] = dayAppts
-                        .filter(a => a.id !== appt.id && a.time)
-                        .map(a => ({ time: a.time!, duration: a.duration || "2 hours", city: "" }));
-                      const isOverlapping = appt.time
-                        ? !checkTimeConflict(appt.time, appt.duration || "2 hours", "", otherAppts).valid
-                        : false;
-                      return (
-                        <div
-                          key={appt.id}
-                          className={`rounded-md border p-2 text-xs flex gap-2 ${isCompleted ? "opacity-60" : ""} ${isOverlapping ? "border-orange-300 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/10" : ""}`}
-                          data-testid={`trip-appointment-${appt.id}`}
-                        >
-                          <div className="flex-1 space-y-1 min-w-0">
-                            <div className="flex items-center gap-1 flex-wrap">
-                              <span className="flex items-center gap-1 text-muted-foreground">
-                                <Clock className="h-3 w-3" />
-                                {appt.time}
-                              </span>
-                              {isOverlapping && (
-                                <span className="inline-flex items-center gap-0.5 text-orange-600 dark:text-orange-400 font-medium" data-testid={`badge-overlap-${appt.id}`}>
-                                  <AlertCircle className="h-2.5 w-2.5" />
-                                  <span className="text-[10px]">Overlapping</span>
-                                </span>
-                              )}
-                            </div>
-                            {cust ? (
-                              <Link href={`/customers/${cust.id}`}>
-                                <span className="font-medium hover:underline cursor-pointer block truncate" data-testid={`text-appt-customer-${appt.id}`}>
-                                  {cust.firstName} {cust.lastName}
-                                </span>
-                              </Link>
-                            ) : (
-                              <span className="font-medium">Unknown</span>
-                            )}
-                            {addressStr && (
-                              <p className="text-muted-foreground flex items-start gap-1">
-                                <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-                                <span>{addressStr}</span>
-                              </p>
-                            )}
-                            {cust?.phone && (
-                              <p className="text-muted-foreground flex items-center gap-1">
-                                <Phone className="h-3 w-3 shrink-0" />
-                                <span>{formatPhone(cust.phone)}</span>
-                              </p>
-                            )}
-                            {pianoStr && (
-                              <p className="text-muted-foreground flex items-center gap-1">
-                                <Music className="h-3 w-3 shrink-0" />
-                                <span>{pianoStr}</span>
-                              </p>
-                            )}
-                            {appt.servicesRequested && (
-                              <p className="text-muted-foreground">{appt.servicesRequested}</p>
-                            )}
-                            {appt.priceEstimate && (
-                              <p className="text-muted-foreground flex items-center gap-1">
-                                <DollarSign className="h-3 w-3" />{appt.priceEstimate}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex flex-col justify-between items-center shrink-0">
-                            <div className="flex flex-col gap-0.5">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5"
-                                onClick={() => openEditDialog(appt)}
-                                data-testid={`button-edit-trip-appt-${appt.id}`}
-                              >
-                                <Pencil className="h-3 w-3" />
-                              </Button>
-                              {!isCompleted && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5"
-                                  onClick={() => completeAppointmentMutation.mutate(appt.id)}
-                                  data-testid={`button-complete-trip-appt-${appt.id}`}
-                                >
-                                  <CheckCircle className="h-3 w-3" />
-                                </Button>
-                              )}
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5 text-destructive"
-                              onClick={() => {
-                                if (confirm("Delete?")) deleteAppointmentMutation.mutate(appt.id);
-                              }}
-                              data-testid={`button-delete-trip-appt-${appt.id}`}
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                <div className="p-2 border-t">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full text-xs"
-                    onClick={() => openDialog(dateStr)}
-                    data-testid={`button-add-appointment-${dateStr}`}
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    Add Appointment
-                  </Button>
-                </div>
-              </div>
+                dateStr={dateStr}
+                dayDate={dayDate}
+                dayAppts={dayAppts}
+                dayArea={dayArea}
+                dayRevenue={dayRevenue}
+                customerMap={customerMap}
+                pianoMap={pianoMap}
+                onOpenDialog={openDialog}
+                onOpenEditDialog={openEditDialog}
+                onCompleteAppointment={(id) => completeAppointmentMutation.mutate(id)}
+                onDeleteAppointment={(id) => { if (confirm("Delete?")) deleteAppointmentMutation.mutate(id); }}
+              />
             );
           })}
         </div>
@@ -709,7 +858,10 @@ export default function SlcSchedule() {
                         data-testid={`customer-option-${c.id}`}
                       >
                         <span className="flex items-center gap-2">
-                          <User className="h-3 w-3 text-muted-foreground" />
+                          {c.isStarred
+                            ? <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
+                            : <User className="h-3 w-3 text-muted-foreground shrink-0" />
+                          }
                           {c.firstName} {c.lastName}
                         </span>
                         {c.city && (
@@ -766,13 +918,19 @@ export default function SlcSchedule() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="appt-time">Time</Label>
-                <Input
-                  id="appt-time"
+                <Select
                   value={apptTime}
-                  onChange={(e) => { setApptTime(e.target.value); setConflictError(""); }}
-                  placeholder="10:00 AM"
-                  data-testid="input-appt-time"
-                />
+                  onValueChange={(v) => { setApptTime(v); setConflictError(""); }}
+                >
+                  <SelectTrigger id="appt-time" data-testid="input-appt-time">
+                    <SelectValue placeholder="Select time" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TIME_SLOTS.map((slot) => (
+                      <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="appt-duration">Duration</Label>
@@ -861,13 +1019,19 @@ export default function SlcSchedule() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="edit-time">Time</Label>
-                  <Input
-                    id="edit-time"
+                  <Select
                     value={editTime}
-                    onChange={(e) => { setEditTime(e.target.value); setEditConflictError(""); }}
-                    placeholder="10:00 AM"
-                    data-testid="input-edit-time"
-                  />
+                    onValueChange={(v) => { setEditTime(v); setEditConflictError(""); }}
+                  >
+                    <SelectTrigger id="edit-time" data-testid="input-edit-time">
+                      <SelectValue placeholder="Select time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {TIME_SLOTS.map((slot) => (
+                        <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-duration">Duration</Label>

@@ -644,5 +644,38 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/driving-times", async (req, res) => {
+    const { addresses } = req.body as { addresses: string[] };
+    if (!addresses || addresses.length < 2) {
+      return res.json({ durations: [] });
+    }
+    const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      return res.json({ durations: null, error: "Google Maps API key not configured" });
+    }
+    try {
+      const origins = addresses.slice(0, -1);
+      const destinations = addresses.slice(1);
+      const url = new URL("https://maps.googleapis.com/maps/api/distancematrix/json");
+      url.searchParams.set("origins", origins.join("|"));
+      url.searchParams.set("destinations", destinations.join("|"));
+      url.searchParams.set("mode", "driving");
+      url.searchParams.set("key", apiKey);
+      const response = await fetch(url.toString());
+      const data = (await response.json()) as any;
+      if (data.status !== "OK") {
+        return res.json({ durations: null, error: `Maps API error: ${data.status}` });
+      }
+      const durations: number[] = [];
+      for (let i = 0; i < origins.length; i++) {
+        const element = data.rows[i]?.elements[i];
+        durations.push(element?.status === "OK" ? Math.ceil(element.duration.value / 60) : -1);
+      }
+      res.json({ durations });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   return httpServer;
 }
