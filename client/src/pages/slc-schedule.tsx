@@ -51,6 +51,7 @@ import {
   checkTimeConflict,
   getNextAvailableTime,
   parseTimeToMinutes,
+  parseDurationToMinutes,
   minutesToTimeStr,
   type ExistingAppointment,
 } from "@/lib/scheduling";
@@ -77,15 +78,8 @@ function formatDurationSlot(minutes: number): string {
 const DURATION_SLOTS: string[] = Array.from({ length: 32 }, (_, i) => formatDurationSlot((i + 1) * 15));
 
 function roundToDurationSlot(durationStr: string): string {
-  const lower = (durationStr || "").toLowerCase().trim();
-  const hourMatch = lower.match(/(\d+(?:\.\d+)?)\s*h/);
-  const minMatch = lower.match(/(\d+)\s*m/);
-  let total = 0;
-  if (hourMatch) total += parseFloat(hourMatch[1]) * 60;
-  if (minMatch) total += parseInt(minMatch[1]);
-  if (total === 0) { const num = parseFloat(lower); if (!isNaN(num)) total = num * 60; }
-  if (total <= 0) total = 120;
-  const snapped = Math.round(total / 15) * 15;
+  const minutes = parseDurationToMinutes(durationStr || "2 hours");
+  const snapped = Math.round(minutes / 15) * 15;
   const clamped = Math.min(Math.max(snapped, 15), 480);
   return formatDurationSlot(clamped);
 }
