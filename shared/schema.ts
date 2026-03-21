@@ -91,6 +91,7 @@ export const tripAppointments = pgTable("trip_appointments", {
   notes: text("notes"),
   status: text("status").default("scheduled"),
   serviceArea: text("service_area"),
+  linkedAppointmentId: integer("linked_appointment_id"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

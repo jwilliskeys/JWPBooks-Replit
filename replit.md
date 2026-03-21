@@ -59,7 +59,7 @@ Preferred communication style: Simple, everyday language.
   - `appointments` — id, customerId, pianoId, date, time, servicesRequested, priceEstimate, notes, isTuning, status, createdAt
   - `calendar_notes` — id, date, title, notes, createdAt
   - `trips` — id, name, startDate, endDate, notes, createdAt
-  - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, createdAt
+  - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, linkedAppointmentId (nullable FK to appointments.id), createdAt
   - `users` — id (varchar UUID), email, firstName, lastName, profileImageUrl, createdAt, updatedAt (Replit Auth)
   - `sessions` — sid, sess (jsonb), expire (Replit Auth session store)
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory

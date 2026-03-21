@@ -37,6 +37,8 @@ import {
   Home,
   Car,
   Star,
+  CalendarPlus,
+  CalendarCheck,
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -88,6 +90,69 @@ function buildCustomerAddress(cust: { address?: string | null; city?: string | n
   if (!cust) return HOME_ADDRESS;
   const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean) as string[];
   return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
+}
+
+function formatIcsDateTime(dateStr: string, timeStr: string): string {
+  const dateParts = dateStr.split("/");
+  if (dateParts.length !== 3) return "";
+  const month = parseInt(dateParts[0]);
+  const day = parseInt(dateParts[1]);
+  let year = parseInt(dateParts[2]);
+  if (year < 100) year += 2000;
+  const timeMatch = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!timeMatch) return "";
+  let hour = parseInt(timeMatch[1]);
+  const minute = parseInt(timeMatch[2]);
+  const period = timeMatch[3].toUpperCase();
+  if (period === "PM" && hour !== 12) hour += 12;
+  if (period === "AM" && hour === 12) hour = 0;
+  return `${year}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}${String(minute).padStart(2, "0")}00`;
+}
+
+function generateIcs(appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined): string {
+  const dtStart = formatIcsDateTime(appt.date, appt.time || "8:00 AM");
+  const durationMins = parseDurationToMinutes(appt.duration || "2 hours");
+  const startMins = parseTimeToMinutes(appt.time || "8:00 AM");
+  const endStr = minutesToTimeStr(startMins + durationMins);
+  const dtEnd = formatIcsDateTime(appt.date, endStr);
+  const customerName = cust ? `${cust.firstName} ${cust.lastName}` : "Unknown";
+  const summary = `${customerName} \u2013 ${appt.servicesRequested || "Piano Service"}`;
+  const location = buildCustomerAddress(cust);
+  const pianoStr = piano ? [piano.make, piano.pianoType].filter(Boolean).join(" ") : "";
+  const descParts: string[] = [];
+  if (pianoStr) descParts.push(pianoStr);
+  if (appt.priceEstimate) descParts.push(`Est. ${appt.priceEstimate}`);
+  if (appt.notes) descParts.push(appt.notes);
+  const description = descParts.join(" | ");
+  const uid = `${Date.now()}-${appt.id}@pianotech`;
+  const dtstamp = new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15) + "Z";
+  return [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//PianoTech//SLC Schedule//EN",
+    "BEGIN:VEVENT",
+    `UID:${uid}`,
+    `DTSTAMP:${dtstamp}`,
+    `DTSTART:${dtStart}`,
+    `DTEND:${dtEnd}`,
+    `SUMMARY:${summary}`,
+    `LOCATION:${location}`,
+    description ? `DESCRIPTION:${description}` : null,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].filter(Boolean).join("\r\n");
+}
+
+function downloadIcs(content: string, filename: string) {
+  const blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function roundToSlot(timeStr: string): string {
@@ -153,6 +218,7 @@ interface DayScheduleColumnProps {
   onOpenEditDialog: (appt: TripAppointment) => void;
   onCompleteAppointment: (id: number) => void;
   onDeleteAppointment: (id: number) => void;
+  onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
 }
 
 function DayScheduleColumn({
@@ -167,6 +233,7 @@ function DayScheduleColumn({
   onOpenEditDialog,
   onCompleteAppointment,
   onDeleteAppointment,
+  onConfirmAppointment,
 }: DayScheduleColumnProps) {
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
@@ -332,6 +399,19 @@ function DayScheduleColumn({
                             <CheckCircle className="h-3 w-3" />
                           </Button>
                         )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-5 w-5 ${appt.linkedAppointmentId ? "text-green-600 dark:text-green-400" : "text-blue-600 dark:text-blue-400"}`}
+                          onClick={() => onConfirmAppointment(appt, cust, piano)}
+                          title={appt.linkedAppointmentId ? "Already confirmed — click to re-download calendar file" : "Confirm appointment & add to calendar"}
+                          data-testid={`button-confirm-trip-appt-${appt.id}`}
+                        >
+                          {appt.linkedAppointmentId
+                            ? <CalendarCheck className="h-3 w-3" />
+                            : <CalendarPlus className="h-3 w-3" />
+                          }
+                        </Button>
                       </div>
                       <Button
                         variant="ghost"
@@ -502,6 +582,48 @@ export default function SlcSchedule() {
       toast({ title: "Failed to update appointment", variant: "destructive" });
     },
   });
+
+  const confirmAppointmentMutation = useMutation({
+    mutationFn: async ({ appt, cust, piano }: { appt: TripAppointment; cust: Customer | undefined; piano: Piano | null | undefined }) => {
+      const isTuning = (appt.servicesRequested || "").toLowerCase().includes("tuning");
+      const res = await apiRequest("POST", "/api/appointments", {
+        customerId: appt.customerId,
+        pianoId: appt.pianoId ?? null,
+        date: appt.date,
+        time: appt.time,
+        servicesRequested: appt.servicesRequested,
+        priceEstimate: appt.priceEstimate,
+        notes: appt.notes,
+        isTuning,
+        status: "scheduled",
+      });
+      const newAppt = await res.json();
+      await apiRequest("PATCH", `/api/trip-appointments/${appt.id}`, { linkedAppointmentId: newAppt.id });
+      return { appt, cust, piano };
+    },
+    onSuccess: ({ appt, cust, piano }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", activeTrip?.id, "appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      const icsContent = generateIcs(appt, cust, piano);
+      const custName = cust ? `${cust.firstName}_${cust.lastName}`.replace(/\s+/g, "_") : "appointment";
+      downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
+      toast({ title: "Appointment confirmed and added to calendar" });
+    },
+    onError: () => {
+      toast({ title: "Failed to confirm appointment", variant: "destructive" });
+    },
+  });
+
+  function handleConfirmAppointment(appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) {
+    if (appt.linkedAppointmentId) {
+      const icsContent = generateIcs(appt, cust, piano);
+      const custName = cust ? `${cust.firstName}_${cust.lastName}`.replace(/\s+/g, "_") : "appointment";
+      downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
+      toast({ title: "Already confirmed — calendar file re-downloaded" });
+      return;
+    }
+    confirmAppointmentMutation.mutate({ appt, cust, piano });
+  }
 
   function openEditDialog(appt: TripAppointment) {
     setEditingAppt(appt);
@@ -826,6 +948,7 @@ export default function SlcSchedule() {
                 onOpenEditDialog={openEditDialog}
                 onCompleteAppointment={(id) => completeAppointmentMutation.mutate(id)}
                 onDeleteAppointment={(id) => { if (confirm("Delete?")) deleteAppointmentMutation.mutate(id); }}
+                onConfirmAppointment={handleConfirmAppointment}
               />
             );
           })}
