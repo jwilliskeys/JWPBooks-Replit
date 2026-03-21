@@ -67,6 +67,29 @@ for (let h = 8; h <= 18; h++) {
   }
 }
 
+function formatDurationSlot(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return h === 1 ? "1 hour" : `${h} hours`;
+  return `${h} hr ${m} min`;
+}
+const DURATION_SLOTS: string[] = Array.from({ length: 32 }, (_, i) => formatDurationSlot((i + 1) * 15));
+
+function roundToDurationSlot(durationStr: string): string {
+  const lower = (durationStr || "").toLowerCase().trim();
+  const hourMatch = lower.match(/(\d+(?:\.\d+)?)\s*h/);
+  const minMatch = lower.match(/(\d+)\s*m/);
+  let total = 0;
+  if (hourMatch) total += parseFloat(hourMatch[1]) * 60;
+  if (minMatch) total += parseInt(minMatch[1]);
+  if (total === 0) { const num = parseFloat(lower); if (!isNaN(num)) total = num * 60; }
+  if (total <= 0) total = 120;
+  const snapped = Math.round(total / 15) * 15;
+  const clamped = Math.min(Math.max(snapped, 15), 480);
+  return formatDurationSlot(clamped);
+}
+
 function buildCustomerAddress(cust: { address?: string | null; city?: string | null; state?: string | null; zipCode?: string | null } | undefined): string {
   if (!cust) return HOME_ADDRESS;
   const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean) as string[];
@@ -489,8 +512,8 @@ export default function SlcSchedule() {
   function openEditDialog(appt: TripAppointment) {
     setEditingAppt(appt);
     setEditTime(roundToSlot(appt.time || "8:00 AM"));
-    setEditDuration(appt.duration || "2 hours");
-    setEditServices(appt.servicesRequested || "");
+    setEditDuration(roundToDurationSlot(appt.duration || "2 hours"));
+    setEditServices(appt.servicesRequested || "Tuning");
     setEditPrice(appt.priceEstimate || "$180");
     setEditNotes(appt.notes || "");
     setEditConflictError("");
@@ -934,13 +957,16 @@ export default function SlcSchedule() {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="appt-duration">Duration</Label>
-                <Input
-                  id="appt-duration"
-                  value={apptDuration}
-                  onChange={(e) => { setApptDuration(e.target.value); setConflictError(""); }}
-                  placeholder="2 hours"
-                  data-testid="input-appt-duration"
-                />
+                <Select value={apptDuration} onValueChange={(v) => { setApptDuration(v); setConflictError(""); }}>
+                  <SelectTrigger id="appt-duration" data-testid="input-appt-duration">
+                    <SelectValue placeholder="Select duration" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DURATION_SLOTS.map((slot) => (
+                      <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -1035,13 +1061,16 @@ export default function SlcSchedule() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="edit-duration">Duration</Label>
-                  <Input
-                    id="edit-duration"
-                    value={editDuration}
-                    onChange={(e) => { setEditDuration(e.target.value); setEditConflictError(""); }}
-                    placeholder="2 hours"
-                    data-testid="input-edit-duration"
-                  />
+                  <Select value={editDuration} onValueChange={(v) => { setEditDuration(v); setEditConflictError(""); }}>
+                    <SelectTrigger id="edit-duration" data-testid="input-edit-duration">
+                      <SelectValue placeholder="Select duration" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DURATION_SLOTS.map((slot) => (
+                        <SelectItem key={slot} value={slot}>{slot}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
