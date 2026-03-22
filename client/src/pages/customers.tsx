@@ -449,9 +449,14 @@ export default function Customers() {
                   <Checkbox
                     id={`filter-${key}`}
                     checked={activeFilters.has(key)}
+                    onClick={(e) => e.stopPropagation()}
                     onCheckedChange={() => toggleQuickFilter(key)}
                   />
-                  <Label htmlFor={`filter-${key}`} className="text-sm cursor-pointer select-none">
+                  <Label
+                    htmlFor={`filter-${key}`}
+                    className="text-sm cursor-pointer select-none"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     {label}
                   </Label>
                 </div>
