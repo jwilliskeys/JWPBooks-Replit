@@ -337,6 +337,18 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/appointments/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const appointment = await storage.getAppointment(id);
+      if (!appointment) return res.status(404).json({ message: "Appointment not found" });
+      res.json(appointment);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/customers/:id/appointments", async (req, res) => {
     try {
       const id = parseInt(req.params.id);

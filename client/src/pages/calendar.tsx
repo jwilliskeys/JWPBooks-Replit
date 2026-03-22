@@ -38,6 +38,10 @@ import {
   FileText,
   Check,
   ChevronsUpDown,
+  MapPin,
+  User,
+  ExternalLink,
+  MessageSquare,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -82,6 +86,42 @@ function formatDurationMinutes(totalMinutes: number): string {
   if (h === 0) return `${m} min`;
   if (m === 0) return `${h} hr`;
   return `${h} hr ${m} min`;
+}
+
+function parseTimeString(s: string): number {
+  if (!s) return DEFAULT_TIME_MINUTES;
+  const match = s.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return DEFAULT_TIME_MINUTES;
+  let h = parseInt(match[1]);
+  const m = parseInt(match[2]);
+  const ampm = match[3].toUpperCase();
+  if (ampm === "PM" && h !== 12) h += 12;
+  if (ampm === "AM" && h === 12) h = 0;
+  return h * 60 + m;
+}
+
+function parseDurationString(s: string): number {
+  if (!s) return DEFAULT_DURATION_MINUTES;
+  let total = 0;
+  const hrMatch = s.match(/(\d+)\s*hr/);
+  const minMatch = s.match(/(\d+)\s*min/);
+  if (hrMatch) total += parseInt(hrMatch[1]) * 60;
+  if (minMatch) total += parseInt(minMatch[1]);
+  return total || DEFAULT_DURATION_MINUTES;
+}
+
+function computeEndTime(startStr: string, durationStr: string): string {
+  const startMins = parseTimeString(startStr);
+  const durMins = parseDurationString(durationStr);
+  return formatTimeMinutes((startMins + durMins) % (24 * 60));
+}
+
+function formatDateLong(dateStr: string): string {
+  const parsed = parseMDYY(dateStr);
+  if (!parsed) return dateStr;
+  const dayName = DAY_NAMES[parsed.getDay()];
+  const monthName = MONTH_NAMES[parsed.getMonth()].slice(0, 3);
+  return `${dayName}, ${monthName} ${parsed.getDate()}, ${parsed.getFullYear()}`;
 }
 
 const DEFAULT_TIME_MINUTES = 9 * 60;
@@ -231,6 +271,7 @@ export default function CalendarPage() {
   const [apptPrice, setApptPrice] = useState("$180");
   const [apptNotes, setApptNotes] = useState("");
   const [apptIsTuning, setApptIsTuning] = useState(true);
+  const [editingApptId, setEditingApptId] = useState<number | null>(null);
   const [customerComboOpen, setCustomerComboOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
 
@@ -241,6 +282,10 @@ export default function CalendarPage() {
   const [evEndTime, setEvEndTime] = useState("");
   const [evIsRepeating, setEvIsRepeating] = useState(false);
   const [evRepeatFreq, setEvRepeatFreq] = useState("weekly");
+
+  const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
+  const [showCloneInput, setShowCloneInput] = useState(false);
+  const [cloneDate, setCloneDate] = useState("");
 
   const { data: appointments, isLoading: loadingAppts } = useQuery<Appointment[]>({
     queryKey: ["/api/appointments"],
@@ -265,6 +310,11 @@ export default function CalendarPage() {
   const customerMap = useMemo(
     () => new Map(customers?.map((c) => [c.id, c]) ?? []),
     [customers]
+  );
+
+  const pianoMap = useMemo(
+    () => new Map(allPianos?.map((p) => [p.id, p]) ?? []),
+    [allPianos]
   );
 
   const pianosByCustomer = useMemo(() => {
@@ -309,6 +359,43 @@ export default function CalendarPage() {
     },
     onError: () => {
       toast({ title: "Failed to schedule appointment", variant: "destructive" });
+    },
+  });
+
+  const updateAppointmentMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: object }) =>
+      apiRequest("PATCH", `/api/appointments/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      toast({ title: "Appointment updated" });
+      closeDialog();
+    },
+    onError: () => {
+      toast({ title: "Failed to update appointment", variant: "destructive" });
+    },
+  });
+
+  const deleteAppointmentMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/appointments/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      toast({ title: "Appointment deleted" });
+      closeDetailDialog();
+    },
+    onError: () => {
+      toast({ title: "Failed to delete appointment", variant: "destructive" });
+    },
+  });
+
+  const cloneAppointmentMutation = useMutation({
+    mutationFn: (data: object) => apiRequest("POST", "/api/appointments", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      toast({ title: "Appointment cloned" });
+      closeDetailDialog();
+    },
+    onError: () => {
+      toast({ title: "Failed to clone appointment", variant: "destructive" });
     },
   });
 
@@ -415,6 +502,7 @@ export default function CalendarPage() {
     setApptPrice("$180");
     setApptNotes("");
     setApptIsTuning(true);
+    setEditingApptId(null);
     setCustomerSearch("");
     setEvTitle("");
     setEvNotes("");
@@ -425,9 +513,31 @@ export default function CalendarPage() {
     setEvRepeatFreq("weekly");
   }
 
+  function closeDetailDialog() {
+    setSelectedAppt(null);
+    setShowCloneInput(false);
+    setCloneDate("");
+  }
+
+  function openEditAppointment(appt: Appointment) {
+    closeDetailDialog();
+    setEditingApptId(appt.id);
+    setApptCustomerId(appt.customerId);
+    setApptPianoId(appt.pianoId ?? null);
+    setApptTimeMinutes(parseTimeString(appt.time));
+    setApptDurationMinutes(parseDurationString(appt.duration ?? ""));
+    setApptServices(appt.servicesRequested ?? "");
+    setApptPrice(appt.priceEstimate ?? "$180");
+    setApptNotes(appt.notes ?? "");
+    setApptIsTuning(appt.isTuning ?? false);
+    const parsed = parseMDYY(appt.date);
+    setSelectedDate(parsed);
+    setDialogMode("appointment");
+  }
+
   function handleSaveAppointment() {
     if (!selectedDate || !apptCustomerId) return;
-    createAppointmentMutation.mutate({
+    const data = {
       customerId: apptCustomerId,
       pianoId: apptPianoId ?? undefined,
       date: formatMDYY(selectedDate),
@@ -438,7 +548,12 @@ export default function CalendarPage() {
       notes: apptNotes || undefined,
       isTuning: apptIsTuning,
       status: "scheduled",
-    });
+    };
+    if (editingApptId) {
+      updateAppointmentMutation.mutate({ id: editingApptId, data });
+    } else {
+      createAppointmentMutation.mutate(data);
+    }
   }
 
   function handleSaveEvent(type: "personal" | "memo") {
@@ -562,17 +677,17 @@ export default function CalendarPage() {
                         const customer = customerMap.get(appt.customerId);
                         const isCompleted = appt.status === "completed";
                         return (
-                          <Link key={appt.id} href={`/customers/${appt.customerId}`}>
-                            <div
-                              className={`flex items-center gap-2 text-xs p-1.5 rounded-md hover-elevate cursor-pointer ${isCompleted ? "opacity-60" : ""}`}
-                              data-testid={`calendar-appointment-${appt.id}`}
-                            >
-                              <Clock className="h-3 w-3 shrink-0 text-muted-foreground" />
-                              <span className={isCompleted ? "line-through" : ""}>
-                                {appt.time} - {customer ? `${customer.firstName} ${customer.lastName}` : "Unknown"}
-                              </span>
-                            </div>
-                          </Link>
+                          <div
+                            key={appt.id}
+                            className={`flex items-center gap-2 text-xs p-1.5 rounded-md cursor-pointer hover:bg-muted/50 ${isCompleted ? "opacity-60" : ""}`}
+                            onClick={() => setSelectedAppt(appt)}
+                            data-testid={`calendar-appointment-${appt.id}`}
+                          >
+                            <Clock className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            <span className={isCompleted ? "line-through" : ""}>
+                              {appt.time} - {customer ? `${customer.firstName} ${customer.lastName}` : "Unknown"}
+                            </span>
+                          </div>
                         );
                       })}
                       {dayNotes.map((note) => (
@@ -681,17 +796,17 @@ export default function CalendarPage() {
                         const customer = customerMap.get(appt.customerId);
                         const isCompleted = appt.status === "completed";
                         return (
-                          <Link key={appt.id} href={`/customers/${appt.customerId}`}>
-                            <Badge
-                              variant={isCompleted ? "secondary" : "default"}
-                              className={`text-[10px] leading-tight w-full justify-start cursor-pointer truncate ${isCompleted ? "opacity-60" : ""}`}
-                              data-testid={`calendar-appointment-${appt.id}`}
-                            >
-                              <span className={isCompleted ? "line-through" : ""}>
-                                {appt.time} {customer ? customer.lastName : ""}
-                              </span>
-                            </Badge>
-                          </Link>
+                          <Badge
+                            key={appt.id}
+                            variant={isCompleted ? "secondary" : "default"}
+                            className={`text-[10px] leading-tight w-full justify-start cursor-pointer truncate ${isCompleted ? "opacity-60" : ""}`}
+                            onClick={() => setSelectedAppt(appt)}
+                            data-testid={`calendar-appointment-${appt.id}`}
+                          >
+                            <span className={isCompleted ? "line-through" : ""}>
+                              {appt.time} {customer ? customer.lastName : ""}
+                            </span>
+                          </Badge>
                         );
                       })}
                       {dayNotes.map((note) => (
@@ -757,6 +872,240 @@ export default function CalendarPage() {
         </Card>
       )}
 
+      {/* Appointment Detail Dialog */}
+      <Dialog open={selectedAppt !== null} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
+        <DialogContent className="max-w-md p-0 overflow-hidden gap-0">
+          {selectedAppt && (() => {
+            const customer = customerMap.get(selectedAppt.customerId);
+            const piano = selectedAppt.pianoId ? pianoMap.get(selectedAppt.pianoId) : null;
+            const endTime = selectedAppt.duration ? computeEndTime(selectedAppt.time, selectedAppt.duration) : null;
+            const addressParts = customer
+              ? [customer.address, customer.city, customer.state, customer.zipCode].filter(Boolean)
+              : [];
+            const address = addressParts.join(", ");
+            const mapsUrl = address ? `https://maps.google.com/?q=${encodeURIComponent(address)}` : null;
+            const dateLabel = formatDateLong(selectedAppt.date);
+            const customerName = customer
+              ? `${customer.firstName} ${customer.lastName}`
+              : `Client #${selectedAppt.customerId}`;
+            const pianoLabel = piano
+              ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || `Piano #${piano.id}`
+              : null;
+
+            return (
+              <>
+                {/* Violet header */}
+                <div className="bg-violet-100 dark:bg-violet-950/60 px-5 pt-5 pb-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-bold tracking-widest text-violet-500 dark:text-violet-400 uppercase mb-1">
+                        Appointment
+                      </p>
+                      <h2 className="text-2xl font-bold text-violet-900 dark:text-violet-100 leading-tight break-words">
+                        {customerName}
+                      </h2>
+                    </div>
+                    <button
+                      onClick={closeDetailDialog}
+                      className="text-violet-500 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-200 p-1 rounded mt-0.5 shrink-0"
+                      data-testid="button-detail-close"
+                    >
+                      <X className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5 text-sm text-violet-800 dark:text-violet-200">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="h-3.5 w-3.5 shrink-0" />
+                      <span>{dateLabel}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Clock className="h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        {selectedAppt.time}
+                        {endTime ? ` – ${endTime}` : ""}
+                        {selectedAppt.duration ? ` (${selectedAppt.duration})` : ""}
+                      </span>
+                    </div>
+                    {address && mapsUrl && (
+                      <div className="flex items-start gap-2">
+                        <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                        <a
+                          href={mapsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-violet-600 dark:hover:text-violet-300 break-words"
+                          data-testid="link-appt-address"
+                        >
+                          {address}
+                        </a>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openEditAppointment(selectedAppt)}
+                        className="h-7 text-xs border-violet-300 dark:border-violet-700 text-violet-800 dark:text-violet-200 hover:bg-violet-200 dark:hover:bg-violet-800"
+                        data-testid="button-appt-edit"
+                      >
+                        Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setShowCloneInput(!showCloneInput)}
+                        className="h-7 text-xs border-violet-300 dark:border-violet-700 text-violet-800 dark:text-violet-200 hover:bg-violet-200 dark:hover:bg-violet-800"
+                        data-testid="button-appt-clone"
+                      >
+                        Clone
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled
+                        className="h-7 text-xs border-violet-200 dark:border-violet-800 text-violet-400 dark:text-violet-600 opacity-60 cursor-not-allowed"
+                        title="Coming soon"
+                        data-testid="button-appt-invoice"
+                      >
+                        New Invoice
+                      </Button>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => deleteAppointmentMutation.mutate(selectedAppt.id)}
+                      disabled={deleteAppointmentMutation.isPending}
+                      className="h-7 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
+                      data-testid="button-appt-delete"
+                    >
+                      Delete
+                    </Button>
+                  </div>
+
+                  {/* Clone date input */}
+                  {showCloneInput && (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        placeholder="New date (M/D/YY)"
+                        value={cloneDate}
+                        onChange={(e) => setCloneDate(e.target.value)}
+                        className="h-8 text-xs flex-1 bg-white/70 dark:bg-violet-900/40 border-violet-300 dark:border-violet-700"
+                        data-testid="input-clone-date"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          if (!cloneDate.trim()) return;
+                          cloneAppointmentMutation.mutate({
+                            customerId: selectedAppt.customerId,
+                            pianoId: selectedAppt.pianoId ?? undefined,
+                            date: cloneDate.trim(),
+                            time: selectedAppt.time,
+                            duration: selectedAppt.duration ?? undefined,
+                            servicesRequested: selectedAppt.servicesRequested ?? undefined,
+                            priceEstimate: selectedAppt.priceEstimate ?? undefined,
+                            notes: selectedAppt.notes ?? undefined,
+                            isTuning: selectedAppt.isTuning ?? false,
+                            status: "scheduled",
+                          });
+                        }}
+                        disabled={!cloneDate.trim() || cloneAppointmentMutation.isPending}
+                        className="h-8 text-xs shrink-0"
+                        data-testid="button-clone-confirm"
+                      >
+                        Clone
+                      </Button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Body */}
+                <div className="px-5 py-4 space-y-4">
+                  {/* CLIENT */}
+                  <div>
+                    <p className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase mb-2">
+                      Client
+                    </p>
+                    <Link href={`/customers/${selectedAppt.customerId}`} onClick={closeDetailDialog}>
+                      <div className="flex items-center gap-2 cursor-pointer hover:text-primary transition-colors" data-testid="link-appt-client">
+                        <User className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <span className="font-semibold">{customerName}</span>
+                        <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                    </Link>
+                  </div>
+
+                  {/* NOTES */}
+                  {selectedAppt.notes && (
+                    <div>
+                      <p className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase mb-2">
+                        Notes
+                      </p>
+                      <div className="flex items-start gap-2">
+                        <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                        <p className="text-sm whitespace-pre-wrap leading-relaxed">{selectedAppt.notes}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* PIANOS & SERVICES */}
+                  {(pianoLabel || selectedAppt.servicesRequested || selectedAppt.priceEstimate) && (
+                    <div>
+                      <p className="text-[10px] font-bold tracking-widest text-muted-foreground uppercase mb-2">
+                        {pianoLabel ? "Pianos & Services" : "Services"}
+                      </p>
+                      {pianoLabel ? (
+                        <div>
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <Music className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <span className="font-bold text-sm">{pianoLabel}</span>
+                            {selectedAppt.isTuning && (
+                              <Badge className="text-[10px] h-5 bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700">
+                                TUNING
+                              </Badge>
+                            )}
+                            <Link href={`/customers/${selectedAppt.customerId}`} onClick={closeDetailDialog}>
+                              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground cursor-pointer hover:text-primary" />
+                            </Link>
+                          </div>
+                          {selectedAppt.servicesRequested && (
+                            <p className="text-sm text-muted-foreground ml-6">
+                              • {selectedAppt.servicesRequested}
+                              {selectedAppt.priceEstimate ? ` (${selectedAppt.priceEstimate})` : ""}
+                            </p>
+                          )}
+                          {!selectedAppt.servicesRequested && selectedAppt.priceEstimate && (
+                            <p className="text-sm text-muted-foreground ml-6">
+                              Price: {selectedAppt.priceEstimate}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-sm text-muted-foreground space-y-0.5">
+                          {selectedAppt.isTuning && (
+                            <Badge className="text-[10px] h-5 bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700 mb-1">
+                              TUNING
+                            </Badge>
+                          )}
+                          {selectedAppt.servicesRequested && <p>• {selectedAppt.servicesRequested}</p>}
+                          {selectedAppt.priceEstimate && <p>Price: {selectedAppt.priceEstimate}</p>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Create / Edit Appointment Dialog */}
       <Dialog open={dialogMode !== null} onOpenChange={(open) => { if (!open) closeDialog(); }}>
         <DialogContent className="max-w-md">
 
@@ -805,7 +1154,7 @@ export default function CalendarPage() {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Music className="h-4 w-4 text-primary" />
-                  Schedule Appointment
+                  {editingApptId ? "Edit Appointment" : "Schedule Appointment"}
                   <span className="text-sm font-normal text-muted-foreground">— {selectedDateLabel}</span>
                 </DialogTitle>
               </DialogHeader>
@@ -952,15 +1301,15 @@ export default function CalendarPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="ghost" onClick={() => setDialogMode("picker")} data-testid="button-appt-back">
-                  Back
+                <Button variant="ghost" onClick={() => editingApptId ? closeDialog() : setDialogMode("picker")} data-testid="button-appt-back">
+                  {editingApptId ? "Cancel" : "Back"}
                 </Button>
                 <Button
                   onClick={handleSaveAppointment}
-                  disabled={!apptCustomerId || createAppointmentMutation.isPending}
+                  disabled={!apptCustomerId || createAppointmentMutation.isPending || updateAppointmentMutation.isPending}
                   data-testid="button-appt-save"
                 >
-                  Schedule
+                  {editingApptId ? "Save Changes" : "Schedule"}
                 </Button>
               </DialogFooter>
             </>
