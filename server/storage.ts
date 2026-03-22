@@ -6,6 +6,7 @@ import {
   serviceRecords,
   appointments,
   calendarNotes,
+  calendarEvents,
   trips,
   tripAppointments,
   type Customer,
@@ -18,6 +19,8 @@ import {
   type InsertAppointment,
   type CalendarNote,
   type InsertCalendarNote,
+  type CalendarEvent,
+  type InsertCalendarEvent,
   type Trip,
   type InsertTrip,
   type TripAppointment,
@@ -53,6 +56,9 @@ export interface IStorage {
   createCalendarNote(note: InsertCalendarNote): Promise<CalendarNote>;
   updateCalendarNote(id: number, data: Partial<InsertCalendarNote>): Promise<CalendarNote | undefined>;
   deleteCalendarNote(id: number): Promise<boolean>;
+  getCalendarEvents(): Promise<CalendarEvent[]>;
+  createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent>;
+  deleteCalendarEvent(id: number): Promise<boolean>;
   getTrips(): Promise<Trip[]>;
   getTrip(id: number): Promise<Trip | undefined>;
   createTrip(trip: InsertTrip): Promise<Trip>;
@@ -245,6 +251,20 @@ export class DatabaseStorage implements IStorage {
 
   async deleteCalendarNote(id: number): Promise<boolean> {
     const result = await db.delete(calendarNotes).where(eq(calendarNotes.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getCalendarEvents(): Promise<CalendarEvent[]> {
+    return db.select().from(calendarEvents).orderBy(calendarEvents.date);
+  }
+
+  async createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent> {
+    const [created] = await db.insert(calendarEvents).values(event).returning();
+    return created;
+  }
+
+  async deleteCalendarEvent(id: number): Promise<boolean> {
+    const result = await db.delete(calendarEvents).where(eq(calendarEvents.id, id)).returning();
     return result.length > 0;
   }
 

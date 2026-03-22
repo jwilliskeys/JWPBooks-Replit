@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertTripSchema, insertTripAppointmentSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema } from "@shared/schema";
 import { isAuthenticated } from "./replit_integrations/auth";
 import multer from "multer";
 import path from "path";
@@ -435,6 +435,40 @@ export async function registerRoutes(
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const deleted = await storage.deleteCalendarNote(id);
       if (!deleted) return res.status(404).json({ message: "Note not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/calendar-events", async (_req, res) => {
+    try {
+      const events = await storage.getCalendarEvents();
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/calendar-events", async (req, res) => {
+    try {
+      const parsed = insertCalendarEventSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const event = await storage.createCalendarEvent(parsed.data);
+      res.status(201).json(event);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/calendar-events/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const deleted = await storage.deleteCalendarEvent(id);
+      if (!deleted) return res.status(404).json({ message: "Event not found" });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });

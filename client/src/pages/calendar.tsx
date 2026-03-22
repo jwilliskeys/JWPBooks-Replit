@@ -6,6 +6,15 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -13,6 +22,8 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Link } from "wouter";
 import {
   ChevronLeft,
@@ -22,11 +33,16 @@ import {
   Calendar,
   Clock,
   StickyNote,
+  CalendarDays,
+  Music,
+  FileText,
+  Check,
+  ChevronsUpDown,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
-import type { Appointment, Customer, CalendarNote } from "@shared/schema";
+import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano } from "@shared/schema";
 
 function parseMDYY(dateStr: string): Date | null {
   if (!dateStr) return null;
@@ -59,6 +75,8 @@ const MONTH_NAMES = [
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+type DialogMode = "picker" | "appointment" | "event" | "memo" | null;
+
 export default function CalendarPage() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
@@ -68,9 +86,26 @@ export default function CalendarPage() {
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [noteTitle, setNoteTitle] = useState("");
-  const [noteText, setNoteText] = useState("");
+  const [dialogMode, setDialogMode] = useState<DialogMode>(null);
+
+  const [apptCustomerId, setApptCustomerId] = useState<number | null>(null);
+  const [apptPianoId, setApptPianoId] = useState<number | null>(null);
+  const [apptTime, setApptTime] = useState("");
+  const [apptDuration, setApptDuration] = useState("1.5 hours");
+  const [apptServices, setApptServices] = useState("");
+  const [apptPrice, setApptPrice] = useState("");
+  const [apptNotes, setApptNotes] = useState("");
+  const [apptIsTuning, setApptIsTuning] = useState(true);
+  const [customerComboOpen, setCustomerComboOpen] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState("");
+
+  const [evTitle, setEvTitle] = useState("");
+  const [evNotes, setEvNotes] = useState("");
+  const [evIsAllDay, setEvIsAllDay] = useState(false);
+  const [evStartTime, setEvStartTime] = useState("");
+  const [evEndTime, setEvEndTime] = useState("");
+  const [evIsRepeating, setEvIsRepeating] = useState(false);
+  const [evRepeatFreq, setEvRepeatFreq] = useState("weekly");
 
   const { data: appointments, isLoading: loadingAppts } = useQuery<Appointment[]>({
     queryKey: ["/api/appointments"],
@@ -80,8 +115,16 @@ export default function CalendarPage() {
     queryKey: ["/api/calendar-notes"],
   });
 
+  const { data: calendarEvents } = useQuery<CalendarEvent[]>({
+    queryKey: ["/api/calendar-events"],
+  });
+
   const { data: customers } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
+  });
+
+  const { data: allPianos } = useQuery<Piano[]>({
+    queryKey: ["/api/pianos"],
   });
 
   const customerMap = useMemo(
@@ -89,20 +132,16 @@ export default function CalendarPage() {
     [customers]
   );
 
-  const createNoteMutation = useMutation({
-    mutationFn: (data: { date: string; title: string; notes?: string }) =>
-      apiRequest("POST", "/api/calendar-notes", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/calendar-notes"] });
-      toast({ title: "Note added" });
-      setDialogOpen(false);
-      setNoteTitle("");
-      setNoteText("");
-    },
-    onError: () => {
-      toast({ title: "Failed to add note", variant: "destructive" });
-    },
-  });
+  const pianosByCustomer = useMemo(() => {
+    const map = new Map<number, Piano[]>();
+    allPianos?.forEach((p) => {
+      if (!map.has(p.customerId)) map.set(p.customerId, []);
+      map.get(p.customerId)!.push(p);
+    });
+    return map;
+  }, [allPianos]);
+
+  const selectedCustomerPianos = apptCustomerId ? (pianosByCustomer.get(apptCustomerId) ?? []) : [];
 
   const deleteNoteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/calendar-notes/${id}`),
@@ -112,6 +151,41 @@ export default function CalendarPage() {
     },
     onError: () => {
       toast({ title: "Failed to delete note", variant: "destructive" });
+    },
+  });
+
+  const deleteEventMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/calendar-events/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar-events"] });
+      toast({ title: "Event deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete event", variant: "destructive" });
+    },
+  });
+
+  const createAppointmentMutation = useMutation({
+    mutationFn: (data: object) => apiRequest("POST", "/api/appointments", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      toast({ title: "Appointment scheduled" });
+      closeDialog();
+    },
+    onError: () => {
+      toast({ title: "Failed to schedule appointment", variant: "destructive" });
+    },
+  });
+
+  const createEventMutation = useMutation({
+    mutationFn: (data: object) => apiRequest("POST", "/api/calendar-events", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar-events"] });
+      toast({ title: dialogMode === "memo" ? "Memo added" : "Event added" });
+      closeDialog();
+    },
+    onError: () => {
+      toast({ title: "Failed to add event", variant: "destructive" });
     },
   });
 
@@ -155,6 +229,19 @@ export default function CalendarPage() {
     return map;
   }, [calendarNotes]);
 
+  const eventsByDate = useMemo(() => {
+    const map = new Map<string, CalendarEvent[]>();
+    calendarEvents?.forEach((ev) => {
+      const parsed = parseMDYY(ev.date);
+      if (parsed) {
+        const key = `${parsed.getFullYear()}-${parsed.getMonth()}-${parsed.getDate()}`;
+        if (!map.has(key)) map.set(key, []);
+        map.get(key)!.push(ev);
+      }
+    });
+    return map;
+  }, [calendarEvents]);
+
   function getDateKey(date: Date): string {
     return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
   }
@@ -179,19 +266,75 @@ export default function CalendarPage() {
 
   function handleDateClick(date: Date) {
     setSelectedDate(date);
-    setNoteTitle("");
-    setNoteText("");
-    setDialogOpen(true);
+    setDialogMode("picker");
   }
 
-  function handleAddNote() {
-    if (!selectedDate || !noteTitle.trim()) return;
-    createNoteMutation.mutate({
+  function closeDialog() {
+    setDialogMode(null);
+    setSelectedDate(null);
+    setApptCustomerId(null);
+    setApptPianoId(null);
+    setApptTime("");
+    setApptDuration("1.5 hours");
+    setApptServices("");
+    setApptPrice("");
+    setApptNotes("");
+    setApptIsTuning(true);
+    setCustomerSearch("");
+    setEvTitle("");
+    setEvNotes("");
+    setEvIsAllDay(false);
+    setEvStartTime("");
+    setEvEndTime("");
+    setEvIsRepeating(false);
+    setEvRepeatFreq("weekly");
+  }
+
+  function handleSaveAppointment() {
+    if (!selectedDate || !apptCustomerId || !apptTime) return;
+    createAppointmentMutation.mutate({
+      customerId: apptCustomerId,
+      pianoId: apptPianoId ?? undefined,
       date: formatMDYY(selectedDate),
-      title: noteTitle.trim(),
-      notes: noteText.trim() || undefined,
+      time: apptTime,
+      duration: apptDuration || undefined,
+      servicesRequested: apptServices || undefined,
+      priceEstimate: apptPrice || undefined,
+      notes: apptNotes || undefined,
+      isTuning: apptIsTuning,
+      status: "scheduled",
     });
   }
+
+  function handleSaveEvent(type: "personal" | "memo") {
+    if (!selectedDate || !evTitle.trim()) return;
+    createEventMutation.mutate({
+      date: formatMDYY(selectedDate),
+      title: evTitle.trim(),
+      notes: evNotes.trim() || undefined,
+      startTime: evIsAllDay ? undefined : (evStartTime || undefined),
+      endTime: evIsAllDay ? undefined : (evEndTime || undefined),
+      isAllDay: evIsAllDay,
+      isRepeating: evIsRepeating,
+      repeatFrequency: evIsRepeating ? evRepeatFreq : undefined,
+      eventType: type,
+    });
+  }
+
+  const selectedCustomer = apptCustomerId ? customerMap.get(apptCustomerId) : null;
+
+  const filteredCustomers = useMemo(() => {
+    if (!customers) return [];
+    const q = customerSearch.toLowerCase();
+    if (!q) return customers.slice(0, 20);
+    return customers
+      .filter((c) =>
+        `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
+        c.phone?.includes(q) ||
+        c.city?.toLowerCase().includes(q)
+      )
+      .slice(0, 20);
+  }, [customers, customerSearch]);
 
   const isLoading = loadingAppts || loadingNotes;
 
@@ -208,8 +351,16 @@ export default function CalendarPage() {
 
   const agendaDays = monthDaysForAgenda.filter((date) => {
     const key = getDateKey(date);
-    return (appointmentsByDate.get(key)?.length ?? 0) > 0 || (notesByDate.get(key)?.length ?? 0) > 0;
+    return (
+      (appointmentsByDate.get(key)?.length ?? 0) > 0 ||
+      (notesByDate.get(key)?.length ?? 0) > 0 ||
+      (eventsByDate.get(key)?.length ?? 0) > 0
+    );
   });
+
+  const selectedDateLabel = selectedDate
+    ? `${MONTH_NAMES[selectedDate.getMonth()]} ${selectedDate.getDate()}, ${selectedDate.getFullYear()}`
+    : "";
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-6xl mx-auto">
@@ -252,6 +403,7 @@ export default function CalendarPage() {
               const key = getDateKey(date);
               const dayAppts = appointmentsByDate.get(key) ?? [];
               const dayNotes = notesByDate.get(key) ?? [];
+              const dayEvents = eventsByDate.get(key) ?? [];
               const isToday = isSameDay(date, today);
 
               return (
@@ -312,6 +464,36 @@ export default function CalendarPage() {
                           </Button>
                         </div>
                       ))}
+                      {dayEvents.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className="flex items-center justify-between gap-1 text-xs p-1.5 rounded-md"
+                          data-testid={`calendar-event-${ev.id}`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            {ev.eventType === "memo" ? (
+                              <FileText className="h-3 w-3 shrink-0 text-blue-500 dark:text-blue-400" />
+                            ) : (
+                              <CalendarDays className="h-3 w-3 shrink-0 text-violet-500 dark:text-violet-400" />
+                            )}
+                            <span className="italic text-muted-foreground truncate">
+                              {ev.startTime && !ev.isAllDay ? `${ev.startTime} ` : ""}{ev.title}
+                            </span>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="shrink-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteEventMutation.mutate(ev.id);
+                            }}
+                            data-testid={`button-delete-event-${ev.id}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      ))}
                     </div>
                   </CardContent>
                 </Card>
@@ -336,6 +518,7 @@ export default function CalendarPage() {
                 const key = getDateKey(date);
                 const dayAppts = appointmentsByDate.get(key) ?? [];
                 const dayNotes = notesByDate.get(key) ?? [];
+                const dayEvents = eventsByDate.get(key) ?? [];
                 const isToday = isSameDay(date, today);
 
                 return (
@@ -400,6 +583,36 @@ export default function CalendarPage() {
                           </button>
                         </div>
                       ))}
+                      {dayEvents.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className="flex items-center gap-0.5 group"
+                          data-testid={`calendar-event-${ev.id}`}
+                        >
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] leading-tight flex-1 min-w-0 justify-start italic ${
+                              ev.eventType === "memo"
+                                ? "text-blue-600 dark:text-blue-400 border-blue-300 dark:border-blue-600"
+                                : "text-violet-600 dark:text-violet-400 border-violet-300 dark:border-violet-600"
+                            }`}
+                          >
+                            <span className="truncate">
+                              {ev.startTime && !ev.isAllDay ? `${ev.startTime} ` : ""}{ev.title}
+                            </span>
+                          </Badge>
+                          <button
+                            className="shrink-0 h-4 w-4 flex items-center justify-center rounded-sm text-muted-foreground invisible group-hover:visible hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteEventMutation.mutate(ev.id);
+                            }}
+                            data-testid={`button-delete-event-${ev.id}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 );
@@ -409,52 +622,327 @@ export default function CalendarPage() {
         </Card>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <StickyNote className="h-4 w-4" />
-              Add Note
-              {selectedDate && (
-                <span className="text-sm font-normal text-muted-foreground">
-                  - {MONTH_NAMES[selectedDate.getMonth()]} {selectedDate.getDate()}, {selectedDate.getFullYear()}
-                </span>
-              )}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              placeholder="Title"
-              value={noteTitle}
-              onChange={(e) => setNoteTitle(e.target.value)}
-              data-testid="input-note-title"
-            />
-            <Textarea
-              placeholder="Notes (optional)"
-              value={noteText}
-              onChange={(e) => setNoteText(e.target.value)}
-              className="resize-none"
-              rows={3}
-              data-testid="input-note-text"
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setDialogOpen(false)}
-              data-testid="button-cancel-note"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleAddNote}
-              disabled={!noteTitle.trim() || createNoteMutation.isPending}
-              data-testid="button-save-note"
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Add Note
-            </Button>
-          </DialogFooter>
+      <Dialog open={dialogMode !== null} onOpenChange={(open) => { if (!open) closeDialog(); }}>
+        <DialogContent className="max-w-md">
+
+          {dialogMode === "picker" && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Plus className="h-4 w-4" />
+                  Add to {selectedDateLabel}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-3 py-2">
+                <Button
+                  variant="outline"
+                  className="h-16 flex-col gap-1.5 items-center justify-center"
+                  onClick={() => setDialogMode("appointment")}
+                  data-testid="button-picker-appointment"
+                >
+                  <Music className="h-5 w-5 text-primary" />
+                  <span className="text-sm font-medium">Schedule Appointment</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-16 flex-col gap-1.5 items-center justify-center"
+                  onClick={() => setDialogMode("event")}
+                  data-testid="button-picker-event"
+                >
+                  <CalendarDays className="h-5 w-5 text-violet-500" />
+                  <span className="text-sm font-medium">New Personal Event</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-16 flex-col gap-1.5 items-center justify-center"
+                  onClick={() => setDialogMode("memo")}
+                  data-testid="button-picker-memo"
+                >
+                  <FileText className="h-5 w-5 text-blue-500" />
+                  <span className="text-sm font-medium">Add Memo</span>
+                </Button>
+              </div>
+            </>
+          )}
+
+          {dialogMode === "appointment" && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Music className="h-4 w-4 text-primary" />
+                  Schedule Appointment
+                  <span className="text-sm font-normal text-muted-foreground">— {selectedDateLabel}</span>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                <div className="space-y-1.5">
+                  <Label>Client <span className="text-destructive">*</span></Label>
+                  <Popover open={customerComboOpen} onOpenChange={setCustomerComboOpen}>
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant="outline"
+                        role="combobox"
+                        className="w-full justify-between font-normal"
+                        data-testid="button-customer-combobox"
+                      >
+                        {selectedCustomer
+                          ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}`
+                          : "Search client..."}
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-full p-0" align="start">
+                      <Command shouldFilter={false}>
+                        <CommandInput
+                          placeholder="Search by name, phone, city..."
+                          value={customerSearch}
+                          onValueChange={setCustomerSearch}
+                          data-testid="input-customer-search"
+                        />
+                        <CommandList>
+                          <CommandEmpty>No clients found</CommandEmpty>
+                          <CommandGroup>
+                            {filteredCustomers.map((c) => (
+                              <CommandItem
+                                key={c.id}
+                                value={String(c.id)}
+                                onSelect={() => {
+                                  setApptCustomerId(c.id);
+                                  setApptPianoId(null);
+                                  setCustomerComboOpen(false);
+                                  setCustomerSearch("");
+                                }}
+                                data-testid={`customer-option-${c.id}`}
+                              >
+                                <Check
+                                  className={`mr-2 h-4 w-4 ${apptCustomerId === c.id ? "opacity-100" : "opacity-0"}`}
+                                />
+                                <div>
+                                  <div className="font-medium">{c.firstName} {c.lastName}</div>
+                                  {(c.phone || c.city) && (
+                                    <div className="text-xs text-muted-foreground">{[c.phone, c.city].filter(Boolean).join(" · ")}</div>
+                                  )}
+                                </div>
+                              </CommandItem>
+                            ))}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+
+                {apptCustomerId && selectedCustomerPianos.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label>Piano</Label>
+                    <Select
+                      value={apptPianoId ? String(apptPianoId) : "none"}
+                      onValueChange={(v) => setApptPianoId(v === "none" ? null : Number(v))}
+                    >
+                      <SelectTrigger data-testid="select-piano">
+                        <SelectValue placeholder="Select piano (optional)" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No specific piano</SelectItem>
+                        {selectedCustomerPianos.map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>
+                            {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Time <span className="text-destructive">*</span></Label>
+                    <Input
+                      type="time"
+                      value={apptTime}
+                      onChange={(e) => setApptTime(e.target.value)}
+                      data-testid="input-appt-time"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Duration</Label>
+                    <Input
+                      placeholder="1.5 hours"
+                      value={apptDuration}
+                      onChange={(e) => setApptDuration(e.target.value)}
+                      data-testid="input-appt-duration"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Services Requested</Label>
+                  <Input
+                    placeholder="e.g. Tuning, regulation..."
+                    value={apptServices}
+                    onChange={(e) => setApptServices(e.target.value)}
+                    data-testid="input-appt-services"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Price Estimate</Label>
+                  <Input
+                    placeholder="e.g. $150"
+                    value={apptPrice}
+                    onChange={(e) => setApptPrice(e.target.value)}
+                    data-testid="input-appt-price"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Notes</Label>
+                  <Textarea
+                    placeholder="Additional notes..."
+                    value={apptNotes}
+                    onChange={(e) => setApptNotes(e.target.value)}
+                    className="resize-none"
+                    rows={2}
+                    data-testid="input-appt-notes"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="appt-is-tuning"
+                    checked={apptIsTuning}
+                    onCheckedChange={(v) => setApptIsTuning(!!v)}
+                    data-testid="checkbox-appt-is-tuning"
+                  />
+                  <Label htmlFor="appt-is-tuning" className="cursor-pointer">Is Tuning</Label>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setDialogMode("picker")} data-testid="button-appt-back">
+                  Back
+                </Button>
+                <Button
+                  onClick={handleSaveAppointment}
+                  disabled={!apptCustomerId || !apptTime || createAppointmentMutation.isPending}
+                  data-testid="button-appt-save"
+                >
+                  Schedule
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {(dialogMode === "event" || dialogMode === "memo") && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {dialogMode === "memo" ? (
+                    <FileText className="h-4 w-4 text-blue-500" />
+                  ) : (
+                    <CalendarDays className="h-4 w-4 text-violet-500" />
+                  )}
+                  {dialogMode === "memo" ? "Add Memo" : "New Personal Event"}
+                  <span className="text-sm font-normal text-muted-foreground">— {selectedDateLabel}</span>
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Title <span className="text-destructive">*</span></Label>
+                  <Input
+                    placeholder={dialogMode === "memo" ? "Memo title..." : "Event title..."}
+                    value={evTitle}
+                    onChange={(e) => setEvTitle(e.target.value)}
+                    data-testid="input-ev-title"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Notes</Label>
+                  <Textarea
+                    placeholder="Details (optional)..."
+                    value={evNotes}
+                    onChange={(e) => setEvNotes(e.target.value)}
+                    className="resize-none"
+                    rows={2}
+                    data-testid="input-ev-notes"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="ev-all-day"
+                    checked={evIsAllDay}
+                    onCheckedChange={(v) => setEvIsAllDay(!!v)}
+                    data-testid="checkbox-ev-all-day"
+                  />
+                  <Label htmlFor="ev-all-day" className="cursor-pointer">All Day</Label>
+                </div>
+
+                {!evIsAllDay && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Start Time</Label>
+                      <Input
+                        type="time"
+                        value={evStartTime}
+                        onChange={(e) => setEvStartTime(e.target.value)}
+                        data-testid="input-ev-start-time"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>End Time</Label>
+                      <Input
+                        type="time"
+                        value={evEndTime}
+                        onChange={(e) => setEvEndTime(e.target.value)}
+                        data-testid="input-ev-end-time"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="ev-repeating"
+                    checked={evIsRepeating}
+                    onCheckedChange={(v) => setEvIsRepeating(!!v)}
+                    data-testid="checkbox-ev-repeating"
+                  />
+                  <Label htmlFor="ev-repeating" className="cursor-pointer">Repeating</Label>
+                </div>
+
+                {evIsRepeating && (
+                  <div className="space-y-1.5">
+                    <Label>Repeat Frequency</Label>
+                    <Select value={evRepeatFreq} onValueChange={setEvRepeatFreq}>
+                      <SelectTrigger data-testid="select-ev-freq">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setDialogMode("picker")} data-testid="button-ev-back">
+                  Back
+                </Button>
+                <Button
+                  onClick={() => handleSaveEvent(dialogMode === "memo" ? "memo" : "personal")}
+                  disabled={!evTitle.trim() || createEventMutation.isPending}
+                  data-testid="button-ev-save"
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  {dialogMode === "memo" ? "Add Memo" : "Add Event"}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
         </DialogContent>
       </Dialog>
     </div>

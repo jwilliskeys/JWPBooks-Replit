@@ -43,7 +43,8 @@ Preferred communication style: Simple, everyday language.
   - `GET /api/pianos` — List all pianos
   - `GET/POST/PATCH/DELETE /api/appointments` — Appointment CRUD
   - `GET /api/customers/:id/appointments` — Appointments per client
-  - `GET/POST /api/calendar-notes`, `PATCH/DELETE /api/calendar-notes/:id` — Personal calendar notes
+  - `GET/POST /api/calendar-notes`, `PATCH/DELETE /api/calendar-notes/:id` — Personal calendar notes (legacy)
+  - `GET/POST /api/calendar-events`, `DELETE /api/calendar-events/:id` — Personal events and memos (new)
   - `GET/POST /api/trips`, `GET/PATCH/DELETE /api/trips/:id` — Trip CRUD
   - `GET/POST /api/trips/:id/appointments`, `PATCH/DELETE /api/trip-appointments/:id` — Trip appointment CRUD
   - `POST /api/sync` — Sync data from Google Sheets
@@ -56,8 +57,9 @@ Preferred communication style: Simple, everyday language.
   - `customers` — id, firstName, lastName, companyName, email, phone, address, city, state, zipCode, pianoType, lastTuned, personalNotes, lastContacted, isStarred, createdAt
   - `pianos` — id, customerId, make, model, pianoType, year, notes, photos (text[]), lastTuned, isActive, createdAt
   - `service_records` — id, customerId, pianoId, serviceDate, serviceType, notes, cost, createdAt
-  - `appointments` — id, customerId, pianoId, date, time, servicesRequested, priceEstimate, notes, isTuning, status, createdAt
+  - `appointments` — id, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, isTuning, status, createdAt
   - `calendar_notes` — id, date, title, notes, createdAt
+  - `calendar_events` — id, date, title, notes, startTime, endTime, isAllDay, isRepeating, repeatFrequency, eventType ("personal"|"memo"), createdAt
   - `trips` — id, name, startDate, endDate, notes, createdAt
   - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, linkedAppointmentId (nullable FK to appointments.id), createdAt
   - `users` — id (varchar UUID), email, firstName, lastName, profileImageUrl, createdAt, updatedAt (Replit Auth)

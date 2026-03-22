@@ -53,6 +53,7 @@ export const appointments = pgTable("appointments", {
   pianoId: integer("piano_id"),
   date: text("date").notNull(),
   time: text("time").notNull(),
+  duration: text("duration"),
   servicesRequested: text("services_requested"),
   priceEstimate: text("price_estimate"),
   notes: text("notes"),
@@ -66,6 +67,20 @@ export const calendarNotes = pgTable("calendar_notes", {
   date: text("date").notNull(),
   title: text("title").notNull(),
   notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const calendarEvents = pgTable("calendar_events", {
+  id: serial("id").primaryKey(),
+  date: text("date").notNull(),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  startTime: text("start_time"),
+  endTime: text("end_time"),
+  isAllDay: boolean("is_all_day").default(false),
+  isRepeating: boolean("is_repeating").default(false),
+  repeatFrequency: text("repeat_frequency"),
+  eventType: text("event_type").notNull().default("personal"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -129,6 +144,11 @@ export const insertCalendarNoteSchema = createInsertSchema(calendarNotes).omit({
   createdAt: true,
 });
 
+export const insertCalendarEventSchema = createInsertSchema(calendarEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
 export const insertTripSchema = createInsertSchema(trips).omit({
   id: true,
   createdAt: true,
@@ -141,6 +161,8 @@ export const insertTripAppointmentSchema = createInsertSchema(tripAppointments).
 
 export type CalendarNote = typeof calendarNotes.$inferSelect;
 export type InsertCalendarNote = z.infer<typeof insertCalendarNoteSchema>;
+export type CalendarEvent = typeof calendarEvents.$inferSelect;
+export type InsertCalendarEvent = z.infer<typeof insertCalendarEventSchema>;
 export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
 export type TripAppointment = typeof tripAppointments.$inferSelect;
