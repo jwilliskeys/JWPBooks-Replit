@@ -9,6 +9,7 @@ import {
   calendarEvents,
   trips,
   tripAppointments,
+  invoices,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -25,6 +26,8 @@ import {
   type InsertTrip,
   type TripAppointment,
   type InsertTripAppointment,
+  type Invoice,
+  type InsertInvoice,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -68,6 +71,12 @@ export interface IStorage {
   createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment>;
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
+  getInvoices(): Promise<Invoice[]>;
+  getInvoice(id: number): Promise<Invoice | undefined>;
+  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
+  deleteInvoice(id: number): Promise<boolean>;
+  getNextInvoiceNumber(): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -310,6 +319,40 @@ export class DatabaseStorage implements IStorage {
   async deleteTripAppointment(id: number): Promise<boolean> {
     const result = await db.delete(tripAppointments).where(eq(tripAppointments.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getInvoices(): Promise<Invoice[]> {
+    return db.select().from(invoices).orderBy(invoices.createdAt);
+  }
+
+  async getInvoice(id: number): Promise<Invoice | undefined> {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return invoice;
+  }
+
+  async createInvoice(invoice: InsertInvoice): Promise<Invoice> {
+    const [created] = await db.insert(invoices).values(invoice).returning();
+    return created;
+  }
+
+  async updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined> {
+    const [updated] = await db.update(invoices).set(data).where(eq(invoices.id, id)).returning();
+    return updated;
+  }
+
+  async deleteInvoice(id: number): Promise<boolean> {
+    const result = await db.delete(invoices).where(eq(invoices.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getNextInvoiceNumber(): Promise<number> {
+    const all = await db.select({ invoiceNumber: invoices.invoiceNumber }).from(invoices);
+    let max = 0;
+    for (const row of all) {
+      const n = parseInt(row.invoiceNumber, 10);
+      if (!isNaN(n) && n > max) max = n;
+    }
+    return max + 1;
   }
 
   async syncCustomerFromPianos(customerId: number): Promise<void> {

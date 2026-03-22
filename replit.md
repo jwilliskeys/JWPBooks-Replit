@@ -26,6 +26,9 @@ Preferred communication style: Simple, everyday language.
 - `/appointments` — Appointment list with search, sort, and status management
 - `/calendar` — Monthly calendar grid showing appointments and personal notes; completed appointments faded; click dates to add notes
 - `/slc-schedule` — Trip planner for SLC visits; horizontal single-row column layout (all days side by side, scrolls horizontally if needed), each day = 220px wide column, auto-detected service area per day, smart client suggestions (nearby cities), overlapping appointments allowed with orange "Overlapping" badge warning; deletable/recreatable trips
+- `/invoices` — Invoice list: searchable table showing invoice #, customer, date, status badge (Draft/Sent/Paid), total; "New Invoice" button
+- `/invoices/new` — Create new invoice; pre-fills from appointment via `?appointmentId=<id>` (`isTuning` → "Full Service Tuning" line item, `servicesRequested` → second item); editable line-items table; Save, Save & Print, status selector
+- `/invoices/:id` — Invoice detail/edit: view mode with print layout, edit mode, Mark Paid, Delete with confirmation; company name "John Willis Piano" hardcoded
 - `/sync` — Google Sheets sync interface
 
 ### Backend
@@ -47,6 +50,9 @@ Preferred communication style: Simple, everyday language.
   - `GET/POST /api/calendar-events`, `DELETE /api/calendar-events/:id` — Personal events and memos (new)
   - `GET/POST /api/trips`, `GET/PATCH/DELETE /api/trips/:id` — Trip CRUD
   - `GET/POST /api/trips/:id/appointments`, `PATCH/DELETE /api/trip-appointments/:id` — Trip appointment CRUD
+  - `GET/POST /api/invoices` — List and create invoices
+  - `GET /api/invoices/next-number` — Get next auto-incremented invoice number
+  - `GET/PATCH/DELETE /api/invoices/:id` — Individual invoice CRUD
   - `POST /api/sync` — Sync data from Google Sheets
 
 ### Data Storage
@@ -62,6 +68,7 @@ Preferred communication style: Simple, everyday language.
   - `calendar_events` — id, date, title, notes, startTime, endTime, isAllDay, isRepeating, repeatFrequency, eventType ("personal"|"memo"), createdAt
   - `trips` — id, name, startDate, endDate, notes, createdAt
   - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, linkedAppointmentId (nullable FK to appointments.id), createdAt
+  - `invoices` — id, invoiceNumber (text), customerId (nullable), date, status ("draft"|"sent"|"paid"), lineItems (JSON text), subtotal, total, paidAmount, notes, createdAt
   - `users` — id (varchar UUID), email, firstName, lastName, profileImageUrl, createdAt, updatedAt (Replit Auth)
   - `sessions` — sid, sess (jsonb), expire (Replit Auth session store)
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory

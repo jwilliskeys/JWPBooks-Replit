@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import {
   ChevronLeft,
   ChevronRight,
@@ -261,6 +261,7 @@ type DialogMode = "picker" | "appointment" | "event" | "memo" | null;
 export default function CalendarPage() {
   const { toast } = useToast();
   const isMobile = useIsMobile();
+  const [, navigate] = useLocation();
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -973,24 +974,15 @@ export default function CalendarPage() {
                       >
                         Clone
                       </Button>
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled
-                                className="h-7 text-xs border-violet-200 dark:border-violet-800 text-violet-400 dark:text-violet-600 opacity-60 cursor-not-allowed pointer-events-none"
-                                data-testid="button-appt-invoice"
-                              >
-                                New Invoice
-                              </Button>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>Coming soon</TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => navigate(`/invoices/new?appointmentId=${selectedAppt.id}`)}
+                        className="h-7 text-xs border-violet-300 dark:border-violet-700 text-violet-800 dark:text-violet-200 hover:bg-violet-200 dark:hover:bg-violet-800"
+                        data-testid="button-appt-invoice"
+                      >
+                        New Invoice
+                      </Button>
                     </div>
                     <Button
                       size="sm"

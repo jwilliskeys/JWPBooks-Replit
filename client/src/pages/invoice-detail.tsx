@@ -1,0 +1,805 @@
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation, useRoute } from "wouter";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft } from "lucide-react";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { Invoice, Customer, Piano, Appointment } from "@shared/schema";
+
+const COMPANY_NAME = "John Willis Piano";
+const COMPANY_ADDRESS = "868 S 700 E\nCenterville, UT 84014";
+
+type LineItem = {
+  description: string;
+  quantity: number;
+  unitPrice: string;
+  taxes: string;
+  lineTotal: string;
+};
+
+function parseMDYY(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return null;
+  const month = parseInt(parts[0], 10);
+  const day = parseInt(parts[1], 10);
+  let year = parseInt(parts[2], 10);
+  if (isNaN(month) || isNaN(day) || isNaN(year)) return null;
+  if (year < 100) year += 2000;
+  return new Date(year, month - 1, day);
+}
+
+function formatDateLong(dateStr: string) {
+  const d = parseMDYY(dateStr);
+  if (!d) return dateStr;
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
+
+function todayMDYY(): string {
+  const d = new Date();
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear() % 100}`;
+}
+
+function parseDollar(str: string): number {
+  const n = parseFloat(str.replace(/[^0-9.]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+function formatDollar(n: number): string {
+  return `$${n.toFixed(2)}`;
+}
+
+function computeLineTotal(qty: number, unitPrice: string): string {
+  return formatDollar(qty * parseDollar(unitPrice));
+}
+
+function computeTotals(lineItems: LineItem[]): { subtotal: string; total: string } {
+  const sum = lineItems.reduce((acc, li) => acc + parseDollar(li.lineTotal), 0);
+  return { subtotal: formatDollar(sum), total: formatDollar(sum) };
+}
+
+function computeAmountDue(total: string, paid: string): string {
+  return formatDollar(Math.max(0, parseDollar(total) - parseDollar(paid)));
+}
+
+function statusBadge(status: string | null) {
+  switch (status) {
+    case "paid":
+      return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-0 print:bg-green-100 print:text-green-800">Paid</Badge>;
+    case "sent":
+      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-0 print:bg-blue-100 print:text-blue-800">Sent</Badge>;
+    default:
+      return <Badge variant="secondary" className="print:bg-gray-100 print:text-gray-700">Draft</Badge>;
+  }
+}
+
+function buildLineItemsFromAppointment(appt: Appointment): LineItem[] {
+  const items: LineItem[] = [];
+  if (appt.isTuning) {
+    const price = appt.priceEstimate ?? "$0.00";
+    items.push({
+      description: "Full Service Tuning",
+      quantity: 1,
+      unitPrice: price,
+      taxes: "",
+      lineTotal: price,
+    });
+  }
+  if (appt.servicesRequested && appt.servicesRequested.trim()) {
+    items.push({
+      description: appt.servicesRequested.trim(),
+      quantity: 1,
+      unitPrice: "$0.00",
+      taxes: "",
+      lineTotal: "$0.00",
+    });
+  }
+  if (items.length === 0) {
+    items.push({
+      description: "Service",
+      quantity: 1,
+      unitPrice: appt.priceEstimate ?? "$0.00",
+      taxes: "",
+      lineTotal: appt.priceEstimate ?? "$0.00",
+    });
+  }
+  return items;
+}
+
+interface InvoiceFormState {
+  invoiceNumber: string;
+  customerId: number;
+  appointmentId: number | null;
+  pianoId: number | null;
+  invoiceDate: string;
+  dueDate: string;
+  status: string;
+  lineItems: LineItem[];
+  subtotal: string;
+  total: string;
+  paidAmount: string;
+  notes: string;
+  customerName: string;
+  customerAddress: string;
+  customerPhone: string;
+  pianoDescription: string;
+}
+
+function defaultForm(): InvoiceFormState {
+  return {
+    invoiceNumber: "",
+    customerId: 0,
+    appointmentId: null,
+    pianoId: null,
+    invoiceDate: todayMDYY(),
+    dueDate: todayMDYY(),
+    status: "draft",
+    lineItems: [{ description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }],
+    subtotal: "$0.00",
+    total: "$0.00",
+    paidAmount: "$0.00",
+    notes: "",
+    customerName: "",
+    customerAddress: "",
+    customerPhone: "",
+    pianoDescription: "",
+  };
+}
+
+function invoiceToForm(inv: Invoice): InvoiceFormState {
+  let lineItems: LineItem[] = [];
+  try { lineItems = JSON.parse(inv.lineItems); } catch {}
+  if (lineItems.length === 0) {
+    lineItems = [{ description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }];
+  }
+  return {
+    invoiceNumber: inv.invoiceNumber,
+    customerId: inv.customerId,
+    appointmentId: inv.appointmentId ?? null,
+    pianoId: inv.pianoId ?? null,
+    invoiceDate: inv.invoiceDate,
+    dueDate: inv.dueDate,
+    status: inv.status ?? "draft",
+    lineItems,
+    subtotal: inv.subtotal ?? "$0.00",
+    total: inv.total ?? "$0.00",
+    paidAmount: inv.paidAmount ?? "$0.00",
+    notes: inv.notes ?? "",
+    customerName: inv.customerName ?? "",
+    customerAddress: inv.customerAddress ?? "",
+    customerPhone: inv.customerPhone ?? "",
+    pianoDescription: inv.pianoDescription ?? "",
+  };
+}
+
+export default function InvoiceDetailPage() {
+  const [matchDetail, paramsDetail] = useRoute("/invoices/:id");
+  const [matchNew] = useRoute("/invoices/new");
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+
+  const isNew = matchNew;
+  const invoiceId = matchDetail && paramsDetail?.id ? parseInt(paramsDetail.id) : null;
+
+  const searchParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search)
+    : new URLSearchParams();
+  const appointmentIdParam = searchParams.get("appointmentId");
+
+  const [editMode, setEditMode] = useState(isNew ?? false);
+  const [form, setForm] = useState<InvoiceFormState>(defaultForm());
+  const [printAfterSave, setPrintAfterSave] = useState(false);
+
+  const { data: invoice, isLoading: loadingInvoice } = useQuery<Invoice>({
+    queryKey: ["/api/invoices", invoiceId],
+    enabled: !!invoiceId,
+  });
+
+  const { data: nextNumber } = useQuery<{ nextNumber: number }>({
+    queryKey: ["/api/invoices/next-number"],
+    enabled: isNew === true,
+  });
+
+  const { data: customers } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+  });
+
+  const { data: allPianos } = useQuery<Piano[]>({
+    queryKey: ["/api/pianos"],
+  });
+
+  const { data: appointmentData } = useQuery<Appointment>({
+    queryKey: ["/api/appointments", appointmentIdParam ? parseInt(appointmentIdParam) : null],
+    enabled: !!appointmentIdParam && isNew === true,
+  });
+
+  useEffect(() => {
+    if (invoice && !isNew) {
+      setForm(invoiceToForm(invoice));
+    }
+  }, [invoice, isNew]);
+
+  useEffect(() => {
+    if (isNew && nextNumber) {
+      setForm(f => ({ ...f, invoiceNumber: String(nextNumber.nextNumber) }));
+    }
+  }, [isNew, nextNumber]);
+
+  useEffect(() => {
+    if (!isNew || !appointmentData) return;
+    const customer = customers?.find(c => c.id === appointmentData.customerId);
+    const piano = allPianos?.find(p => p.id === appointmentData.pianoId);
+    const lineItems = buildLineItemsFromAppointment(appointmentData);
+    const { subtotal, total } = computeTotals(lineItems);
+    const pianoDesc = piano
+      ? [piano.make, piano.model, piano.pianoType, piano.year].filter(Boolean).join(" ")
+      : "";
+    const custAddr = customer
+      ? [customer.address, customer.city, customer.state, customer.zipCode].filter(Boolean).join(", ")
+      : "";
+    setForm(f => ({
+      ...f,
+      customerId: appointmentData.customerId,
+      appointmentId: appointmentData.id,
+      pianoId: appointmentData.pianoId ?? null,
+      invoiceDate: appointmentData.date,
+      dueDate: appointmentData.date,
+      customerName: customer ? `${customer.firstName} ${customer.lastName}` : "",
+      customerAddress: custAddr,
+      customerPhone: customer?.phone ?? "",
+      pianoDescription: pianoDesc,
+      lineItems,
+      subtotal,
+      total,
+    }));
+  }, [appointmentData, customers, allPianos, isNew]);
+
+  const createMutation = useMutation({
+    mutationFn: (data: object) => apiRequest("POST", "/api/invoices", data).then(r => r.json()),
+    onSuccess: (created: Invoice) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Invoice created" });
+      const shouldPrint = printAfterSave;
+      setPrintAfterSave(false);
+      navigate(`/invoices/${created.id}`);
+      if (shouldPrint) setTimeout(() => window.print(), 500);
+    },
+    onError: () => { toast({ title: "Failed to create invoice", variant: "destructive" }); },
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: object }) =>
+      apiRequest("PATCH", `/api/invoices/${id}`, data).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", invoiceId] });
+      toast({ title: "Invoice saved" });
+      setEditMode(false);
+    },
+    onError: () => { toast({ title: "Failed to save invoice", variant: "destructive" }); },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/invoices/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Invoice deleted" });
+      navigate("/invoices");
+    },
+    onError: () => { toast({ title: "Failed to delete invoice", variant: "destructive" }); },
+  });
+
+  const markPaidMutation = useMutation({
+    mutationFn: (id: number) =>
+      apiRequest("PATCH", `/api/invoices/${id}`, { status: "paid", paidAmount: invoice?.total ?? "$0.00" }).then(r => r.json()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices", invoiceId] });
+      toast({ title: "Invoice marked as paid" });
+    },
+    onError: () => { toast({ title: "Failed to update invoice", variant: "destructive" }); },
+  });
+
+  function updateLineItem(idx: number, field: keyof LineItem, value: string | number) {
+    setForm(f => {
+      const items = [...f.lineItems];
+      const item = { ...items[idx], [field]: value };
+      if (field === "quantity" || field === "unitPrice") {
+        item.lineTotal = computeLineTotal(
+          field === "quantity" ? Number(value) : item.quantity,
+          field === "unitPrice" ? String(value) : item.unitPrice
+        );
+      }
+      items[idx] = item;
+      const { subtotal, total } = computeTotals(items);
+      return { ...f, lineItems: items, subtotal, total };
+    });
+  }
+
+  function addLineItem() {
+    setForm(f => ({
+      ...f,
+      lineItems: [...f.lineItems, { description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }],
+    }));
+  }
+
+  function removeLineItem(idx: number) {
+    setForm(f => {
+      const items = f.lineItems.filter((_, i) => i !== idx);
+      const { subtotal, total } = computeTotals(items);
+      return { ...f, lineItems: items, subtotal, total };
+    });
+  }
+
+  function buildPayload() {
+    const { subtotal, total } = computeTotals(form.lineItems);
+    return {
+      invoiceNumber: form.invoiceNumber,
+      customerId: form.customerId || 1,
+      appointmentId: form.appointmentId,
+      pianoId: form.pianoId,
+      invoiceDate: form.invoiceDate,
+      dueDate: form.dueDate,
+      status: form.status,
+      lineItems: JSON.stringify(form.lineItems),
+      subtotal,
+      total,
+      paidAmount: form.paidAmount,
+      notes: form.notes || null,
+      customerName: form.customerName || null,
+      customerAddress: form.customerAddress || null,
+      customerPhone: form.customerPhone || null,
+      pianoDescription: form.pianoDescription || null,
+    };
+  }
+
+  function handleSave() {
+    if (isNew) {
+      createMutation.mutate(buildPayload());
+    } else if (invoiceId) {
+      updateMutation.mutate({ id: invoiceId, data: buildPayload() });
+    }
+  }
+
+  function handleSaveAndPrint() {
+    if (isNew) {
+      setPrintAfterSave(true);
+      createMutation.mutate(buildPayload());
+    } else if (invoiceId) {
+      updateMutation.mutate({ id: invoiceId, data: buildPayload() });
+      setTimeout(() => window.print(), 500);
+    }
+  }
+
+  const amountDue = computeAmountDue(form.total, form.paidAmount);
+
+  const displayData = editMode ? form : (invoice ? invoiceToForm(invoice) : form);
+
+  if (loadingInvoice && !isNew) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto space-y-4">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <style>{`
+        @media print {
+          body * { visibility: hidden !important; }
+          #invoice-print-area, #invoice-print-area * { visibility: visible !important; }
+          #invoice-print-area { position: fixed; top: 0; left: 0; width: 100%; padding: 40px; background: white; }
+          .no-print { display: none !important; }
+        }
+      `}</style>
+
+      <div className="p-4 sm:p-6 max-w-4xl mx-auto">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between mb-5 no-print">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => navigate("/invoices")} data-testid="button-back-invoices">
+              <ArrowLeft className="h-4 w-4 mr-1" />
+              Invoices
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            {!isNew && !editMode && (
+              <>
+                {invoice?.status !== "paid" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => invoiceId && markPaidMutation.mutate(invoiceId)}
+                    disabled={markPaidMutation.isPending}
+                    className="text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-900/30"
+                    data-testid="button-mark-paid"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                    Mark Paid
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.print()}
+                  data-testid="button-print-invoice"
+                >
+                  <Printer className="h-3.5 w-3.5 mr-1" />
+                  Print / PDF
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditMode(true)}
+                  data-testid="button-edit-invoice"
+                >
+                  <Pencil className="h-3.5 w-3.5 mr-1" />
+                  Edit
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive hover:bg-destructive/10" data-testid="button-delete-invoice">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Delete Invoice #{invoice?.invoiceNumber}?</AlertDialogTitle>
+                      <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        onClick={() => invoiceId && deleteMutation.mutate(invoiceId)}
+                      >
+                        Delete
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </>
+            )}
+            {(isNew || editMode) && (
+              <>
+                {!isNew && (
+                  <Button variant="ghost" size="sm" onClick={() => setEditMode(false)} data-testid="button-cancel-edit">
+                    Cancel
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleSave}
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                  data-testid="button-save-invoice"
+                >
+                  Save
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleSaveAndPrint}
+                  disabled={createMutation.isPending || updateMutation.isPending}
+                  data-testid="button-save-print-invoice"
+                >
+                  <Printer className="h-3.5 w-3.5 mr-1" />
+                  Save & Print
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Invoice document */}
+        <div
+          id="invoice-print-area"
+          className="bg-white dark:bg-background border rounded-lg p-6 sm:p-10 shadow-sm"
+        >
+          {/* Header row */}
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-8">
+            {/* Company block */}
+            <div>
+              <div className="text-xl font-bold mb-1">{COMPANY_NAME}</div>
+              <div className="text-sm text-muted-foreground whitespace-pre-line">{COMPANY_ADDRESS}</div>
+            </div>
+
+            {/* Invoice meta */}
+            <div className="sm:text-right space-y-1.5">
+              {editMode || isNew ? (
+                <div className="flex sm:justify-end items-center gap-2 mb-2">
+                  <span className="text-sm text-muted-foreground">Invoice #</span>
+                  <Input
+                    value={form.invoiceNumber}
+                    onChange={e => setForm(f => ({ ...f, invoiceNumber: e.target.value }))}
+                    className="w-28 h-7 text-sm font-mono"
+                    data-testid="input-invoice-number"
+                  />
+                </div>
+              ) : (
+                <div className="text-lg font-bold">Invoice #{displayData.invoiceNumber}</div>
+              )}
+              <div className="flex sm:justify-end items-center gap-3 text-sm">
+                <span className="text-muted-foreground w-28 sm:text-right">Invoice Date</span>
+                {editMode || isNew ? (
+                  <Input
+                    value={form.invoiceDate}
+                    onChange={e => setForm(f => ({ ...f, invoiceDate: e.target.value }))}
+                    placeholder="M/D/YY"
+                    className="w-28 h-7 text-sm"
+                    data-testid="input-invoice-date"
+                  />
+                ) : (
+                  <span className="font-medium">{formatDateLong(displayData.invoiceDate)}</span>
+                )}
+              </div>
+              <div className="flex sm:justify-end items-center gap-3 text-sm">
+                <span className="text-muted-foreground w-28 sm:text-right">Due Date</span>
+                {editMode || isNew ? (
+                  <Input
+                    value={form.dueDate}
+                    onChange={e => setForm(f => ({ ...f, dueDate: e.target.value }))}
+                    placeholder="M/D/YY"
+                    className="w-28 h-7 text-sm"
+                    data-testid="input-due-date"
+                  />
+                ) : (
+                  <span className="font-medium">{formatDateLong(displayData.dueDate)}</span>
+                )}
+              </div>
+              <div className="flex sm:justify-end items-center gap-3 text-sm">
+                <span className="text-muted-foreground w-28 sm:text-right">Status</span>
+                {editMode || isNew ? (
+                  <Select value={form.status} onValueChange={v => setForm(f => ({ ...f, status: v }))}>
+                    <SelectTrigger className="w-28 h-7 text-sm" data-testid="select-invoice-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="draft">Draft</SelectItem>
+                      <SelectItem value="sent">Sent</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  statusBadge(displayData.status)
+                )}
+              </div>
+              <div className="flex sm:justify-end items-center gap-3 text-sm pt-1">
+                <span className="text-muted-foreground w-28 sm:text-right font-medium">Amount Due</span>
+                <span className="font-bold text-base">{amountDue}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Customer block */}
+          <div className="mb-8">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Bill To</div>
+            {editMode || isNew ? (
+              <div className="space-y-2 max-w-sm">
+                <Input
+                  value={form.customerName}
+                  onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
+                  placeholder="Customer name"
+                  className="h-8 text-sm font-medium"
+                  data-testid="input-customer-name"
+                />
+                <Textarea
+                  value={form.customerAddress}
+                  onChange={e => setForm(f => ({ ...f, customerAddress: e.target.value }))}
+                  placeholder="Address"
+                  className="text-sm resize-none h-16"
+                  data-testid="input-customer-address"
+                />
+                <Input
+                  value={form.customerPhone}
+                  onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
+                  placeholder="Phone"
+                  className="h-8 text-sm"
+                  data-testid="input-customer-phone"
+                />
+              </div>
+            ) : (
+              <div className="text-sm space-y-0.5">
+                <div className="font-medium">{displayData.customerName}</div>
+                <div className="text-muted-foreground whitespace-pre-line">{displayData.customerAddress}</div>
+                {displayData.customerPhone && (
+                  <div className="text-muted-foreground">{displayData.customerPhone}</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Piano description */}
+          {(displayData.pianoDescription || editMode || isNew) && (
+            <div className="mb-6">
+              {editMode || isNew ? (
+                <Input
+                  value={form.pianoDescription}
+                  onChange={e => setForm(f => ({ ...f, pianoDescription: e.target.value }))}
+                  placeholder="Piano description (e.g. Baldwin Grand Baby)"
+                  className="h-8 text-sm font-medium max-w-sm"
+                  data-testid="input-piano-description"
+                />
+              ) : (
+                <div className="font-medium text-sm">{displayData.pianoDescription}</div>
+              )}
+            </div>
+          )}
+
+          {/* Line items table */}
+          <div className="mb-6 overflow-x-auto">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="border-y border-border">
+                  <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Description</th>
+                  <th className="text-left py-2 pr-4 font-semibold text-muted-foreground whitespace-nowrap">Quantity</th>
+                  <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Subtotal</th>
+                  <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Taxes</th>
+                  <th className="text-right py-2 font-semibold text-muted-foreground">Line Total</th>
+                  {(editMode || isNew) && <th className="py-2 w-8" />}
+                </tr>
+              </thead>
+              <tbody>
+                {displayData.lineItems.map((li, idx) => (
+                  <tr key={idx} className="border-b border-border/50">
+                    <td className="py-2.5 pr-4">
+                      {editMode || isNew ? (
+                        <Input
+                          value={li.description}
+                          onChange={e => updateLineItem(idx, "description", e.target.value)}
+                          className="h-7 text-sm"
+                          placeholder="Description"
+                          data-testid={`input-line-desc-${idx}`}
+                        />
+                      ) : (
+                        <span>{li.description}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      {editMode || isNew ? (
+                        <Input
+                          type="number"
+                          min="1"
+                          value={li.quantity}
+                          onChange={e => updateLineItem(idx, "quantity", parseInt(e.target.value) || 1)}
+                          className="h-7 text-sm w-20"
+                          data-testid={`input-line-qty-${idx}`}
+                        />
+                      ) : (
+                        <span className="text-muted-foreground">1 unit at {li.unitPrice}/each</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-4">
+                      {editMode || isNew ? (
+                        <Input
+                          value={li.unitPrice}
+                          onChange={e => updateLineItem(idx, "unitPrice", e.target.value)}
+                          className="h-7 text-sm w-28"
+                          placeholder="$0.00"
+                          data-testid={`input-line-price-${idx}`}
+                        />
+                      ) : (
+                        <span className="tabular-nums">{li.lineTotal}</span>
+                      )}
+                    </td>
+                    <td className="py-2.5 pr-4 text-muted-foreground">—</td>
+                    <td className="py-2.5 text-right tabular-nums font-medium">
+                      {computeLineTotal(li.quantity, li.unitPrice)}
+                    </td>
+                    {(editMode || isNew) && (
+                      <td className="py-2.5 pl-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeLineItem(idx)}
+                          disabled={displayData.lineItems.length <= 1}
+                          data-testid={`button-remove-line-${idx}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {(editMode || isNew) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="mt-2 text-xs h-7 text-muted-foreground"
+                onClick={addLineItem}
+                data-testid="button-add-line-item"
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Add line item
+              </Button>
+            )}
+          </div>
+
+          {/* Footer: notes left, totals right */}
+          <div className="flex flex-col sm:flex-row sm:justify-between gap-6">
+            <div className="sm:max-w-xs">
+              {editMode || isNew ? (
+                <Textarea
+                  value={form.notes}
+                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+                  placeholder="Footer notes (payment instructions, thank you message...)"
+                  className="text-sm resize-none h-28"
+                  data-testid="input-invoice-notes"
+                />
+              ) : (
+                displayData.notes ? (
+                  <p className="text-sm text-muted-foreground leading-relaxed">{displayData.notes}</p>
+                ) : null
+              )}
+            </div>
+
+            {/* Totals */}
+            <div className="sm:min-w-[240px]">
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between gap-8">
+                  <span className="text-muted-foreground">Subtotal</span>
+                  <span className="tabular-nums font-medium">{displayData.subtotal}</span>
+                </div>
+                <div className="flex justify-between gap-8 border-t border-border pt-1.5">
+                  <span className="font-semibold">Total</span>
+                  <span className="tabular-nums font-bold">{displayData.total}</span>
+                </div>
+                <div className="flex justify-between gap-8 items-center">
+                  <span className="text-muted-foreground">Paid</span>
+                  {editMode || isNew ? (
+                    <Input
+                      value={form.paidAmount}
+                      onChange={e => setForm(f => ({ ...f, paidAmount: e.target.value }))}
+                      className="h-7 text-sm w-28 text-right"
+                      placeholder="$0.00"
+                      data-testid="input-paid-amount"
+                    />
+                  ) : (
+                    <span className="tabular-nums">{displayData.paidAmount}</span>
+                  )}
+                </div>
+                <div className="flex justify-between gap-8 border-t border-border pt-1.5">
+                  <span className="font-semibold">Amount Due</span>
+                  <span className="tabular-nums font-bold text-base">{amountDue}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Print footer */}
+          <div className="mt-10 pt-6 border-t border-border/50 text-xs text-muted-foreground text-center hidden print:block">
+            Page 1 of 1
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

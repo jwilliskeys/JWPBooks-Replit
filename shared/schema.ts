@@ -110,6 +110,27 @@ export const tripAppointments = pgTable("trip_appointments", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  invoiceNumber: text("invoice_number").notNull(),
+  customerId: integer("customer_id").notNull(),
+  appointmentId: integer("appointment_id"),
+  pianoId: integer("piano_id"),
+  invoiceDate: text("invoice_date").notNull(),
+  dueDate: text("due_date").notNull(),
+  status: text("status").default("draft"),
+  lineItems: text("line_items").notNull().default("[]"),
+  subtotal: text("subtotal").default("$0.00"),
+  total: text("total").default("$0.00"),
+  paidAmount: text("paid_amount").default("$0.00"),
+  notes: text("notes"),
+  customerName: text("customer_name"),
+  customerAddress: text("customer_address"),
+  customerPhone: text("customer_phone"),
+  pianoDescription: text("piano_description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const insertCustomerSchema = createInsertSchema(customers).omit({
   id: true,
   createdAt: true,
@@ -170,5 +191,13 @@ export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
 export type TripAppointment = typeof tripAppointments.$inferSelect;
 export type InsertTripAppointment = z.infer<typeof insertTripAppointmentSchema>;
+
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type Invoice = typeof invoices.$inferSelect;
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 
 export * from "./models/auth";
