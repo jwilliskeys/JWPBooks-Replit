@@ -68,7 +68,7 @@ Preferred communication style: Simple, everyday language.
   - `calendar_events` — id, date, title, notes, startTime, endTime, isAllDay, isRepeating, repeatFrequency, eventType ("personal"|"memo"), createdAt
   - `trips` — id, name, startDate, endDate, notes, createdAt
   - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, linkedAppointmentId (nullable FK to appointments.id), createdAt
-  - `invoices` — id, invoiceNumber (text), customerId (nullable), date, status ("draft"|"sent"|"paid"), lineItems (JSON text), subtotal, total, paidAmount, notes, createdAt
+  - `invoices` — id, invoiceNumber (text), customerId (int, required), appointmentId (nullable), pianoId (nullable), invoiceDate, dueDate, status ("draft"|"open"|"paid"|"cancelled"), lineItems (JSON text), subtotal, total, paidAmount, notes, customerName, customerEmail, customerAddress, customerPhone, pianoDescription, assignedTo (default "John Willis"), createdAt
   - `users` — id (varchar UUID), email, firstName, lastName, profileImageUrl, createdAt, updatedAt (Replit Auth)
   - `sessions` — sid, sess (jsonb), expire (Replit Auth session store)
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory

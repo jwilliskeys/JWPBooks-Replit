@@ -221,6 +221,7 @@ export default function InvoiceDetailPage() {
   const [editMode, setEditMode] = useState(isNew ?? false);
   const [form, setForm] = useState<InvoiceFormState>(defaultForm());
   const [printAfterSave, setPrintAfterSave] = useState(false);
+  const [printAfterUpdate, setPrintAfterUpdate] = useState(false);
 
   const { data: invoice, isLoading: loadingInvoice } = useQuery<Invoice>({
     queryKey: ["/api/invoices", invoiceId],
@@ -308,6 +309,9 @@ export default function InvoiceDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices", invoiceId] });
       toast({ title: "Invoice saved" });
       setEditMode(false);
+      const shouldPrint = printAfterUpdate;
+      setPrintAfterUpdate(false);
+      if (shouldPrint) window.print();
     },
     onError: () => { toast({ title: "Failed to save invoice", variant: "destructive" }); },
   });
@@ -409,8 +413,8 @@ export default function InvoiceDetailPage() {
       setPrintAfterSave(true);
       createMutation.mutate(buildPayload());
     } else if (invoiceId) {
+      setPrintAfterUpdate(true);
       updateMutation.mutate({ id: invoiceId, data: buildPayload() });
-      setTimeout(() => window.print(), 500);
     }
   }
 
