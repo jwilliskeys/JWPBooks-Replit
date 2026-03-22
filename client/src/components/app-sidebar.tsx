@@ -22,7 +22,6 @@ import { formatPhone } from "@/lib/utils";
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Clients", url: "/customers", icon: Users },
-  { title: "Appointments", url: "/appointments", icon: Calendar },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "SLC Schedule", url: "/slc-schedule", icon: MapPin },
   { title: "Sync Data", url: "/sync", icon: RefreshCw },
