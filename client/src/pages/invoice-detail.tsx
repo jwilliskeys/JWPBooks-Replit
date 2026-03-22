@@ -752,7 +752,7 @@ export default function InvoiceDetailPage() {
                           data-testid={`input-line-qty-${idx}`}
                         />
                       ) : (
-                        <span className="text-muted-foreground">1 unit at {li.unitPrice}/each</span>
+                        <span className="text-muted-foreground">{li.quantity} unit{li.quantity !== 1 ? "s" : ""} at {li.unitPrice}/each</span>
                       )}
                     </td>
                     <td className="py-2.5 pr-4">
