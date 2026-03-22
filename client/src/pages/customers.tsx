@@ -174,6 +174,7 @@ export default function Customers() {
           map.set(custId, activePiano);
         } else if (pianosArr.length > 0) {
           allInactive.add(custId);
+          map.set(custId, pianosArr[0]);
         }
       });
     }
@@ -225,7 +226,6 @@ export default function Customers() {
   const filtered = useMemo(() => {
     if (!customers) return [];
     return customers.filter((c) => {
-      if (customersWithAllInactivePianos.has(c.id)) return false;
       if (!matchesAreaFilter(c)) return false;
 
       const searchLower = search.toLowerCase();
@@ -578,7 +578,9 @@ export default function Customers() {
                       )}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">
-                      {getStatusBadge(customer.lastTuned)}
+                      {customersWithAllInactivePianos.has(customer.id)
+                        ? <Badge variant="secondary" className="no-default-active-elevate text-xs">Inactive Piano</Badge>
+                        : getStatusBadge(customer.lastTuned)}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -657,7 +659,9 @@ export default function Customers() {
                         )}
                       </div>
                     </div>
-                    {getStatusBadge(customer.lastTuned)}
+                    {customersWithAllInactivePianos.has(customer.id)
+                      ? <Badge variant="secondary" className="no-default-active-elevate text-xs">Inactive Piano</Badge>
+                      : getStatusBadge(customer.lastTuned)}
                   </div>
 
                   <div className="space-y-1.5">

@@ -514,6 +514,21 @@ export default function SlcSchedule() {
     [allPianos]
   );
 
+  const customersWithAllInactivePianos = useMemo(() => {
+    const inactive = new Set<number>();
+    if (!allPianos) return inactive;
+    const byCustomer = new Map<number, Piano[]>();
+    allPianos.forEach((p) => {
+      if (!byCustomer.has(p.customerId)) byCustomer.set(p.customerId, []);
+      byCustomer.get(p.customerId)!.push(p);
+    });
+    byCustomer.forEach((pianosArr, custId) => {
+      const hasActive = pianosArr.some((p) => p.isActive !== false);
+      if (!hasActive) inactive.add(custId);
+    });
+    return inactive;
+  }, [allPianos]);
+
   const createTripMutation = useMutation({
     mutationFn: (data: { name: string; startDate: string; endDate: string; notes?: string }) =>
       apiRequest("POST", "/api/trips", data),
@@ -769,6 +784,7 @@ export default function SlcSchedule() {
     if (!customers) return { suggested: [], other: [] };
     const searchLower = customerSearch.toLowerCase();
     const filtered = customers.filter((c) => {
+      if (customersWithAllInactivePianos.has(c.id)) return false;
       if (!searchLower) return true;
       return (
         `${c.firstName} ${c.lastName}`.toLowerCase().includes(searchLower) ||
@@ -798,7 +814,7 @@ export default function SlcSchedule() {
     const overflow = sugg.splice(3);
     rest.unshift(...overflow);
     return { suggested: sugg, other: rest };
-  }, [customers, customerSearch, dialogDayArea, dialogNearbyCities]);
+  }, [customers, customerSearch, dialogDayArea, dialogNearbyCities, customersWithAllInactivePianos]);
 
   if (tripsLoading) {
     return (
