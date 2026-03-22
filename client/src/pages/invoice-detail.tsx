@@ -368,7 +368,7 @@ export default function InvoiceDetailPage() {
     const { subtotal, total } = computeTotals(form.lineItems);
     return {
       invoiceNumber: form.invoiceNumber,
-      customerId: form.customerId || 1,
+      customerId: form.customerId,
       appointmentId: form.appointmentId,
       pianoId: form.pianoId,
       invoiceDate: form.invoiceDate,
@@ -389,6 +389,10 @@ export default function InvoiceDetailPage() {
   }
 
   function handleSave() {
+    if (!form.customerId) {
+      toast({ title: "Please select a customer before saving.", variant: "destructive" });
+      return;
+    }
     if (isNew) {
       createMutation.mutate(buildPayload());
     } else if (invoiceId) {
@@ -397,6 +401,10 @@ export default function InvoiceDetailPage() {
   }
 
   function handleSaveAndPrint() {
+    if (!form.customerId) {
+      toast({ title: "Please select a customer before saving.", variant: "destructive" });
+      return;
+    }
     if (isNew) {
       setPrintAfterSave(true);
       createMutation.mutate(buildPayload());
@@ -613,6 +621,36 @@ export default function InvoiceDetailPage() {
             <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Bill To</div>
             {editMode || isNew ? (
               <div className="space-y-2 max-w-sm">
+                <Select
+                  value={form.customerId ? String(form.customerId) : ""}
+                  onValueChange={v => {
+                    const cust = customers?.find(c => c.id === parseInt(v));
+                    if (!cust) return;
+                    const addr = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean).join(", ");
+                    setForm(f => ({
+                      ...f,
+                      customerId: cust.id,
+                      customerName: `${cust.firstName} ${cust.lastName}`,
+                      customerEmail: cust.email ?? "",
+                      customerPhone: cust.phone ?? "",
+                      customerAddress: addr,
+                    }));
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-sm" data-testid="select-customer">
+                    <SelectValue placeholder="Select a customer…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    {(customers ?? [])
+                      .slice()
+                      .sort((a, b) => a.lastName.localeCompare(b.lastName))
+                      .map(c => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.lastName}, {c.firstName}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
                 <Input
                   value={form.customerName}
                   onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))}
