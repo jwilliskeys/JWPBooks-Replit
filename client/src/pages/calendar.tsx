@@ -22,6 +22,12 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Link } from "wouter";
@@ -927,6 +933,10 @@ export default function CalendarPage() {
                         {selectedAppt.duration ? ` (${selectedAppt.duration})` : ""}
                       </span>
                     </div>
+                    <div className="flex items-center gap-2">
+                      <User className="h-3.5 w-3.5 shrink-0" />
+                      <span>{customerName}</span>
+                    </div>
                     {address && mapsUrl && (
                       <div className="flex items-start gap-2">
                         <MapPin className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -964,16 +974,24 @@ export default function CalendarPage() {
                       >
                         Clone
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled
-                        className="h-7 text-xs border-violet-200 dark:border-violet-800 text-violet-400 dark:text-violet-600 opacity-60 cursor-not-allowed"
-                        title="Coming soon"
-                        data-testid="button-appt-invoice"
-                      >
-                        New Invoice
-                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled
+                                className="h-7 text-xs border-violet-200 dark:border-violet-800 text-violet-400 dark:text-violet-600 opacity-60 cursor-not-allowed pointer-events-none"
+                                data-testid="button-appt-invoice"
+                              >
+                                New Invoice
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>Coming soon</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                     <Button
                       size="sm"
