@@ -242,6 +242,8 @@ export default function Customers() {
         c.city?.toLowerCase().includes(searchLower) ||
         c.companyName?.toLowerCase().includes(searchLower);
 
+      if (customersWithAllInactivePianos.has(c.id) && !activeFilters.has("inactive")) return false;
+
       let matchesQuickFilter = true;
       if (activeFilters.size > 0) {
         const piano = pianosByCustomer.get(c.id);
