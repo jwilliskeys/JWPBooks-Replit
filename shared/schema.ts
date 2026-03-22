@@ -125,9 +125,11 @@ export const invoices = pgTable("invoices", {
   paidAmount: text("paid_amount").default("$0.00"),
   notes: text("notes"),
   customerName: text("customer_name"),
+  customerEmail: text("customer_email"),
   customerAddress: text("customer_address"),
   customerPhone: text("customer_phone"),
   pianoDescription: text("piano_description"),
+  assignedTo: text("assigned_to").default("John Willis"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

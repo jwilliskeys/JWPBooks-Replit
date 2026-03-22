@@ -30,7 +30,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Invoice, Customer, Piano, Appointment } from "@shared/schema";
 
 const COMPANY_NAME = "John Willis Piano";
-const COMPANY_ADDRESS = "868 S 700 E\nCenterville, UT 84014";
+const COMPANY_ADDRESS = "14 Murdock St. APT #3-4\nSomerville, MA 02145";
 
 type LineItem = {
   description: string;
@@ -90,8 +90,10 @@ function statusBadge(status: string | null) {
   switch (status) {
     case "paid":
       return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-0 print:bg-green-100 print:text-green-800">Paid</Badge>;
-    case "sent":
-      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-0 print:bg-blue-100 print:text-blue-800">Sent</Badge>;
+    case "open":
+      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-0 print:bg-blue-100 print:text-blue-800">Open</Badge>;
+    case "cancelled":
+      return <Badge className="bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200 border-0 print:bg-red-100 print:text-red-800">Cancelled</Badge>;
     default:
       return <Badge variant="secondary" className="print:bg-gray-100 print:text-gray-700">Draft</Badge>;
   }
@@ -144,9 +146,11 @@ interface InvoiceFormState {
   paidAmount: string;
   notes: string;
   customerName: string;
+  customerEmail: string;
   customerAddress: string;
   customerPhone: string;
   pianoDescription: string;
+  assignedTo: string;
 }
 
 function defaultForm(): InvoiceFormState {
@@ -164,9 +168,11 @@ function defaultForm(): InvoiceFormState {
     paidAmount: "$0.00",
     notes: "",
     customerName: "",
+    customerEmail: "",
     customerAddress: "",
     customerPhone: "",
     pianoDescription: "",
+    assignedTo: "John Willis",
   };
 }
 
@@ -190,9 +196,11 @@ function invoiceToForm(inv: Invoice): InvoiceFormState {
     paidAmount: inv.paidAmount ?? "$0.00",
     notes: inv.notes ?? "",
     customerName: inv.customerName ?? "",
+    customerEmail: inv.customerEmail ?? "",
     customerAddress: inv.customerAddress ?? "",
     customerPhone: inv.customerPhone ?? "",
     pianoDescription: inv.pianoDescription ?? "",
+    assignedTo: inv.assignedTo ?? "John Willis",
   };
 }
 
@@ -269,6 +277,7 @@ export default function InvoiceDetailPage() {
       invoiceDate: appointmentData.date,
       dueDate: appointmentData.date,
       customerName: customer ? `${customer.firstName} ${customer.lastName}` : "",
+      customerEmail: customer?.email ?? "",
       customerAddress: custAddr,
       customerPhone: customer?.phone ?? "",
       pianoDescription: pianoDesc,
@@ -371,9 +380,11 @@ export default function InvoiceDetailPage() {
       paidAmount: form.paidAmount,
       notes: form.notes || null,
       customerName: form.customerName || null,
+      customerEmail: form.customerEmail || null,
       customerAddress: form.customerAddress || null,
       customerPhone: form.customerPhone || null,
       pianoDescription: form.pianoDescription || null,
+      assignedTo: form.assignedTo || "John Willis",
     };
   }
 
@@ -431,7 +442,7 @@ export default function InvoiceDetailPage() {
           <div className="flex items-center gap-2">
             {!isNew && !editMode && (
               <>
-                {invoice?.status !== "paid" && (
+                {invoice?.status !== "paid" && invoice?.status !== "cancelled" && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -581,8 +592,9 @@ export default function InvoiceDetailPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="draft">Draft</SelectItem>
-                      <SelectItem value="sent">Sent</SelectItem>
+                      <SelectItem value="open">Open</SelectItem>
                       <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
@@ -608,6 +620,14 @@ export default function InvoiceDetailPage() {
                   className="h-8 text-sm font-medium"
                   data-testid="input-customer-name"
                 />
+                <Input
+                  value={form.customerEmail}
+                  onChange={e => setForm(f => ({ ...f, customerEmail: e.target.value }))}
+                  placeholder="Email address"
+                  type="email"
+                  className="h-8 text-sm"
+                  data-testid="input-customer-email"
+                />
                 <Textarea
                   value={form.customerAddress}
                   onChange={e => setForm(f => ({ ...f, customerAddress: e.target.value }))}
@@ -626,6 +646,9 @@ export default function InvoiceDetailPage() {
             ) : (
               <div className="text-sm space-y-0.5">
                 <div className="font-medium">{displayData.customerName}</div>
+                {displayData.customerEmail && (
+                  <div className="text-muted-foreground">{displayData.customerEmail}</div>
+                )}
                 <div className="text-muted-foreground whitespace-pre-line">{displayData.customerAddress}</div>
                 {displayData.customerPhone && (
                   <div className="text-muted-foreground">{displayData.customerPhone}</div>

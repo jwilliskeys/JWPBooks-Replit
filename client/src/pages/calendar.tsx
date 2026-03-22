@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { formatPhone } from "@/lib/utils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1222,7 +1223,7 @@ export default function CalendarPage() {
                                 <div>
                                   <div className="font-medium">{c.firstName} {c.lastName}</div>
                                   {(c.phone || c.city) && (
-                                    <div className="text-xs text-muted-foreground">{[c.phone, c.city].filter(Boolean).join(" · ")}</div>
+                                    <div className="text-xs text-muted-foreground">{[c.phone ? formatPhone(c.phone) : null, c.city].filter(Boolean).join(" · ")}</div>
                                   )}
                                 </div>
                               </CommandItem>
