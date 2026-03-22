@@ -543,7 +543,7 @@ export default function CalendarPage() {
 
   function handleSaveAppointment() {
     if (!selectedDate || !apptCustomerId) return;
-    const data = {
+    const baseData = {
       customerId: apptCustomerId,
       pianoId: apptPianoId ?? undefined,
       date: formatMDYY(selectedDate),
@@ -553,12 +553,11 @@ export default function CalendarPage() {
       priceEstimate: apptPrice || undefined,
       notes: apptNotes || undefined,
       isTuning: apptIsTuning,
-      status: "scheduled",
     };
     if (editingApptId) {
-      updateAppointmentMutation.mutate({ id: editingApptId, data });
+      updateAppointmentMutation.mutate({ id: editingApptId, data: baseData });
     } else {
-      createAppointmentMutation.mutate(data);
+      createAppointmentMutation.mutate({ ...baseData, status: "scheduled" });
     }
   }
 
@@ -1007,9 +1006,13 @@ export default function CalendarPage() {
 
                   {/* Clone date input */}
                   {showCloneInput && (
-                    <div className="flex items-center gap-2">
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-violet-700 dark:text-violet-300 font-medium">
+                        Pick a date for the cloned appointment
+                      </p>
+                      <div className="flex items-center gap-2">
                       <Input
-                        placeholder="New date (M/D/YY)"
+                        placeholder="M/D/YY"
                         value={cloneDate}
                         onChange={(e) => setCloneDate(e.target.value)}
                         className="h-8 text-xs flex-1 bg-white/70 dark:bg-violet-900/40 border-violet-300 dark:border-violet-700"
@@ -1038,6 +1041,7 @@ export default function CalendarPage() {
                       >
                         Clone
                       </Button>
+                    </div>
                     </div>
                   )}
                 </div>
