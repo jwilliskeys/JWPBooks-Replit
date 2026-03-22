@@ -147,6 +147,9 @@ export const insertCalendarNoteSchema = createInsertSchema(calendarNotes).omit({
 export const insertCalendarEventSchema = createInsertSchema(calendarEvents).omit({
   id: true,
   createdAt: true,
+}).extend({
+  eventType: z.enum(["personal", "memo"]).default("personal"),
+  repeatFrequency: z.enum(["daily", "weekly", "monthly"]).optional().nullable(),
 });
 
 export const insertTripSchema = createInsertSchema(trips).omit({
