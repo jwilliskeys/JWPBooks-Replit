@@ -24,7 +24,6 @@ const navItems = [
   { title: "Clients", url: "/customers", icon: Users },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "SLC Schedule", url: "/slc-schedule", icon: MapPin },
-  { title: "Sync Data", url: "/sync", icon: RefreshCw },
 ];
 
 function getMonthsSince(dateStr: string | null | undefined): number | null {
