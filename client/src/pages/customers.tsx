@@ -31,7 +31,11 @@ import {
   CheckCircle,
   Calendar,
   Star,
+  Filter,
 } from "lucide-react";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { SERVICE_AREA_CLUSTERS, getServiceArea } from "@/lib/scheduling";
@@ -257,6 +261,9 @@ export default function Customers() {
           const isSlc = custArea === "Davis County" || custArea === "Salt Lake City" || custArea === "South Jordan";
           if (!isSlc) matchesQuickFilter = false;
         }
+        if (activeFilters.has("inactive")) {
+          if (!customersWithAllInactivePianos.has(c.id)) matchesQuickFilter = false;
+        }
       }
 
       return matchesSearch && matchesQuickFilter;
@@ -413,25 +420,44 @@ export default function Customers() {
               ))}
             </SelectContent>
           </Select>
-          <div className="flex items-center gap-1.5 flex-wrap" data-testid="quick-filters">
-            {([ 
-              { key: "grand", label: "Grand Piano" },
-              { key: "upright", label: "Upright Piano" },
-              { key: "not-contacted-6mo", label: "Not contacted 6+ mo" },
-              { key: "slc-only", label: "SLC only" },
-            ] as const).map(({ key, label }) => (
+          <Popover>
+            <PopoverTrigger asChild>
               <Button
-                key={key}
-                variant={activeFilters.has(key) ? "default" : "outline"}
+                variant={activeFilters.size > 0 ? "default" : "outline"}
                 size="sm"
-                className="h-8 text-xs rounded-full px-3"
-                onClick={() => toggleQuickFilter(key)}
-                data-testid={`filter-chip-${key}`}
+                className="h-9 gap-1.5 text-sm"
+                data-testid="button-quick-filter-dropdown"
               >
-                {label}
+                <Filter className="h-3.5 w-3.5" />
+                Filter{activeFilters.size > 0 ? ` (${activeFilters.size})` : ""}
               </Button>
-            ))}
-          </div>
+            </PopoverTrigger>
+            <PopoverContent className="w-52 p-2" align="start" data-testid="quick-filters">
+              {([
+                { key: "grand", label: "Grand Piano" },
+                { key: "upright", label: "Upright Piano" },
+                { key: "not-contacted-6mo", label: "Not contacted 6+ months" },
+                { key: "slc-only", label: "SLC only" },
+                { key: "inactive", label: "Inactive Piano" },
+              ] as const).map(({ key, label }) => (
+                <div
+                  key={key}
+                  className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted cursor-pointer"
+                  onClick={() => toggleQuickFilter(key)}
+                  data-testid={`filter-chip-${key}`}
+                >
+                  <Checkbox
+                    id={`filter-${key}`}
+                    checked={activeFilters.has(key)}
+                    onCheckedChange={() => toggleQuickFilter(key)}
+                  />
+                  <Label htmlFor={`filter-${key}`} className="text-sm cursor-pointer select-none">
+                    {label}
+                  </Label>
+                </div>
+              ))}
+            </PopoverContent>
+          </Popover>
           <div className="flex items-center gap-1">
             <Select value={sortBy} onValueChange={(v) => handleSortChange(v as SortOption)}>
               <SelectTrigger className="w-full sm:w-[170px]" data-testid="select-sort">
