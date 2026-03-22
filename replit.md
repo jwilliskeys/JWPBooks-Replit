@@ -88,6 +88,14 @@ Preferred communication style: Simple, everyday language.
 - In development, Vite middleware serves the client with HMR (`server/vite.ts`)
 - In production, pre-built static files are served from `dist/public/` (`server/static.ts`)
 
+## PWA (Progressive Web App)
+- App is installable as "JWP Books" on iOS and Android home screens
+- Manifest at `client/public/manifest.json` — name, icons, standalone display, dark theme
+- Service worker at `client/public/sw.js` — registered from `main.tsx`, passes-through fetches (no offline cache)
+- App icon at `client/public/icon-512.png` — navy background with white grand piano and music notes (AI-generated)
+- Apple-specific meta tags in `client/index.html`: `apple-mobile-web-app-capable`, `apple-mobile-web-app-title`, `apple-touch-icon`
+- Page `<title>` set to "JWP Books"
+
 ## External Dependencies
 
 ### PostgreSQL Database
