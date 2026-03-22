@@ -68,6 +68,141 @@ function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+function formatTimeMinutes(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60) % 24;
+  const m = totalMinutes % 60;
+  const ampm = h >= 12 ? "PM" : "AM";
+  const displayH = h % 12 === 0 ? 12 : h % 12;
+  return `${displayH}:${String(m).padStart(2, "0")} ${ampm}`;
+}
+
+function formatDurationMinutes(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} hr`;
+  return `${h} hr ${m} min`;
+}
+
+const DEFAULT_TIME_MINUTES = 9 * 60;
+const DEFAULT_DURATION_MINUTES = 90;
+const MIN_DURATION = 5;
+const MAX_DURATION = 8 * 60;
+
+function TimeStepperWidget({
+  minutes,
+  onChange,
+  testIdPrefix,
+}: {
+  minutes: number;
+  onChange: (m: number) => void;
+  testIdPrefix: string;
+}) {
+  function wrap(m: number) {
+    return ((m % (24 * 60)) + 24 * 60) % (24 * 60);
+  }
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 w-full justify-between">
+      <div className="flex flex-col gap-0.5">
+        <button
+          type="button"
+          onClick={() => onChange(wrap(minutes + 60))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-plus-hour`}
+        >
+          +1h
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(wrap(minutes - 60))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-minus-hour`}
+        >
+          −1h
+        </button>
+      </div>
+      <span className="text-base font-bold tabular-nums min-w-[80px] text-center" data-testid={`${testIdPrefix}-display`}>
+        {formatTimeMinutes(minutes)}
+      </span>
+      <div className="flex flex-col gap-0.5">
+        <button
+          type="button"
+          onClick={() => onChange(wrap(minutes + 5))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-plus-five`}
+        >
+          +5m
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(wrap(minutes - 5))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-minus-five`}
+        >
+          −5m
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DurationStepperWidget({
+  minutes,
+  onChange,
+  testIdPrefix,
+}: {
+  minutes: number;
+  onChange: (m: number) => void;
+  testIdPrefix: string;
+}) {
+  function clamp(m: number) {
+    return Math.max(MIN_DURATION, Math.min(MAX_DURATION, m));
+  }
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 w-full justify-between">
+      <div className="flex flex-col gap-0.5">
+        <button
+          type="button"
+          onClick={() => onChange(clamp(minutes + 60))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-plus-hour`}
+        >
+          +1h
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(clamp(minutes - 60))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-minus-hour`}
+        >
+          −1h
+        </button>
+      </div>
+      <span className="text-base font-bold tabular-nums min-w-[80px] text-center" data-testid={`${testIdPrefix}-display`}>
+        {formatDurationMinutes(minutes)}
+      </span>
+      <div className="flex flex-col gap-0.5">
+        <button
+          type="button"
+          onClick={() => onChange(clamp(minutes + 5))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-plus-five`}
+        >
+          +5m
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(clamp(minutes - 5))}
+          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          data-testid={`${testIdPrefix}-minus-five`}
+        >
+          −5m
+        </button>
+      </div>
+    </div>
+  );
+}
+
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -90,10 +225,10 @@ export default function CalendarPage() {
 
   const [apptCustomerId, setApptCustomerId] = useState<number | null>(null);
   const [apptPianoId, setApptPianoId] = useState<number | null>(null);
-  const [apptTime, setApptTime] = useState("");
-  const [apptDuration, setApptDuration] = useState("1.5 hours");
+  const [apptTimeMinutes, setApptTimeMinutes] = useState(DEFAULT_TIME_MINUTES);
+  const [apptDurationMinutes, setApptDurationMinutes] = useState(DEFAULT_DURATION_MINUTES);
   const [apptServices, setApptServices] = useState("");
-  const [apptPrice, setApptPrice] = useState("");
+  const [apptPrice, setApptPrice] = useState("$180");
   const [apptNotes, setApptNotes] = useState("");
   const [apptIsTuning, setApptIsTuning] = useState(true);
   const [customerComboOpen, setCustomerComboOpen] = useState(false);
@@ -274,10 +409,10 @@ export default function CalendarPage() {
     setSelectedDate(null);
     setApptCustomerId(null);
     setApptPianoId(null);
-    setApptTime("");
-    setApptDuration("1.5 hours");
+    setApptTimeMinutes(DEFAULT_TIME_MINUTES);
+    setApptDurationMinutes(DEFAULT_DURATION_MINUTES);
     setApptServices("");
-    setApptPrice("");
+    setApptPrice("$180");
     setApptNotes("");
     setApptIsTuning(true);
     setCustomerSearch("");
@@ -291,13 +426,13 @@ export default function CalendarPage() {
   }
 
   function handleSaveAppointment() {
-    if (!selectedDate || !apptCustomerId || !apptTime) return;
+    if (!selectedDate || !apptCustomerId) return;
     createAppointmentMutation.mutate({
       customerId: apptCustomerId,
       pianoId: apptPianoId ?? undefined,
       date: formatMDYY(selectedDate),
-      time: apptTime,
-      duration: apptDuration || undefined,
+      time: formatTimeMinutes(apptTimeMinutes),
+      duration: formatDurationMinutes(apptDurationMinutes),
       servicesRequested: apptServices || undefined,
       priceEstimate: apptPrice || undefined,
       notes: apptNotes || undefined,
@@ -756,27 +891,36 @@ export default function CalendarPage() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
-                    <Label>Time <span className="text-destructive">*</span></Label>
-                    <Input
-                      type="time"
-                      value={apptTime}
-                      onChange={(e) => setApptTime(e.target.value)}
-                      data-testid="input-appt-time"
+                    <Label>Time</Label>
+                    <TimeStepperWidget
+                      minutes={apptTimeMinutes}
+                      onChange={setApptTimeMinutes}
+                      testIdPrefix="appt-time"
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Duration</Label>
-                    <Input
-                      placeholder="1.5 hours"
-                      value={apptDuration}
-                      onChange={(e) => setApptDuration(e.target.value)}
-                      data-testid="input-appt-duration"
+                    <DurationStepperWidget
+                      minutes={apptDurationMinutes}
+                      onChange={setApptDurationMinutes}
+                      testIdPrefix="appt-duration"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Services Requested</Label>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Checkbox
+                        id="appt-is-tuning"
+                        checked={apptIsTuning}
+                        onCheckedChange={(v) => setApptIsTuning(!!v)}
+                        data-testid="checkbox-appt-is-tuning"
+                      />
+                      <Label htmlFor="appt-is-tuning" className="cursor-pointer whitespace-nowrap">Tuning</Label>
+                    </div>
+                    <Label className="flex-1">Services Requested</Label>
+                  </div>
                   <Input
                     placeholder="e.g. Tuning, regulation..."
                     value={apptServices}
@@ -788,7 +932,7 @@ export default function CalendarPage() {
                 <div className="space-y-1.5">
                   <Label>Price Estimate</Label>
                   <Input
-                    placeholder="e.g. $150"
+                    placeholder="$180"
                     value={apptPrice}
                     onChange={(e) => setApptPrice(e.target.value)}
                     data-testid="input-appt-price"
@@ -806,16 +950,6 @@ export default function CalendarPage() {
                     data-testid="input-appt-notes"
                   />
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="appt-is-tuning"
-                    checked={apptIsTuning}
-                    onCheckedChange={(v) => setApptIsTuning(!!v)}
-                    data-testid="checkbox-appt-is-tuning"
-                  />
-                  <Label htmlFor="appt-is-tuning" className="cursor-pointer">Is Tuning</Label>
-                </div>
               </div>
               <DialogFooter>
                 <Button variant="ghost" onClick={() => setDialogMode("picker")} data-testid="button-appt-back">
@@ -823,7 +957,7 @@ export default function CalendarPage() {
                 </Button>
                 <Button
                   onClick={handleSaveAppointment}
-                  disabled={!apptCustomerId || !apptTime || createAppointmentMutation.isPending}
+                  disabled={!apptCustomerId || createAppointmentMutation.isPending}
                   data-testid="button-appt-save"
                 >
                   Schedule
