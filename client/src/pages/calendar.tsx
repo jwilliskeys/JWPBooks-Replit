@@ -1022,6 +1022,10 @@ export default function CalendarPage() {
                         size="sm"
                         onClick={() => {
                           if (!cloneDate.trim()) return;
+                          if (!parseMDYY(cloneDate.trim())) {
+                            toast({ title: "Invalid date — use M/D/YY (e.g. 4/15/26)", variant: "destructive" });
+                            return;
+                          }
                           cloneAppointmentMutation.mutate({
                             customerId: selectedAppt.customerId,
                             pianoId: selectedAppt.pianoId ?? undefined,
