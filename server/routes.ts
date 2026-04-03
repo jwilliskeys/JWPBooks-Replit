@@ -694,6 +694,10 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
+      if (parsed.data.customerId) {
+        const customer = await storage.getCustomer(parsed.data.customerId);
+        if (!customer || customer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
       const appointment = await storage.createTripAppointment(parsed.data);
       res.status(201).json(appointment);
     } catch (error: any) {
@@ -788,6 +792,12 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
+      const customer = await storage.getCustomer(parsed.data.customerId);
+      if (!customer || customer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      if (parsed.data.appointmentId) {
+        const appt = await storage.getAppointment(parsed.data.appointmentId);
+        if (!appt || appt.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
       const invoice = await storage.createInvoice(parsed.data, userId);
       res.status(201).json(invoice);
     } catch (error: any) {
@@ -806,6 +816,14 @@ export async function registerRoutes(
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+        const newCustomer = await storage.getCustomer(parsed.data.customerId);
+        if (!newCustomer || newCustomer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
+      if (parsed.data.appointmentId && parsed.data.appointmentId !== existing.appointmentId) {
+        const newAppt = await storage.getAppointment(parsed.data.appointmentId);
+        if (!newAppt || newAppt.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
       const invoice = await storage.updateInvoice(id, parsed.data);
       if (!invoice) return res.status(404).json({ message: "Invoice not found" });
