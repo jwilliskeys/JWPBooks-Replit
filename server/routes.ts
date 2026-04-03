@@ -214,6 +214,10 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
+      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+        const newOwner = await storage.getCustomer(parsed.data.customerId);
+        if (!newOwner || newOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
       const piano = await storage.updatePiano(id, parsed.data);
       if (!piano) return res.status(404).json({ message: "Piano not found" });
       await storage.syncCustomerFromPianos(existing.customerId);
@@ -295,6 +299,16 @@ export async function registerRoutes(
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+        const newOwner = await storage.getCustomer(parsed.data.customerId);
+        if (!newOwner || newOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
+      if (parsed.data.pianoId && parsed.data.pianoId !== existing.pianoId) {
+        const newPiano = await storage.getPiano(parsed.data.pianoId);
+        if (!newPiano) return res.status(404).json({ message: "Piano not found" });
+        const pianoOwner = await storage.getCustomer(newPiano.customerId);
+        if (!pianoOwner || pianoOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
       const record = await storage.updateServiceRecord(id, parsed.data);
       if (!record) return res.status(404).json({ message: "Service record not found" });
@@ -424,6 +438,14 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
+      const customer = await storage.getCustomer(parsed.data.customerId);
+      if (!customer || customer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      if (parsed.data.pianoId) {
+        const piano = await storage.getPiano(parsed.data.pianoId);
+        if (!piano) return res.status(404).json({ message: "Piano not found" });
+        const pianoOwner = await storage.getCustomer(piano.customerId);
+        if (!pianoOwner || pianoOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
       const appointment = await storage.createAppointment(parsed.data, userId);
       res.status(201).json(appointment);
     } catch (error: any) {
@@ -442,6 +464,16 @@ export async function registerRoutes(
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+        const newCustomer = await storage.getCustomer(parsed.data.customerId);
+        if (!newCustomer || newCustomer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
+      if (parsed.data.pianoId && parsed.data.pianoId !== existing.pianoId) {
+        const newPiano = await storage.getPiano(parsed.data.pianoId);
+        if (!newPiano) return res.status(404).json({ message: "Piano not found" });
+        const pianoOwner = await storage.getCustomer(newPiano.customerId);
+        if (!pianoOwner || pianoOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
       const appointment = await storage.updateAppointment(id, parsed.data);
       if (!appointment) return res.status(404).json({ message: "Appointment not found" });
@@ -682,6 +714,14 @@ export async function registerRoutes(
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      if (parsed.data.tripId && parsed.data.tripId !== existing.tripId) {
+        const newTrip = await storage.getTrip(parsed.data.tripId);
+        if (!newTrip || newTrip.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
+      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+        const newCustomer = await storage.getCustomer(parsed.data.customerId);
+        if (!newCustomer || newCustomer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
       const appointment = await storage.updateTripAppointment(id, parsed.data);
       if (!appointment) return res.status(404).json({ message: "Trip appointment not found" });
