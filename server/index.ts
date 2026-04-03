@@ -64,37 +64,69 @@ app.use((req, res, next) => {
 async function migrateExistingDataToUser() {
   const { db } = await import("./db");
   const { customers, appointments, calendarNotes, calendarEvents, trips, invoices, users } = await import("@shared/schema");
-  const { isNull, isNotNull, eq, count, desc } = await import("drizzle-orm");
+  const { isNull, isNotNull, count, desc } = await import("drizzle-orm");
 
   try {
+    // Check how many rows still need claiming
+    const [nullCheck] = await db.select({ cnt: count() }).from(customers).where(isNull(customers.userId));
+    const nullCount = Number(nullCheck?.cnt ?? 0);
+
+    if (nullCount === 0) {
+      log("Startup migration: all records already have userId set.", "migration");
+      return;
+    }
+
     const allUsers = await db.select({ id: users.id, email: users.email }).from(users);
 
     if (allUsers.length === 0) {
-      log("Startup migration: no users yet, skipping data claim.", "migration");
+      log("Startup migration: no users yet — null-userId rows will be claimed on first login.", "migration");
       return;
     }
 
     let claimUser: { id: string; email: string | null } | undefined;
 
     if (allUsers.length === 1) {
+      // Exactly one user — unambiguous, claim for them (original spec behavior)
       claimUser = allUsers[0];
     } else {
-      // Multiple users: find the one with the most existing claimed rows (they're the primary user)
-      const [existing] = await db
-        .select({ userId: customers.userId, cnt: count() })
-        .from(customers)
-        .where(isNotNull(customers.userId))
-        .groupBy(customers.userId)
-        .orderBy(desc(count()))
-        .limit(1);
+      // Multiple users: check env var first, then look for user with most existing claimed rows
+      const ownerUserId = process.env.OWNER_USER_ID;
+      const ownerEmail = process.env.OWNER_EMAIL;
 
-      if (existing?.userId) {
-        const found = allUsers.find(u => u.id === existing.userId);
-        claimUser = found;
+      if (ownerUserId) {
+        claimUser = allUsers.find(u => u.id === ownerUserId);
+        if (!claimUser) {
+          log(`Startup migration: OWNER_USER_ID=${ownerUserId} not found in users table. Skipping.`, "migration");
+          return;
+        }
+      } else if (ownerEmail) {
+        claimUser = allUsers.find(u => u.email === ownerEmail);
+        if (!claimUser) {
+          log(`Startup migration: OWNER_EMAIL=${ownerEmail} not found in users table. Skipping.`, "migration");
+          return;
+        }
+      } else {
+        // Fallback: find user with the most already-claimed rows (primary user heuristic)
+        const [topUser] = await db
+          .select({ userId: customers.userId, cnt: count() })
+          .from(customers)
+          .where(isNotNull(customers.userId))
+          .groupBy(customers.userId)
+          .orderBy(desc(count()))
+          .limit(1);
+
+        if (topUser?.userId) {
+          claimUser = allUsers.find(u => u.id === topUser.userId);
+        }
       }
 
       if (!claimUser) {
-        log(`Startup migration: ${allUsers.length} users, no primary user determined, skipping.`, "migration");
+        log(
+          `Startup migration: ${allUsers.length} users exist and ${nullCount} records have no userId, ` +
+          `but the primary user cannot be determined automatically. ` +
+          `Set OWNER_USER_ID or OWNER_EMAIL env var to identify who should own the existing data.`,
+          "migration"
+        );
         return;
       }
     }
@@ -110,11 +142,13 @@ async function migrateExistingDataToUser() {
     const r6 = await db.update(invoices).set({ userId }).where(isNull(invoices.userId)).returning({ id: invoices.id });
 
     const total = r1.length + r2.length + r3.length + r4.length + r5.length + r6.length;
+    log(`Startup migration: claimed ${total} records for ${userEmail} (customers:${r1.length}, appointments:${r2.length}, notes:${r3.length}, events:${r4.length}, trips:${r5.length}, invoices:${r6.length})`, "migration");
 
-    if (total === 0) {
-      log("Startup migration: all records already have userId set.", "migration");
-    } else {
-      log(`Startup migration: claimed ${total} records for user ${userEmail} (customers:${r1.length}, appointments:${r2.length}, notes:${r3.length}, events:${r4.length}, trips:${r5.length}, invoices:${r6.length})`, "migration");
+    // Post-migration safety assertion
+    const [remaining] = await db.select({ cnt: count() }).from(customers).where(isNull(customers.userId));
+    const remainingCount = Number(remaining?.cnt ?? 0);
+    if (remainingCount > 0) {
+      log(`WARNING: ${remainingCount} customer rows still have null userId after migration. Some data may be inaccessible.`, "migration");
     }
   } catch (err: any) {
     log(`Startup migration error: ${err.message}`, "migration");
