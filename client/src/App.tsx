@@ -82,9 +82,24 @@ function LandingPage() {
           </div>
           <a href="/api/login">
             <Button size="lg" className="w-full" data-testid="button-login">
-              Log in with Replit
+              Sign in with Replit
             </Button>
           </a>
+          <div className="rounded-lg border bg-muted/40 p-4 text-left space-y-2">
+            <p className="text-xs font-medium text-foreground">Signing in with the wrong account?</p>
+            <p className="text-xs text-muted-foreground">
+              This app uses your Replit account. To switch accounts, first sign into{" "}
+              <a
+                href="https://replit.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline text-foreground hover:text-primary"
+              >
+                replit.com
+              </a>{" "}
+              with the correct email, then come back here and sign in.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -121,12 +136,13 @@ function AuthenticatedApp() {
                   </Avatar>
                   <Button
                     variant="ghost"
-                    size="icon"
-                    className="h-7 w-7"
+                    size="sm"
+                    className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground px-2"
                     onClick={() => logout()}
                     data-testid="button-logout"
                   >
                     <LogOut className="h-3.5 w-3.5" />
+                    <span>Sign Out</span>
                   </Button>
                 </div>
               )}
