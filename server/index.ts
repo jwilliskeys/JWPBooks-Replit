@@ -67,9 +67,15 @@ async function migrateExistingDataToUser() {
   const { isNull, isNotNull, count, desc } = await import("drizzle-orm");
 
   try {
-    // Check how many rows still need claiming
-    const [nullCheck] = await db.select({ cnt: count() }).from(customers).where(isNull(customers.userId));
-    const nullCount = Number(nullCheck?.cnt ?? 0);
+    // Check how many rows still need claiming across ALL affected tables
+    const [c1] = await db.select({ cnt: count() }).from(customers).where(isNull(customers.userId));
+    const [c2] = await db.select({ cnt: count() }).from(appointments).where(isNull(appointments.userId));
+    const [c3] = await db.select({ cnt: count() }).from(calendarNotes).where(isNull(calendarNotes.userId));
+    const [c4] = await db.select({ cnt: count() }).from(calendarEvents).where(isNull(calendarEvents.userId));
+    const [c5] = await db.select({ cnt: count() }).from(trips).where(isNull(trips.userId));
+    const [c6] = await db.select({ cnt: count() }).from(invoices).where(isNull(invoices.userId));
+    const nullCount = Number(c1?.cnt ?? 0) + Number(c2?.cnt ?? 0) + Number(c3?.cnt ?? 0) +
+                      Number(c4?.cnt ?? 0) + Number(c5?.cnt ?? 0) + Number(c6?.cnt ?? 0);
 
     if (nullCount === 0) {
       log("Startup migration: all records already have userId set.", "migration");
@@ -144,11 +150,24 @@ async function migrateExistingDataToUser() {
     const total = r1.length + r2.length + r3.length + r4.length + r5.length + r6.length;
     log(`Startup migration: claimed ${total} records for ${userEmail} (customers:${r1.length}, appointments:${r2.length}, notes:${r3.length}, events:${r4.length}, trips:${r5.length}, invoices:${r6.length})`, "migration");
 
-    // Post-migration safety assertion
-    const [remaining] = await db.select({ cnt: count() }).from(customers).where(isNull(customers.userId));
-    const remainingCount = Number(remaining?.cnt ?? 0);
-    if (remainingCount > 0) {
-      log(`WARNING: ${remainingCount} customer rows still have null userId after migration. Some data may be inaccessible.`, "migration");
+    // Post-migration safety assertion — check ALL affected tables
+    const [p1] = await db.select({ cnt: count() }).from(customers).where(isNull(customers.userId));
+    const [p2] = await db.select({ cnt: count() }).from(appointments).where(isNull(appointments.userId));
+    const [p3] = await db.select({ cnt: count() }).from(calendarNotes).where(isNull(calendarNotes.userId));
+    const [p4] = await db.select({ cnt: count() }).from(calendarEvents).where(isNull(calendarEvents.userId));
+    const [p5] = await db.select({ cnt: count() }).from(trips).where(isNull(trips.userId));
+    const [p6] = await db.select({ cnt: count() }).from(invoices).where(isNull(invoices.userId));
+    const remainingNulls = [
+      { table: "customers", cnt: Number(p1?.cnt ?? 0) },
+      { table: "appointments", cnt: Number(p2?.cnt ?? 0) },
+      { table: "calendarNotes", cnt: Number(p3?.cnt ?? 0) },
+      { table: "calendarEvents", cnt: Number(p4?.cnt ?? 0) },
+      { table: "trips", cnt: Number(p5?.cnt ?? 0) },
+      { table: "invoices", cnt: Number(p6?.cnt ?? 0) },
+    ].filter(x => x.cnt > 0);
+    if (remainingNulls.length > 0) {
+      const summary = remainingNulls.map(x => `${x.table}:${x.cnt}`).join(", ");
+      log(`WARNING: null-userId rows remain after migration (${summary}). Some data may be inaccessible.`, "migration");
     }
   } catch (err: any) {
     log(`Startup migration error: ${err.message}`, "migration");
