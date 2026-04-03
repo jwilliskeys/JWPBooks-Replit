@@ -64,7 +64,7 @@ app.use((req, res, next) => {
 async function migrateExistingDataToUser() {
   const { db } = await import("./db");
   const { customers, appointments, calendarNotes, calendarEvents, trips, invoices, users } = await import("@shared/schema");
-  const { isNull, isNotNull, eq, count } = await import("drizzle-orm");
+  const { isNull, isNotNull, eq, count, desc } = await import("drizzle-orm");
 
   try {
     const allUsers = await db.select({ id: users.id, email: users.email }).from(users);
@@ -85,7 +85,7 @@ async function migrateExistingDataToUser() {
         .from(customers)
         .where(isNotNull(customers.userId))
         .groupBy(customers.userId)
-        .orderBy(count())
+        .orderBy(desc(count()))
         .limit(1);
 
       if (existing?.userId) {

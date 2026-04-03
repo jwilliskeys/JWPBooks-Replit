@@ -57,10 +57,12 @@ export interface IStorage {
   updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined>;
   deleteAppointment(id: number): Promise<boolean>;
   getCalendarNotes(userId: string): Promise<CalendarNote[]>;
+  getCalendarNote(id: number): Promise<CalendarNote | undefined>;
   createCalendarNote(note: InsertCalendarNote, userId: string): Promise<CalendarNote>;
   updateCalendarNote(id: number, data: Partial<InsertCalendarNote>): Promise<CalendarNote | undefined>;
   deleteCalendarNote(id: number): Promise<boolean>;
   getCalendarEvents(userId: string): Promise<CalendarEvent[]>;
+  getCalendarEvent(id: number): Promise<CalendarEvent | undefined>;
   createCalendarEvent(event: InsertCalendarEvent, userId: string): Promise<CalendarEvent>;
   deleteCalendarEvent(id: number): Promise<boolean>;
   getTrips(userId: string): Promise<Trip[]>;
@@ -255,6 +257,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(calendarNotes).where(eq(calendarNotes.userId, userId)).orderBy(calendarNotes.date);
   }
 
+  async getCalendarNote(id: number): Promise<CalendarNote | undefined> {
+    const [note] = await db.select().from(calendarNotes).where(eq(calendarNotes.id, id));
+    return note;
+  }
+
   async createCalendarNote(note: InsertCalendarNote, userId: string): Promise<CalendarNote> {
     const [created] = await db.insert(calendarNotes).values({ ...note, userId }).returning();
     return created;
@@ -272,6 +279,11 @@ export class DatabaseStorage implements IStorage {
 
   async getCalendarEvents(userId: string): Promise<CalendarEvent[]> {
     return db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)).orderBy(calendarEvents.date);
+  }
+
+  async getCalendarEvent(id: number): Promise<CalendarEvent | undefined> {
+    const [event] = await db.select().from(calendarEvents).where(eq(calendarEvents.id, id));
+    return event;
   }
 
   async createCalendarEvent(event: InsertCalendarEvent, userId: string): Promise<CalendarEvent> {

@@ -492,8 +492,11 @@ export async function registerRoutes(
 
   app.patch("/api/calendar-notes/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getCalendarNote(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Note not found" });
       const updateSchema = insertCalendarNoteSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -509,8 +512,11 @@ export async function registerRoutes(
 
   app.delete("/api/calendar-notes/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getCalendarNote(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Note not found" });
       const deleted = await storage.deleteCalendarNote(id);
       if (!deleted) return res.status(404).json({ message: "Note not found" });
       res.json({ success: true });
@@ -545,8 +551,11 @@ export async function registerRoutes(
 
   app.delete("/api/calendar-events/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getCalendarEvent(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Event not found" });
       const deleted = await storage.deleteCalendarEvent(id);
       if (!deleted) return res.status(404).json({ message: "Event not found" });
       res.json({ success: true });
