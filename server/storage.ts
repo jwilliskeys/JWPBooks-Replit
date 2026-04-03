@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import {
   customers,
   pianos,
@@ -31,17 +31,18 @@ import {
 } from "@shared/schema";
 
 export interface IStorage {
-  getCustomers(): Promise<Customer[]>;
+  getCustomers(userId: string): Promise<Customer[]>;
   getCustomer(id: number): Promise<Customer | undefined>;
-  createCustomer(customer: InsertCustomer): Promise<Customer>;
+  createCustomer(customer: InsertCustomer, userId: string): Promise<Customer>;
   updateCustomer(id: number, data: Partial<InsertCustomer>): Promise<Customer | undefined>;
   deleteCustomer(id: number): Promise<boolean>;
-  findCustomerByName(firstName: string, lastName: string): Promise<Customer | undefined>;
+  findCustomerByName(firstName: string, lastName: string, userId: string): Promise<Customer | undefined>;
   getPianos(customerId: number): Promise<Piano[]>;
   getPiano(id: number): Promise<Piano | undefined>;
   createPiano(piano: InsertPiano): Promise<Piano>;
   updatePiano(id: number, data: Partial<InsertPiano>): Promise<Piano | undefined>;
   deletePiano(id: number): Promise<boolean>;
+  getAllPianos(userId: string): Promise<Piano[]>;
   getServiceRecords(customerId: number): Promise<ServiceRecord[]>;
   getServiceRecordsByPiano(pianoId: number): Promise<ServiceRecord[]>;
   createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord>;
@@ -49,39 +50,40 @@ export interface IStorage {
   updateServiceRecord(id: number, data: Partial<InsertServiceRecord>): Promise<ServiceRecord | undefined>;
   deleteServiceRecord(id: number): Promise<boolean>;
   syncPianoLastTuned(pianoId: number): Promise<void>;
-  getAppointments(): Promise<Appointment[]>;
+  getAppointments(userId: string): Promise<Appointment[]>;
   getAppointmentsByCustomer(customerId: number): Promise<Appointment[]>;
   getAppointment(id: number): Promise<Appointment | undefined>;
-  createAppointment(appointment: InsertAppointment): Promise<Appointment>;
+  createAppointment(appointment: InsertAppointment, userId: string): Promise<Appointment>;
   updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined>;
   deleteAppointment(id: number): Promise<boolean>;
-  getCalendarNotes(): Promise<CalendarNote[]>;
-  createCalendarNote(note: InsertCalendarNote): Promise<CalendarNote>;
+  getCalendarNotes(userId: string): Promise<CalendarNote[]>;
+  createCalendarNote(note: InsertCalendarNote, userId: string): Promise<CalendarNote>;
   updateCalendarNote(id: number, data: Partial<InsertCalendarNote>): Promise<CalendarNote | undefined>;
   deleteCalendarNote(id: number): Promise<boolean>;
-  getCalendarEvents(): Promise<CalendarEvent[]>;
-  createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent>;
+  getCalendarEvents(userId: string): Promise<CalendarEvent[]>;
+  createCalendarEvent(event: InsertCalendarEvent, userId: string): Promise<CalendarEvent>;
   deleteCalendarEvent(id: number): Promise<boolean>;
-  getTrips(): Promise<Trip[]>;
+  getTrips(userId: string): Promise<Trip[]>;
   getTrip(id: number): Promise<Trip | undefined>;
-  createTrip(trip: InsertTrip): Promise<Trip>;
+  createTrip(trip: InsertTrip, userId: string): Promise<Trip>;
   updateTrip(id: number, data: Partial<InsertTrip>): Promise<Trip | undefined>;
   deleteTrip(id: number): Promise<boolean>;
   getTripAppointments(tripId: number): Promise<TripAppointment[]>;
+  getTripAppointment(id: number): Promise<TripAppointment | undefined>;
   createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment>;
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
-  getInvoices(): Promise<Invoice[]>;
+  getInvoices(userId: string): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
-  createInvoice(invoice: InsertInvoice): Promise<Invoice>;
+  createInvoice(invoice: InsertInvoice, userId: string): Promise<Invoice>;
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<boolean>;
-  getNextInvoiceNumber(): Promise<number>;
+  getNextInvoiceNumber(userId: string): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
-  async getCustomers(): Promise<Customer[]> {
-    return db.select().from(customers).orderBy(customers.lastName);
+  async getCustomers(userId: string): Promise<Customer[]> {
+    return db.select().from(customers).where(eq(customers.userId, userId)).orderBy(customers.lastName);
   }
 
   async getCustomer(id: number): Promise<Customer | undefined> {
@@ -89,8 +91,8 @@ export class DatabaseStorage implements IStorage {
     return customer;
   }
 
-  async createCustomer(customer: InsertCustomer): Promise<Customer> {
-    const [created] = await db.insert(customers).values(customer).returning();
+  async createCustomer(customer: InsertCustomer, userId: string): Promise<Customer> {
+    const [created] = await db.insert(customers).values({ ...customer, userId }).returning();
     return created;
   }
 
@@ -114,11 +116,11 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async findCustomerByName(firstName: string, lastName: string): Promise<Customer | undefined> {
+  async findCustomerByName(firstName: string, lastName: string, userId: string): Promise<Customer | undefined> {
     const [customer] = await db
       .select()
       .from(customers)
-      .where(and(eq(customers.firstName, firstName), eq(customers.lastName, lastName)));
+      .where(and(eq(customers.firstName, firstName), eq(customers.lastName, lastName), eq(customers.userId, userId)));
     return customer;
   }
 
@@ -149,6 +151,15 @@ export class DatabaseStorage implements IStorage {
     await db.delete(serviceRecords).where(eq(serviceRecords.pianoId, id));
     const result = await db.delete(pianos).where(eq(pianos.id, id)).returning();
     return result.length > 0;
+  }
+
+  async getAllPianos(userId: string): Promise<Piano[]> {
+    const results = await db
+      .select({ piano: pianos })
+      .from(pianos)
+      .innerJoin(customers, and(eq(pianos.customerId, customers.id), eq(customers.userId, userId)))
+      .orderBy(pianos.createdAt);
+    return results.map(r => r.piano);
   }
 
   async getServiceRecords(customerId: number): Promise<ServiceRecord[]> {
@@ -191,12 +202,8 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getAllPianos(): Promise<Piano[]> {
-    return db.select().from(pianos).orderBy(pianos.createdAt);
-  }
-
-  async getAppointments(): Promise<Appointment[]> {
-    return db.select().from(appointments).orderBy(appointments.date);
+  async getAppointments(userId: string): Promise<Appointment[]> {
+    return db.select().from(appointments).where(eq(appointments.userId, userId)).orderBy(appointments.date);
   }
 
   async getAppointmentsByCustomer(customerId: number): Promise<Appointment[]> {
@@ -208,8 +215,8 @@ export class DatabaseStorage implements IStorage {
     return appointment;
   }
 
-  async createAppointment(appointment: InsertAppointment): Promise<Appointment> {
-    const [created] = await db.insert(appointments).values(appointment).returning();
+  async createAppointment(appointment: InsertAppointment, userId: string): Promise<Appointment> {
+    const [created] = await db.insert(appointments).values({ ...appointment, userId }).returning();
     return created;
   }
 
@@ -244,12 +251,12 @@ export class DatabaseStorage implements IStorage {
     await this.updatePiano(pianoId, { lastTuned: mostRecentStr });
   }
 
-  async getCalendarNotes(): Promise<CalendarNote[]> {
-    return db.select().from(calendarNotes).orderBy(calendarNotes.date);
+  async getCalendarNotes(userId: string): Promise<CalendarNote[]> {
+    return db.select().from(calendarNotes).where(eq(calendarNotes.userId, userId)).orderBy(calendarNotes.date);
   }
 
-  async createCalendarNote(note: InsertCalendarNote): Promise<CalendarNote> {
-    const [created] = await db.insert(calendarNotes).values(note).returning();
+  async createCalendarNote(note: InsertCalendarNote, userId: string): Promise<CalendarNote> {
+    const [created] = await db.insert(calendarNotes).values({ ...note, userId }).returning();
     return created;
   }
 
@@ -263,12 +270,12 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getCalendarEvents(): Promise<CalendarEvent[]> {
-    return db.select().from(calendarEvents).orderBy(calendarEvents.date);
+  async getCalendarEvents(userId: string): Promise<CalendarEvent[]> {
+    return db.select().from(calendarEvents).where(eq(calendarEvents.userId, userId)).orderBy(calendarEvents.date);
   }
 
-  async createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent> {
-    const [created] = await db.insert(calendarEvents).values(event).returning();
+  async createCalendarEvent(event: InsertCalendarEvent, userId: string): Promise<CalendarEvent> {
+    const [created] = await db.insert(calendarEvents).values({ ...event, userId }).returning();
     return created;
   }
 
@@ -277,8 +284,8 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getTrips(): Promise<Trip[]> {
-    return db.select().from(trips).orderBy(trips.createdAt);
+  async getTrips(userId: string): Promise<Trip[]> {
+    return db.select().from(trips).where(eq(trips.userId, userId)).orderBy(trips.createdAt);
   }
 
   async getTrip(id: number): Promise<Trip | undefined> {
@@ -286,8 +293,8 @@ export class DatabaseStorage implements IStorage {
     return trip;
   }
 
-  async createTrip(trip: InsertTrip): Promise<Trip> {
-    const [created] = await db.insert(trips).values(trip).returning();
+  async createTrip(trip: InsertTrip, userId: string): Promise<Trip> {
+    const [created] = await db.insert(trips).values({ ...trip, userId }).returning();
     return created;
   }
 
@@ -306,6 +313,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(tripAppointments).where(eq(tripAppointments.tripId, tripId)).orderBy(tripAppointments.date, tripAppointments.time);
   }
 
+  async getTripAppointment(id: number): Promise<TripAppointment | undefined> {
+    const [appt] = await db.select().from(tripAppointments).where(eq(tripAppointments.id, id));
+    return appt;
+  }
+
   async createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment> {
     const [created] = await db.insert(tripAppointments).values(appointment).returning();
     return created;
@@ -321,8 +333,8 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getInvoices(): Promise<Invoice[]> {
-    return db.select().from(invoices).orderBy(invoices.createdAt);
+  async getInvoices(userId: string): Promise<Invoice[]> {
+    return db.select().from(invoices).where(eq(invoices.userId, userId)).orderBy(invoices.createdAt);
   }
 
   async getInvoice(id: number): Promise<Invoice | undefined> {
@@ -330,8 +342,8 @@ export class DatabaseStorage implements IStorage {
     return invoice;
   }
 
-  async createInvoice(invoice: InsertInvoice): Promise<Invoice> {
-    const [created] = await db.insert(invoices).values(invoice).returning();
+  async createInvoice(invoice: InsertInvoice, userId: string): Promise<Invoice> {
+    const [created] = await db.insert(invoices).values({ ...invoice, userId }).returning();
     return created;
   }
 
@@ -345,8 +357,8 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getNextInvoiceNumber(): Promise<number> {
-    const all = await db.select({ invoiceNumber: invoices.invoiceNumber }).from(invoices);
+  async getNextInvoiceNumber(userId: string): Promise<number> {
+    const all = await db.select({ invoiceNumber: invoices.invoiceNumber }).from(invoices).where(eq(invoices.userId, userId));
     let max = 0;
     for (const row of all) {
       const n = parseInt(row.invoiceNumber, 10);

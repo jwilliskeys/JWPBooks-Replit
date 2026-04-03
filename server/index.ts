@@ -61,11 +61,72 @@ app.use((req, res, next) => {
   next();
 });
 
+async function migrateExistingDataToUser() {
+  const { db } = await import("./db");
+  const { customers, appointments, calendarNotes, calendarEvents, trips, invoices, users } = await import("@shared/schema");
+  const { isNull, isNotNull, eq, count } = await import("drizzle-orm");
+
+  try {
+    const allUsers = await db.select({ id: users.id, email: users.email }).from(users);
+
+    if (allUsers.length === 0) {
+      log("Startup migration: no users yet, skipping data claim.", "migration");
+      return;
+    }
+
+    let claimUser: { id: string; email: string | null } | undefined;
+
+    if (allUsers.length === 1) {
+      claimUser = allUsers[0];
+    } else {
+      // Multiple users: find the one with the most existing claimed rows (they're the primary user)
+      const [existing] = await db
+        .select({ userId: customers.userId, cnt: count() })
+        .from(customers)
+        .where(isNotNull(customers.userId))
+        .groupBy(customers.userId)
+        .orderBy(count())
+        .limit(1);
+
+      if (existing?.userId) {
+        const found = allUsers.find(u => u.id === existing.userId);
+        claimUser = found;
+      }
+
+      if (!claimUser) {
+        log(`Startup migration: ${allUsers.length} users, no primary user determined, skipping.`, "migration");
+        return;
+      }
+    }
+
+    const userId = claimUser.id;
+    const userEmail = claimUser.email || userId;
+
+    const r1 = await db.update(customers).set({ userId }).where(isNull(customers.userId)).returning({ id: customers.id });
+    const r2 = await db.update(appointments).set({ userId }).where(isNull(appointments.userId)).returning({ id: appointments.id });
+    const r3 = await db.update(calendarNotes).set({ userId }).where(isNull(calendarNotes.userId)).returning({ id: calendarNotes.id });
+    const r4 = await db.update(calendarEvents).set({ userId }).where(isNull(calendarEvents.userId)).returning({ id: calendarEvents.id });
+    const r5 = await db.update(trips).set({ userId }).where(isNull(trips.userId)).returning({ id: trips.id });
+    const r6 = await db.update(invoices).set({ userId }).where(isNull(invoices.userId)).returning({ id: invoices.id });
+
+    const total = r1.length + r2.length + r3.length + r4.length + r5.length + r6.length;
+
+    if (total === 0) {
+      log("Startup migration: all records already have userId set.", "migration");
+    } else {
+      log(`Startup migration: claimed ${total} records for user ${userEmail} (customers:${r1.length}, appointments:${r2.length}, notes:${r3.length}, events:${r4.length}, trips:${r5.length}, invoices:${r6.length})`, "migration");
+    }
+  } catch (err: any) {
+    log(`Startup migration error: ${err.message}`, "migration");
+  }
+}
+
 (async () => {
   await setupAuth(app);
   registerAuthRoutes(app);
 
   await seedDatabaseIfEmpty();
+  await migrateExistingDataToUser();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

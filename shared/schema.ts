@@ -5,6 +5,7 @@ import { z } from "zod";
 
 export const customers = pgTable("customers", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
   companyName: text("company_name"),
@@ -49,6 +50,7 @@ export const serviceRecords = pgTable("service_records", {
 
 export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   customerId: integer("customer_id").notNull(),
   pianoId: integer("piano_id"),
   date: text("date").notNull(),
@@ -64,6 +66,7 @@ export const appointments = pgTable("appointments", {
 
 export const calendarNotes = pgTable("calendar_notes", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   date: text("date").notNull(),
   title: text("title").notNull(),
   notes: text("notes"),
@@ -72,6 +75,7 @@ export const calendarNotes = pgTable("calendar_notes", {
 
 export const calendarEvents = pgTable("calendar_events", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   date: text("date").notNull(),
   title: text("title").notNull(),
   notes: text("notes"),
@@ -86,6 +90,7 @@ export const calendarEvents = pgTable("calendar_events", {
 
 export const trips = pgTable("trips", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   name: text("name").notNull(),
   startDate: text("start_date").notNull(),
   endDate: text("end_date").notNull(),
@@ -112,6 +117,7 @@ export const tripAppointments = pgTable("trip_appointments", {
 
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   invoiceNumber: text("invoice_number").notNull(),
   customerId: integer("customer_id").notNull(),
   appointmentId: integer("appointment_id"),
@@ -135,6 +141,7 @@ export const invoices = pgTable("invoices", {
 
 export const insertCustomerSchema = createInsertSchema(customers).omit({
   id: true,
+  userId: true,
   createdAt: true,
 });
 
@@ -150,6 +157,7 @@ export const insertServiceRecordSchema = createInsertSchema(serviceRecords).omit
 
 export const insertAppointmentSchema = createInsertSchema(appointments).omit({
   id: true,
+  userId: true,
   createdAt: true,
 });
 
@@ -164,11 +172,13 @@ export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
 
 export const insertCalendarNoteSchema = createInsertSchema(calendarNotes).omit({
   id: true,
+  userId: true,
   createdAt: true,
 });
 
 export const insertCalendarEventSchema = createInsertSchema(calendarEvents).omit({
   id: true,
+  userId: true,
   createdAt: true,
 }).extend({
   eventType: z.enum(["personal", "memo"]).default("personal"),
@@ -177,6 +187,7 @@ export const insertCalendarEventSchema = createInsertSchema(calendarEvents).omit
 
 export const insertTripSchema = createInsertSchema(trips).omit({
   id: true,
+  userId: true,
   createdAt: true,
 });
 
@@ -196,6 +207,7 @@ export type InsertTripAppointment = z.infer<typeof insertTripAppointmentSchema>;
 
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({
   id: true,
+  userId: true,
   createdAt: true,
 });
 

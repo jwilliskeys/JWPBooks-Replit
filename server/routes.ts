@@ -28,6 +28,10 @@ const upload = multer({
   },
 });
 
+function getUserId(req: any): string {
+  return req.user?.claims?.sub as string;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -40,10 +44,11 @@ export async function registerRoutes(
     return isAuthenticated(req, res, next);
   });
 
-  app.get("/api/customers", async (_req, res) => {
+  app.get("/api/customers", async (req, res) => {
     try {
-      const customers = await storage.getCustomers();
-      res.json(customers);
+      const userId = getUserId(req);
+      const customerList = await storage.getCustomers(userId);
+      res.json(customerList);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -51,10 +56,11 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const customer = await storage.getCustomer(id);
-      if (!customer) return res.status(404).json({ message: "Customer not found" });
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       res.json(customer);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -63,11 +69,12 @@ export async function registerRoutes(
 
   app.post("/api/customers", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const parsed = insertCustomerSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const customer = await storage.createCustomer(parsed.data);
+      const customer = await storage.createCustomer(parsed.data, userId);
       res.status(201).json(customer);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -76,8 +83,11 @@ export async function registerRoutes(
 
   app.patch("/api/customers/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getCustomer(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       const updateSchema = insertCustomerSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -93,8 +103,11 @@ export async function registerRoutes(
 
   app.delete("/api/customers/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getCustomer(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       const deleted = await storage.deleteCustomer(id);
       if (!deleted) return res.status(404).json({ message: "Customer not found" });
       res.json({ success: true });
@@ -105,8 +118,11 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/services", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(id);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       const records = await storage.getServiceRecords(id);
       res.json(records);
     } catch (error: any) {
@@ -116,8 +132,11 @@ export async function registerRoutes(
 
   app.post("/api/customers/:id/services", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const customerId = parseInt(req.params.id);
       if (isNaN(customerId)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(customerId);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
 
       const data = { ...req.body, customerId };
       const parsed = insertServiceRecordSchema.safeParse(data);
@@ -137,9 +156,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/pianos", async (_req, res) => {
+  app.get("/api/pianos", async (req, res) => {
     try {
-      const allPianos = await storage.getAllPianos();
+      const userId = getUserId(req);
+      const allPianos = await storage.getAllPianos(userId);
       res.json(allPianos);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -148,8 +168,11 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/pianos", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(id);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       const customerPianos = await storage.getPianos(id);
       res.json(customerPianos);
     } catch (error: any) {
@@ -159,8 +182,11 @@ export async function registerRoutes(
 
   app.post("/api/customers/:id/pianos", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const customerId = parseInt(req.params.id);
       if (isNaN(customerId)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(customerId);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       const data = { ...req.body, customerId };
       const parsed = insertPianoSchema.safeParse(data);
       if (!parsed.success) {
@@ -176,10 +202,13 @@ export async function registerRoutes(
 
   app.patch("/api/pianos/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const existing = await storage.getPiano(id);
       if (!existing) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(existing.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const updateSchema = insertPianoSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -196,10 +225,13 @@ export async function registerRoutes(
 
   app.delete("/api/pianos/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const existing = await storage.getPiano(id);
       if (!existing) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(existing.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const deleted = await storage.deletePiano(id);
       if (!deleted) return res.status(404).json({ message: "Piano not found" });
       await storage.syncCustomerFromPianos(existing.customerId);
@@ -211,8 +243,13 @@ export async function registerRoutes(
 
   app.get("/api/pianos/:id/services", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(id);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const records = await storage.getServiceRecordsByPiano(id);
       res.json(records);
     } catch (error: any) {
@@ -222,10 +259,13 @@ export async function registerRoutes(
 
   app.post("/api/pianos/:id/services", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const pianoId = parseInt(req.params.id);
       if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
       const piano = await storage.getPiano(pianoId);
       if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const data = { ...req.body, pianoId, customerId: piano.customerId };
       const parsed = insertServiceRecordSchema.safeParse(data);
       if (!parsed.success) {
@@ -244,10 +284,13 @@ export async function registerRoutes(
 
   app.patch("/api/services/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const existing = await storage.getServiceRecord(id);
       if (!existing) return res.status(404).json({ message: "Service record not found" });
+      const owner = await storage.getCustomer(existing.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const updateSchema = insertServiceRecordSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -273,10 +316,13 @@ export async function registerRoutes(
 
   app.delete("/api/services/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const existing = await storage.getServiceRecord(id);
       if (!existing) return res.status(404).json({ message: "Service record not found" });
+      const owner = await storage.getCustomer(existing.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const deleted = await storage.deleteServiceRecord(id);
       if (!deleted) return res.status(404).json({ message: "Service record not found" });
       if (existing.serviceType === "tuning" && existing.pianoId) {
@@ -292,10 +338,13 @@ export async function registerRoutes(
 
   app.post("/api/pianos/:id/photos", upload.array("photos", 10), async (req, res) => {
     try {
+      const userId = getUserId(req);
       const pianoId = parseInt(req.params.id as string);
       if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
       const piano = await storage.getPiano(pianoId);
       if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const files = (req as any).files as any[];
       if (!files || files.length === 0) return res.status(400).json({ message: "No files uploaded" });
       const newPhotos = files.map((f) => `/uploads/pianos/${f.filename}`);
@@ -310,10 +359,13 @@ export async function registerRoutes(
 
   app.delete("/api/pianos/:pianoId/photos", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const pianoId = parseInt(req.params.pianoId);
       if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
       const piano = await storage.getPiano(pianoId);
       if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const { photoUrl } = req.body;
       if (!photoUrl) return res.status(400).json({ message: "No photo URL provided" });
       const updatedPhotos = (piano.photos || []).filter((p) => p !== photoUrl);
@@ -328,9 +380,10 @@ export async function registerRoutes(
 
   app.use("/uploads", (await import("express")).default.static(path.join(process.cwd(), "uploads")));
 
-  app.get("/api/appointments", async (_req, res) => {
+  app.get("/api/appointments", async (req, res) => {
     try {
-      const allAppointments = await storage.getAppointments();
+      const userId = getUserId(req);
+      const allAppointments = await storage.getAppointments(userId);
       res.json(allAppointments);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -339,10 +392,11 @@ export async function registerRoutes(
 
   app.get("/api/appointments/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const appointment = await storage.getAppointment(id);
-      if (!appointment) return res.status(404).json({ message: "Appointment not found" });
+      if (!appointment || appointment.userId !== userId) return res.status(404).json({ message: "Appointment not found" });
       res.json(appointment);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -351,8 +405,11 @@ export async function registerRoutes(
 
   app.get("/api/customers/:id/appointments", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(id);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
       const customerAppointments = await storage.getAppointmentsByCustomer(id);
       res.json(customerAppointments);
     } catch (error: any) {
@@ -362,11 +419,12 @@ export async function registerRoutes(
 
   app.post("/api/appointments", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const parsed = insertAppointmentSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const appointment = await storage.createAppointment(parsed.data);
+      const appointment = await storage.createAppointment(parsed.data, userId);
       res.status(201).json(appointment);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -375,8 +433,11 @@ export async function registerRoutes(
 
   app.patch("/api/appointments/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getAppointment(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Appointment not found" });
       const updateSchema = insertAppointmentSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -392,8 +453,11 @@ export async function registerRoutes(
 
   app.delete("/api/appointments/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getAppointment(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Appointment not found" });
       const deleted = await storage.deleteAppointment(id);
       if (!deleted) return res.status(404).json({ message: "Appointment not found" });
       res.json({ success: true });
@@ -402,9 +466,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/calendar-notes", async (_req, res) => {
+  app.get("/api/calendar-notes", async (req, res) => {
     try {
-      const notes = await storage.getCalendarNotes();
+      const userId = getUserId(req);
+      const notes = await storage.getCalendarNotes(userId);
       res.json(notes);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -413,11 +478,12 @@ export async function registerRoutes(
 
   app.post("/api/calendar-notes", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const parsed = insertCalendarNoteSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const note = await storage.createCalendarNote(parsed.data);
+      const note = await storage.createCalendarNote(parsed.data, userId);
       res.status(201).json(note);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -453,9 +519,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/calendar-events", async (_req, res) => {
+  app.get("/api/calendar-events", async (req, res) => {
     try {
-      const events = await storage.getCalendarEvents();
+      const userId = getUserId(req);
+      const events = await storage.getCalendarEvents(userId);
       res.json(events);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -464,11 +531,12 @@ export async function registerRoutes(
 
   app.post("/api/calendar-events", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const parsed = insertCalendarEventSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const event = await storage.createCalendarEvent(parsed.data);
+      const event = await storage.createCalendarEvent(parsed.data, userId);
       res.status(201).json(event);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -487,9 +555,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/trips", async (_req, res) => {
+  app.get("/api/trips", async (req, res) => {
     try {
-      const allTrips = await storage.getTrips();
+      const userId = getUserId(req);
+      const allTrips = await storage.getTrips(userId);
       res.json(allTrips);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -498,10 +567,11 @@ export async function registerRoutes(
 
   app.get("/api/trips/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const trip = await storage.getTrip(id);
-      if (!trip) return res.status(404).json({ message: "Trip not found" });
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
       res.json(trip);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -510,11 +580,12 @@ export async function registerRoutes(
 
   app.post("/api/trips", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const parsed = insertTripSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const trip = await storage.createTrip(parsed.data);
+      const trip = await storage.createTrip(parsed.data, userId);
       res.status(201).json(trip);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -523,8 +594,11 @@ export async function registerRoutes(
 
   app.patch("/api/trips/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getTrip(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Trip not found" });
       const updateSchema = insertTripSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -540,8 +614,11 @@ export async function registerRoutes(
 
   app.delete("/api/trips/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getTrip(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Trip not found" });
       const deleted = await storage.deleteTrip(id);
       if (!deleted) return res.status(404).json({ message: "Trip not found" });
       res.json({ success: true });
@@ -552,8 +629,11 @@ export async function registerRoutes(
 
   app.get("/api/trips/:id/appointments", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const tripId = parseInt(req.params.id);
       if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
       const appts = await storage.getTripAppointments(tripId);
       res.json(appts);
     } catch (error: any) {
@@ -563,8 +643,11 @@ export async function registerRoutes(
 
   app.post("/api/trips/:id/appointments", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const tripId = parseInt(req.params.id);
       if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
       const data = { ...req.body, tripId };
       const parsed = insertTripAppointmentSchema.safeParse(data);
       if (!parsed.success) {
@@ -579,8 +662,13 @@ export async function registerRoutes(
 
   app.patch("/api/trip-appointments/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getTripAppointment(id);
+      if (!existing) return res.status(404).json({ message: "Trip appointment not found" });
+      const trip = await storage.getTrip(existing.tripId);
+      if (!trip || trip.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const updateSchema = insertTripAppointmentSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -596,8 +684,13 @@ export async function registerRoutes(
 
   app.delete("/api/trip-appointments/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getTripAppointment(id);
+      if (!existing) return res.status(404).json({ message: "Trip appointment not found" });
+      const trip = await storage.getTrip(existing.tripId);
+      if (!trip || trip.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const deleted = await storage.deleteTripAppointment(id);
       if (!deleted) return res.status(404).json({ message: "Trip appointment not found" });
       res.json({ success: true });
@@ -606,18 +699,20 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/invoices/next-number", async (_req, res) => {
+  app.get("/api/invoices/next-number", async (req, res) => {
     try {
-      const nextNum = await storage.getNextInvoiceNumber();
+      const userId = getUserId(req);
+      const nextNum = await storage.getNextInvoiceNumber(userId);
       res.json({ nextNumber: nextNum });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
 
-  app.get("/api/invoices", async (_req, res) => {
+  app.get("/api/invoices", async (req, res) => {
     try {
-      const allInvoices = await storage.getInvoices();
+      const userId = getUserId(req);
+      const allInvoices = await storage.getInvoices(userId);
       res.json(allInvoices);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -626,10 +721,11 @@ export async function registerRoutes(
 
   app.get("/api/invoices/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const invoice = await storage.getInvoice(id);
-      if (!invoice) return res.status(404).json({ message: "Invoice not found" });
+      if (!invoice || invoice.userId !== userId) return res.status(404).json({ message: "Invoice not found" });
       res.json(invoice);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -638,11 +734,12 @@ export async function registerRoutes(
 
   app.post("/api/invoices", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const parsed = insertInvoiceSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const invoice = await storage.createInvoice(parsed.data);
+      const invoice = await storage.createInvoice(parsed.data, userId);
       res.status(201).json(invoice);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -651,8 +748,11 @@ export async function registerRoutes(
 
   app.patch("/api/invoices/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getInvoice(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Invoice not found" });
       const updateSchema = insertInvoiceSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -668,8 +768,11 @@ export async function registerRoutes(
 
   app.delete("/api/invoices/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getInvoice(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Invoice not found" });
       const deleted = await storage.deleteInvoice(id);
       if (!deleted) return res.status(404).json({ message: "Invoice not found" });
       res.json({ success: true });
@@ -678,8 +781,9 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/sync", async (_req, res) => {
+  app.post("/api/sync", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const sheets = await getUncachableGoogleSheetClient();
       const result = await sheets.spreadsheets.values.get({
         spreadsheetId: SPREADSHEET_ID,
@@ -744,13 +848,13 @@ export async function registerRoutes(
           personalNotes: getVal("personalNotes"),
         };
 
-        const existing = await storage.findCustomerByName(firstName, lastName);
+        const existing = await storage.findCustomerByName(firstName, lastName, userId);
 
         if (existing) {
           await storage.updateCustomer(existing.id, customerData);
           updated++;
         } else {
-          await storage.createCustomer(customerData);
+          await storage.createCustomer(customerData, userId);
           imported++;
         }
       }
