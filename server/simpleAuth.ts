@@ -52,31 +52,34 @@ export async function setupAuth(app: Express) {
     }
 
     const ownerEmail = process.env.OWNER_EMAIL;
-    let userId = "owner";
+    if (!ownerEmail) {
+      return res.status(500).json({ message: "OWNER_EMAIL is not configured." });
+    }
+
+    let userId: string;
     let userFirstName: string | null = null;
     let userLastName: string | null = null;
     let profileImageUrl: string | null = null;
 
-    if (ownerEmail) {
-      try {
-        const { db } = await import("./db");
-        const { users } = await import("@shared/schema");
-        const { eq } = await import("drizzle-orm");
-        const [user] = await db.select().from(users).where(eq(users.email, ownerEmail)).limit(1);
-        if (user) {
-          userId = user.id;
-          userFirstName = user.firstName ?? null;
-          userLastName = user.lastName ?? null;
-          profileImageUrl = user.profileImageUrl ?? null;
-        }
-      } catch {
-        // Fall through with "owner" userId
+    try {
+      const { db } = await import("./db");
+      const { users } = await import("@shared/schema");
+      const { eq } = await import("drizzle-orm");
+      const [user] = await db.select().from(users).where(eq(users.email, ownerEmail)).limit(1);
+      if (!user) {
+        return res.status(500).json({ message: `Owner account not found. Sign in with ${ownerEmail} via Replit at least once first, then retry.` });
       }
+      userId = user.id;
+      userFirstName = user.firstName ?? null;
+      userLastName = user.lastName ?? null;
+      profileImageUrl = user.profileImageUrl ?? null;
+    } catch (err: any) {
+      return res.status(500).json({ message: `Database error during login: ${err.message}` });
     }
 
     req.session.authenticated = true;
     req.session.userId = userId;
-    req.session.userEmail = ownerEmail ?? "";
+    req.session.userEmail = ownerEmail;
     req.session.userFirstName = userFirstName;
     req.session.userLastName = userLastName;
     req.session.profileImageUrl = profileImageUrl;
