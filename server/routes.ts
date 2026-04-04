@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
 import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema } from "@shared/schema";
-import { isAuthenticated } from "./replit_integrations/auth";
+import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -29,7 +29,7 @@ const upload = multer({
 });
 
 function getUserId(req: any): string {
-  return req.user?.claims?.sub as string;
+  return req.session?.userId as string;
 }
 
 export async function registerRoutes(
@@ -38,7 +38,7 @@ export async function registerRoutes(
 ): Promise<Server> {
 
   app.use("/api", (req, res, next) => {
-    if (req.path === "/login" || req.path === "/logout" || req.path === "/callback" || req.path === "/auth/user") {
+    if (req.path === "/login" || req.path === "/logout" || req.path === "/auth/user") {
       return next();
     }
     return isAuthenticated(req, res, next);

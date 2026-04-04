@@ -3,7 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabaseIfEmpty } from "./seed";
-import { setupAuth, registerAuthRoutes } from "./replit_integrations/auth";
+import { setupAuth } from "./simpleAuth";
 
 const app = express();
 const httpServer = createServer(app);
@@ -176,7 +176,6 @@ async function migrateExistingDataToUser() {
 
 (async () => {
   await setupAuth(app);
-  registerAuthRoutes(app);
 
   await seedDatabaseIfEmpty();
   await migrateExistingDataToUser();

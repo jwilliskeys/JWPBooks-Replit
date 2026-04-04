@@ -1,6 +1,6 @@
 import { Switch, Route } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -10,7 +10,9 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Loader2, LogOut, Piano } from "lucide-react";
+import { Loader2, LogOut, Piano, KeyRound } from "lucide-react";
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Customers from "@/pages/customers";
@@ -46,6 +48,36 @@ const sidebarStyle = {
 };
 
 function LandingPage() {
+  const [passcode, setPasscode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ passcode }),
+      });
+      if (res.ok) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.message || "Incorrect passcode");
+        setPasscode("");
+      }
+    } catch {
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen flex">
       <div className="hidden lg:flex lg:w-1/2 bg-primary/5 flex-col justify-between p-12">
@@ -75,31 +107,40 @@ function LandingPage() {
             <span className="text-xl font-bold">PianoTech</span>
           </div>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold">Welcome back</h2>
+            <div className="flex items-center justify-center">
+              <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mb-2">
+                <KeyRound className="h-6 w-6 text-muted-foreground" />
+              </div>
+            </div>
+            <h2 className="text-2xl font-bold">Enter passcode</h2>
             <p className="text-muted-foreground text-sm">
-              Sign in to access your customer records and schedule.
+              JWP Books — enter your passcode to continue.
             </p>
           </div>
-          <a href="/api/login">
-            <Button size="lg" className="w-full" data-testid="button-login">
-              Sign in with Replit
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <Input
+              type="password"
+              placeholder="Passcode"
+              value={passcode}
+              onChange={e => setPasscode(e.target.value)}
+              autoFocus
+              autoComplete="current-password"
+              data-testid="input-passcode"
+              className="text-center text-lg tracking-widest"
+            />
+            {error && (
+              <p className="text-sm text-destructive" data-testid="text-login-error">{error}</p>
+            )}
+            <Button
+              type="submit"
+              size="lg"
+              className="w-full"
+              disabled={loading || !passcode}
+              data-testid="button-login"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Unlock"}
             </Button>
-          </a>
-          <div className="rounded-lg border bg-muted/40 p-4 text-left space-y-2">
-            <p className="text-xs font-medium text-foreground">Signing in with the wrong account?</p>
-            <p className="text-xs text-muted-foreground">
-              This app uses your Replit account. To switch accounts, first sign into{" "}
-              <a
-                href="https://replit.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline text-foreground hover:text-primary"
-              >
-                replit.com
-              </a>{" "}
-              with the correct email, then come back here and sign in.
-            </p>
-          </div>
+          </form>
         </div>
       </div>
     </div>
