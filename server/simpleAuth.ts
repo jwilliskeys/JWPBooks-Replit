@@ -73,8 +73,8 @@ export async function setupAuth(app: Express) {
       userFirstName = user.firstName ?? null;
       userLastName = user.lastName ?? null;
       profileImageUrl = user.profileImageUrl ?? null;
-    } catch (err: any) {
-      return res.status(500).json({ message: `Database error during login: ${err.message}` });
+    } catch {
+      return res.status(500).json({ message: "Login failed due to a server error. Please try again." });
     }
 
     req.session.authenticated = true;
