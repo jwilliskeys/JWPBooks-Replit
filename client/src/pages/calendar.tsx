@@ -658,7 +658,7 @@ export default function CalendarPage() {
           ) : (
             agendaDays.map((date) => {
               const key = getDateKey(date);
-              const dayAppts = appointmentsByDate.get(key) ?? [];
+              const dayAppts = (appointmentsByDate.get(key) ?? []).slice().sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
               const dayNotes = notesByDate.get(key) ?? [];
               const dayEvents = eventsByDate.get(key) ?? [];
               const isToday = isSameDay(date, today);
@@ -773,7 +773,7 @@ export default function CalendarPage() {
                 }
 
                 const key = getDateKey(date);
-                const dayAppts = appointmentsByDate.get(key) ?? [];
+                const dayAppts = (appointmentsByDate.get(key) ?? []).slice().sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
                 const dayNotes = notesByDate.get(key) ?? [];
                 const dayEvents = eventsByDate.get(key) ?? [];
                 const isToday = isSameDay(date, today);
