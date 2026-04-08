@@ -89,7 +89,7 @@ export interface IStorage {
   getNextInvoiceNumber(userId: string): Promise<number>;
   getServiceGroups(userId: string): Promise<ServiceGroup[]>;
   createServiceGroup(data: InsertServiceGroup, userId: string): Promise<ServiceGroup>;
-  updateServiceGroup(id: number, data: Partial<InsertServiceGroup>): Promise<ServiceGroup | undefined>;
+  updateServiceGroup(id: number, userId: string, data: Partial<InsertServiceGroup>): Promise<ServiceGroup | undefined>;
   deleteServiceGroup(id: number, userId: string): Promise<boolean>;
   seedServiceGroups(userId: string): Promise<void>;
   getServiceCatalog(userId: string): Promise<ServiceCatalogItem[]>;
@@ -422,8 +422,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateServiceGroup(id: number, data: Partial<InsertServiceGroup>): Promise<ServiceGroup | undefined> {
-    const [updated] = await db.update(serviceGroups).set(data).where(eq(serviceGroups.id, id)).returning();
+  async updateServiceGroup(id: number, userId: string, data: Partial<InsertServiceGroup>): Promise<ServiceGroup | undefined> {
+    const [updated] = await db.update(serviceGroups).set(data)
+      .where(and(eq(serviceGroups.id, id), eq(serviceGroups.userId, userId)))
+      .returning();
     return updated;
   }
 

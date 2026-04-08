@@ -579,7 +579,7 @@ export async function registerRoutes(
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const parsed = insertServiceGroupSchema.partial().safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
-      const updated = await storage.updateServiceGroup(id, parsed.data);
+      const updated = await storage.updateServiceGroup(id, userId, parsed.data);
       if (!updated) return res.status(404).json({ message: "Group not found" });
       res.json(updated);
     } catch (error: any) {
