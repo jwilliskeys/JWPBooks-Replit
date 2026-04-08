@@ -48,3 +48,7 @@ integrations = ["google-sheet:1.0.0", "javascript_log_in_with_replit:2.0.0"]
 [userenv.shared]
 GOOGLE_MAPS_API_KEY = "AIzaSyC69P2faAI7ofq-c9j9N7OJvGiy_2TwTr0"
 OWNER_EMAIL = "j.willis.keys@gmail.com"
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 20000
