@@ -11,8 +11,17 @@ import {
   ArrowRight,
   MapPin,
   Calendar,
+  DollarSign,
 } from "lucide-react";
-import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import type { Customer, Appointment, Piano as PianoType, Invoice } from "@shared/schema";
 import {
   getServiceArea,
   getServiceRegion,
@@ -72,6 +81,203 @@ function getMonthsSinceLastTuned(dateStr: string | null | undefined): number | n
   return months;
 }
 
+function parseDollar(value: string | null | undefined): number {
+  if (!value) return 0;
+  const num = parseFloat(value.replace(/[$,]/g, ""));
+  return isNaN(num) ? 0 : num;
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function getMonthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+interface MonthlyIncomeData {
+  month: string;
+  monthKey: string;
+  total: number;
+  paid: number;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: Array<{ value: number; name: string }>;
+  label?: string;
+  monthData?: MonthlyIncomeData[];
+}
+
+function CustomTooltip({ active, payload, label, monthData }: CustomTooltipProps) {
+  if (!active || !payload || !label) return null;
+  const data = monthData?.find((d) => d.month === label);
+  return (
+    <div className="bg-popover border border-border rounded-md shadow-md px-3 py-2 text-xs">
+      <p className="font-semibold mb-1">{label}</p>
+      <p className="text-muted-foreground">Total billed: <span className="text-foreground font-medium">${data?.total.toFixed(2)}</span></p>
+      <p className="text-muted-foreground">Total paid: <span className="text-foreground font-medium">${data?.paid.toFixed(2)}</span></p>
+    </div>
+  );
+}
+
+function TodayItinerary({ appointments, customers }: { appointments: Appointment[]; customers: Customer[] | undefined }) {
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getMonth() + 1}/${now.getDate()}/${String(now.getFullYear()).slice(-2)}`;
+  }, []);
+
+  const todayAppointments = useMemo(() => {
+    return appointments.filter((a) => a.date === todayStr);
+  }, [appointments, todayStr]);
+
+  if (todayAppointments.length === 0) {
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-2 rounded-md bg-muted/40 text-muted-foreground text-sm"
+        data-testid="today-no-appointments"
+      >
+        <Calendar className="h-3.5 w-3.5 shrink-0" />
+        <span>No appointments today</span>
+      </div>
+    );
+  }
+
+  return (
+    <Card data-testid="today-itinerary-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Calendar className="h-4 w-4" /> Today's Appointments
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        {todayAppointments.map((appt) => {
+          const cust = customers?.find((c) => c.id === appt.customerId);
+          const href = cust ? `/customers/${cust.id}` : "/appointments";
+          return (
+            <Link key={appt.id} href={href}>
+              <div
+                className="flex items-center justify-between gap-3 p-2 rounded-md hover:bg-accent cursor-pointer text-xs"
+                data-testid={`today-appt-${appt.id}`}
+              >
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <span className="font-medium truncate">
+                    {cust ? `${cust.firstName} ${cust.lastName}` : "Unknown Client"}
+                  </span>
+                  {appt.servicesRequested && (
+                    <span className="text-muted-foreground truncate">{appt.servicesRequested}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {appt.time && (
+                    <span className="text-muted-foreground">{appt.time}</span>
+                  )}
+                  <Badge
+                    variant={appt.status === "completed" ? "default" : "outline"}
+                    className="text-[10px] capitalize"
+                    data-testid={`today-appt-status-${appt.id}`}
+                  >
+                    {appt.status}
+                  </Badge>
+                </div>
+              </div>
+            </Link>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
+function MonthlyIncomeChart({ invoices, loading }: { invoices: Invoice[] | undefined; loading: boolean }) {
+  const monthlyData: MonthlyIncomeData[] = useMemo(() => {
+    const now = new Date();
+    const months: MonthlyIncomeData[] = [];
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = getMonthKey(d.getFullYear(), d.getMonth() + 1);
+      months.push({
+        monthKey: key,
+        month: `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`,
+        total: 0,
+        paid: 0,
+      });
+    }
+
+    invoices?.forEach((inv) => {
+      const date = parseDate(inv.invoiceDate);
+      if (!date) return;
+      const key = getMonthKey(date.getFullYear(), date.getMonth() + 1);
+      const entry = months.find((m) => m.monthKey === key);
+      if (!entry) return;
+      const total = parseDollar(inv.total);
+      entry.total += total;
+      if (inv.status === "paid") {
+        entry.paid += parseDollar(inv.paidAmount || inv.total);
+      }
+    });
+
+    return months;
+  }, [invoices]);
+
+  return (
+    <Card data-testid="monthly-income-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <DollarSign className="h-4 w-4" /> Monthly Income
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={monthlyData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <XAxis
+                dataKey="month"
+                tick={{ fontSize: 10 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 10 }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => `$${v}`}
+              />
+              <Tooltip
+                content={<CustomTooltip monthData={monthlyData} />}
+                cursor={{ fill: "hsl(var(--muted))" }}
+              />
+              <Bar
+                dataKey="total"
+                name="Total Billed"
+                fill="hsl(var(--primary) / 0.25)"
+                radius={[3, 3, 0, 0]}
+              />
+              <Bar
+                dataKey="paid"
+                name="Paid"
+                fill="hsl(var(--primary))"
+                radius={[3, 3, 0, 0]}
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+        <div className="flex items-center gap-4 mt-2 justify-center">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary/25" />
+            Total Billed
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="inline-block h-2.5 w-2.5 rounded-sm bg-primary" />
+            Paid
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const { data: customers, isLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
@@ -83,6 +289,10 @@ export default function Dashboard() {
 
   const { data: allPianos, isLoading: pianosLoading } = useQuery<PianoType[]>({
     queryKey: ["/api/pianos"],
+  });
+
+  const { data: invoices, isLoading: invoicesLoading } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
   });
 
   const totalCustomers = customers?.length ?? 0;
@@ -137,6 +347,15 @@ export default function Dashboard() {
         </Link>
       </div>
 
+      {appointmentsLoading ? (
+        <Skeleton className="h-8 w-full" data-testid="today-loading" />
+      ) : (
+        <TodayItinerary
+          appointments={allAppointments ?? []}
+          customers={customers}
+        />
+      )}
+
       <div className="grid gap-3 grid-cols-2">
         <StatCard
           title="Total Clients"
@@ -153,6 +372,8 @@ export default function Dashboard() {
           href="/customers"
         />
       </div>
+
+      <MonthlyIncomeChart invoices={invoices} loading={invoicesLoading} />
 
       <Card>
         <CardHeader className="pb-3">
