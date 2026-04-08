@@ -516,6 +516,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async setDefaultService(id: number, userId: string): Promise<ServiceCatalogItem | undefined> {
+    const [target] = await db.select().from(serviceCatalog)
+      .where(and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId)));
+    if (!target) return undefined;
     await db.update(serviceCatalog)
       .set({ isDefault: false })
       .where(eq(serviceCatalog.userId, userId));

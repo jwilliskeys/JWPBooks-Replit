@@ -102,7 +102,7 @@ function ServiceDialog({
       const hours = parseDurationHours(item.defaultDuration || "");
       return {
         name: item.name,
-        category: item.category || groupName,
+        category: item.category || groupName || "__uncategorized__",
         defaultCost: item.defaultCost || "",
         defaultDuration: formatDurationHours(hours),
         durationHours: hours,
@@ -112,7 +112,7 @@ function ServiceDialog({
         sortOrder: item.sortOrder ?? 0,
       };
     }
-    return emptyCatalogForm(groupName, nextSortOrder);
+    return emptyCatalogForm(groupName || "__uncategorized__", nextSortOrder);
   }
 
   const [form, setForm] = useState<CatalogForm>(buildForm);
@@ -160,7 +160,7 @@ function ServiceDialog({
                 {groups.map(g => (
                   <SelectItem key={g.id} value={g.name}>{g.name}</SelectItem>
                 ))}
-                <SelectItem value="">Uncategorized</SelectItem>
+                <SelectItem value="__uncategorized__">Uncategorized</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -408,6 +408,7 @@ export default function SettingsPage() {
 
   function handleSaveService(data: CatalogForm) {
     const { isDefault, durationHours: _dh, ...rest } = data;
+    if (rest.category === "__uncategorized__") rest.category = "";
     if (editItem) {
       updateItemMutation.mutate({ id: editItem.id, data: rest }, {
         onSuccess: () => {

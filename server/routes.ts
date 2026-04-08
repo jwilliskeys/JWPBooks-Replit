@@ -607,7 +607,8 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const item = await storage.createServiceCatalogItem(parsed.data, userId);
+      const { isDefault: _ignored, ...safeData } = parsed.data as any;
+      const item = await storage.createServiceCatalogItem(safeData, userId);
       res.status(201).json(item);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -624,7 +625,8 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const item = await storage.updateServiceCatalogItem(id, parsed.data, userId);
+      const { isDefault: _ignored, ...safeData } = parsed.data as any;
+      const item = await storage.updateServiceCatalogItem(id, safeData, userId);
       if (!item) return res.status(404).json({ message: "Item not found" });
       res.json(item);
     } catch (error: any) {
