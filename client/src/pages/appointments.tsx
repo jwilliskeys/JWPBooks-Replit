@@ -26,12 +26,14 @@ import {
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Customer } from "@shared/schema";
+import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 
 type AppointmentSortOption = "date" | "lastName" | "location";
 
 export default function Appointments() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<AppointmentSortOption>("date");
+  const [completeDialogAppt, setCompleteDialogAppt] = useState<Appointment | null>(null);
   const { toast } = useToast();
 
   const { data: appointments, isLoading } = useQuery<Appointment[]>({
@@ -55,18 +57,6 @@ export default function Appointments() {
     },
   });
 
-  const completeAppointmentMutation = useMutation({
-    mutationFn: (id: number) =>
-      apiRequest("PATCH", `/api/appointments/${id}`, { status: "completed" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      toast({ title: "Appointment marked as completed" });
-    },
-    onError: () => {
-      toast({ title: "Failed to update appointment", variant: "destructive" });
-    },
-  });
-
   const filtered = appointments
     ?.filter((a) => {
       if (!search) return true;
@@ -80,8 +70,10 @@ export default function Appointments() {
       );
     })
     .sort((a, b) => {
-      if (a.status === "scheduled" && b.status !== "scheduled") return -1;
-      if (a.status !== "scheduled" && b.status === "scheduled") return 1;
+      const aIsScheduled = a.status === "scheduled" || !a.status;
+      const bIsScheduled = b.status === "scheduled" || !b.status;
+      if (aIsScheduled && !bIsScheduled) return -1;
+      if (!aIsScheduled && bIsScheduled) return 1;
 
       switch (sortBy) {
         case "date":
@@ -156,9 +148,13 @@ export default function Appointments() {
         <div className="space-y-3">
           {filtered.map((appointment) => {
             const customer = customerMap.get(appointment.customerId);
+            const isScheduled = appointment.status === "scheduled" || !appointment.status;
             const isCompleted = appointment.status === "completed";
+            const isNoShow = appointment.status === "no-show";
+            const isCancelled = appointment.status === "cancelled";
+            const isDone = !isScheduled;
             return (
-              <Card key={appointment.id} className={isCompleted ? "opacity-60" : ""} data-testid={`appointment-card-${appointment.id}`}>
+              <Card key={appointment.id} className={isDone ? "opacity-60" : ""} data-testid={`appointment-card-${appointment.id}`}>
                 <CardContent className="py-3 sm:py-4 px-3 sm:px-5">
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
@@ -180,8 +176,12 @@ export default function Appointments() {
                               Tuning
                             </Badge>
                           )}
-                          <Badge variant={isCompleted ? "secondary" : "default"} className="text-xs" data-testid={`appointment-status-${appointment.id}`}>
-                            {isCompleted ? "Completed" : "Scheduled"}
+                          <Badge
+                            variant={isScheduled ? "default" : "secondary"}
+                            className="text-xs"
+                            data-testid={`appointment-status-${appointment.id}`}
+                          >
+                            {isCompleted ? "Completed" : isNoShow ? "No-show" : isCancelled ? "Cancelled" : "Scheduled"}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-3 sm:gap-4 text-xs text-muted-foreground mt-1 flex-wrap">
@@ -206,13 +206,12 @@ export default function Appointments() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 justify-end">
-                      {!isCompleted && (
+                      {isScheduled && (
                         <Button
                           variant="outline"
                           size="sm"
                           className="text-xs h-7"
-                          onClick={() => completeAppointmentMutation.mutate(appointment.id)}
-                          disabled={completeAppointmentMutation.isPending}
+                          onClick={() => setCompleteDialogAppt(appointment)}
                           data-testid={`button-complete-appointment-${appointment.id}`}
                         >
                           <CheckCircle className="h-3 w-3 mr-1" />
@@ -239,6 +238,14 @@ export default function Appointments() {
             );
           })}
         </div>
+      )}
+
+      {completeDialogAppt && (
+        <CompleteAppointmentDialog
+          appointment={completeDialogAppt}
+          open={!!completeDialogAppt}
+          onOpenChange={(open) => { if (!open) setCompleteDialogAppt(null); }}
+        />
       )}
     </div>
   );

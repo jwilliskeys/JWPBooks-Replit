@@ -54,6 +54,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano } from "@shared/schema";
+import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 
 function parseMDYY(dateStr: string): Date | null {
   if (!dateStr) return null;
@@ -294,6 +295,7 @@ export default function CalendarPage() {
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [showCloneInput, setShowCloneInput] = useState(false);
   const [cloneDate, setCloneDate] = useState("");
+  const [completeDialogAppt, setCompleteDialogAppt] = useState<Appointment | null>(null);
 
   const { data: appointments, isLoading: loadingAppts } = useQuery<Appointment[]>({
     queryKey: ["/api/appointments"],
@@ -975,6 +977,17 @@ export default function CalendarPage() {
                       >
                         Clone
                       </Button>
+                      {(selectedAppt.status === "scheduled" || !selectedAppt.status) && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setCompleteDialogAppt(selectedAppt); }}
+                          className="h-7 text-xs border-violet-300 dark:border-violet-700 text-violet-800 dark:text-violet-200 hover:bg-violet-200 dark:hover:bg-violet-800"
+                          data-testid="button-appt-complete"
+                        >
+                          Complete
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -1447,6 +1460,15 @@ export default function CalendarPage() {
 
         </DialogContent>
       </Dialog>
+
+      {completeDialogAppt && (
+        <CompleteAppointmentDialog
+          appointment={completeDialogAppt}
+          open={!!completeDialogAppt}
+          onOpenChange={(open) => { if (!open) setCompleteDialogAppt(null); }}
+          onComplete={() => setSelectedAppt(null)}
+        />
+      )}
     </div>
   );
 }

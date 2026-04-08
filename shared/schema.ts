@@ -45,6 +45,25 @@ export const serviceRecords = pgTable("service_records", {
   serviceType: text("service_type").notNull(),
   notes: text("notes"),
   cost: text("cost"),
+  humidity: text("humidity"),
+  temperature: text("temperature"),
+  services: text("services").default("[]"),
+  isTuning: boolean("is_tuning").default(false),
+  appointmentId: integer("appointment_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const serviceCatalog = pgTable("service_catalog", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id"),
+  name: text("name").notNull(),
+  category: text("category"),
+  defaultCost: text("default_cost"),
+  defaultDuration: text("default_duration"),
+  isTuning: boolean("is_tuning").default(false),
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -155,6 +174,12 @@ export const insertServiceRecordSchema = createInsertSchema(serviceRecords).omit
   createdAt: true,
 });
 
+export const insertServiceCatalogSchema = createInsertSchema(serviceCatalog).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
 export const insertAppointmentSchema = createInsertSchema(appointments).omit({
   id: true,
   userId: true,
@@ -167,6 +192,8 @@ export type Piano = typeof pianos.$inferSelect;
 export type InsertPiano = z.infer<typeof insertPianoSchema>;
 export type ServiceRecord = typeof serviceRecords.$inferSelect;
 export type InsertServiceRecord = z.infer<typeof insertServiceRecordSchema>;
+export type ServiceCatalogItem = typeof serviceCatalog.$inferSelect;
+export type InsertServiceCatalogItem = z.infer<typeof insertServiceCatalogSchema>;
 export type Appointment = typeof appointments.$inferSelect;
 export type InsertAppointment = z.infer<typeof insertAppointmentSchema>;
 
@@ -213,29 +240,5 @@ export const insertInvoiceSchema = createInsertSchema(invoices).omit({
 
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
-
-export const serviceCatalog = pgTable("service_catalog", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  description: text("description"),
-  serviceType: text("service_type").notNull().default("fixed"),
-  unitPrice: text("unit_price"),
-  hourlyRate: text("hourly_rate"),
-  durationMinutes: integer("duration_minutes").default(60),
-  isTuning: boolean("is_tuning").default(false),
-  isDefault: boolean("is_default").default(false),
-  isTaxable: boolean("is_taxable").default(false),
-  isActive: boolean("is_active").default(true),
-  sortOrder: integer("sort_order").default(0),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const insertServiceCatalogSchema = createInsertSchema(serviceCatalog).omit({
-  id: true,
-  createdAt: true,
-});
-
-export type ServiceCatalogItem = typeof serviceCatalog.$inferSelect;
-export type InsertServiceCatalogItem = z.infer<typeof insertServiceCatalogSchema>;
 
 export * from "./models/auth";

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -17,13 +16,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,44 +27,32 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Plus, Pencil, Trash2, Search, Settings, ClipboardList, EyeOff, Eye } from "lucide-react";
-import type { ServiceCatalogItem, InsertServiceCatalogItem } from "@shared/schema";
+import { Plus, Pencil, Trash2, Search, Settings, ClipboardList, EyeOff, Eye, Music } from "lucide-react";
+import type { ServiceCatalogItem } from "@shared/schema";
 
-function formatDuration(minutes: number | null | undefined): string {
-  if (!minutes) return "";
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  if (h === 0) return `${m} minute${m !== 1 ? "s" : ""}`;
-  if (m === 0) return `${h} hour${h !== 1 ? "s" : ""}`;
-  return `${h} hour${h !== 1 ? "s" : ""}, ${m} minute${m !== 1 ? "s" : ""}`;
+interface CatalogForm {
+  name: string;
+  category: string;
+  defaultCost: string;
+  defaultDuration: string;
+  isTuning: boolean;
+  description: string;
+  isActive: boolean;
+  sortOrder: number;
 }
 
-function formatPrice(item: ServiceCatalogItem): string {
-  if (item.serviceType === "hourly") {
-    const rate = parseFloat(item.hourlyRate ?? "0");
-    const hrs = (item.durationMinutes ?? 60) / 60;
-    return `${hrs % 1 === 0 ? hrs : hrs.toFixed(1)} ${hrs === 1 ? "hour" : "hours"} at $${parseFloat(item.hourlyRate ?? "0").toFixed(2)}/hr`;
-  }
-  const price = parseFloat(item.unitPrice ?? "0");
-  const durationStr = item.durationMinutes ? ` — ${formatDuration(item.durationMinutes)}` : "";
-  return `1 unit at $${price.toFixed(2)} each${durationStr}`;
-}
-
-const defaultForm: Partial<InsertServiceCatalogItem> = {
+const emptyForm = (): CatalogForm => ({
   name: "",
-  description: "",
-  serviceType: "fixed",
-  unitPrice: "",
-  hourlyRate: "",
-  durationMinutes: 60,
+  category: "",
+  defaultCost: "",
+  defaultDuration: "",
   isTuning: false,
-  isDefault: false,
-  isTaxable: false,
+  description: "",
   isActive: true,
   sortOrder: 0,
-};
+});
 
-function ServiceCatalogDialog({
+function CatalogDialog({
   open,
   onOpenChange,
   item,
@@ -82,35 +62,49 @@ function ServiceCatalogDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
   item: ServiceCatalogItem | null;
-  onSave: (data: Partial<InsertServiceCatalogItem>) => void;
+  onSave: (data: CatalogForm) => void;
   isSaving: boolean;
 }) {
-  const [form, setForm] = useState<Partial<InsertServiceCatalogItem>>(
-    item ? { ...item } : { ...defaultForm }
+  const [form, setForm] = useState<CatalogForm>(
+    item
+      ? {
+          name: item.name,
+          category: item.category || "",
+          defaultCost: item.defaultCost || "",
+          defaultDuration: item.defaultDuration || "",
+          isTuning: item.isTuning ?? false,
+          description: item.description || "",
+          isActive: item.isActive ?? true,
+          sortOrder: item.sortOrder ?? 0,
+        }
+      : emptyForm()
   );
 
-  function reset(base: Partial<InsertServiceCatalogItem>) {
-    setForm(base);
-  }
-
   function handleOpen(v: boolean) {
-    if (v) reset(item ? { ...item } : { ...defaultForm });
+    if (v) {
+      setForm(
+        item
+          ? {
+              name: item.name,
+              category: item.category || "",
+              defaultCost: item.defaultCost || "",
+              defaultDuration: item.defaultDuration || "",
+              isTuning: item.isTuning ?? false,
+              description: item.description || "",
+              isActive: item.isActive ?? true,
+              sortOrder: item.sortOrder ?? 0,
+            }
+          : emptyForm()
+      );
+    }
     onOpenChange(v);
-  }
-
-  const durationH = Math.floor((form.durationMinutes ?? 60) / 60);
-  const durationM = (form.durationMinutes ?? 60) % 60;
-
-  function setDuration(h: number, m: number) {
-    const total = Math.max(0, h * 60 + m);
-    setForm(f => ({ ...f, durationMinutes: total }));
   }
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-service-catalog">
         <DialogHeader>
-          <DialogTitle>{item ? item.name : "Add Service"}</DialogTitle>
+          <DialogTitle>{item ? "Edit Service" : "Add Service"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -118,7 +112,7 @@ function ServiceCatalogDialog({
             <Label htmlFor="svc-name">Name</Label>
             <Input
               id="svc-name"
-              value={form.name ?? ""}
+              value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               placeholder="Service name"
               data-testid="input-service-name"
@@ -126,10 +120,44 @@ function ServiceCatalogDialog({
           </div>
 
           <div className="space-y-1.5">
+            <Label htmlFor="svc-category">Category</Label>
+            <Input
+              id="svc-category"
+              value={form.category}
+              onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+              placeholder="e.g. Tuning, Repair, Cleaning"
+              data-testid="input-service-category"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-cost">Default Cost</Label>
+              <Input
+                id="svc-cost"
+                value={form.defaultCost}
+                onChange={e => setForm(f => ({ ...f, defaultCost: e.target.value }))}
+                placeholder="e.g. $120.00"
+                data-testid="input-service-cost"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-duration">Default Duration</Label>
+              <Input
+                id="svc-duration"
+                value={form.defaultDuration}
+                onChange={e => setForm(f => ({ ...f, defaultDuration: e.target.value }))}
+                placeholder="e.g. 1.5 hours"
+                data-testid="input-service-duration"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="svc-desc">Description</Label>
             <Textarea
               id="svc-desc"
-              value={form.description ?? ""}
+              value={form.description}
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
               placeholder="Describe what this service includes..."
               rows={3}
@@ -137,120 +165,21 @@ function ServiceCatalogDialog({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label>Type</Label>
-              <Select
-                value={form.serviceType ?? "fixed"}
-                onValueChange={v => setForm(f => ({ ...f, serviceType: v }))}
-              >
-                <SelectTrigger data-testid="select-service-type">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="fixed">Fixed Price</SelectItem>
-                  <SelectItem value="hourly">Hourly Labor</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>
-                {form.serviceType === "hourly" ? "Hourly rate" : "Unit price"}
-              </Label>
-              <div className="flex items-center gap-1">
-                <span className="text-muted-foreground text-sm font-medium">$</span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.serviceType === "hourly" ? (form.hourlyRate ?? "") : (form.unitPrice ?? "")}
-                  onChange={e => {
-                    const val = e.target.value;
-                    if (form.serviceType === "hourly") {
-                      setForm(f => ({ ...f, hourlyRate: val }));
-                    } else {
-                      setForm(f => ({ ...f, unitPrice: val }));
-                    }
-                  }}
-                  placeholder="0.00"
-                  data-testid="input-service-price"
-                />
-              </div>
-            </div>
-          </div>
-
           <div className="space-y-1.5">
-            <Label>Duration</Label>
-            <div className="flex items-center gap-2">
-              <div className="flex flex-col gap-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-xs px-2"
-                  onClick={() => setDuration(durationH + 1, durationM)}
-                  data-testid="button-duration-plus-hour"
-                >
-                  +1h
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-xs px-2"
-                  onClick={() => setDuration(Math.max(0, durationH - 1), durationM)}
-                  data-testid="button-duration-minus-hour"
-                >
-                  -1h
-                </Button>
-              </div>
-              <div className="flex-1 text-center font-semibold text-lg">
-                {durationH > 0 && `${durationH}h`}
-                {durationM > 0 && ` ${durationM}m`}
-                {durationH === 0 && durationM === 0 && "0m"}
-              </div>
-              <div className="flex flex-col gap-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-xs px-2"
-                  onClick={() => setDuration(durationH, durationM + 5)}
-                  data-testid="button-duration-plus-5m"
-                >
-                  +5m
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-6 text-xs px-2"
-                  onClick={() => setDuration(durationH, Math.max(0, durationM - 5))}
-                  data-testid="button-duration-minus-5m"
-                >
-                  -5m
-                </Button>
-              </div>
-            </div>
+            <Label htmlFor="svc-sort">Sort Order</Label>
+            <Input
+              id="svc-sort"
+              type="number"
+              value={form.sortOrder}
+              onChange={e => setForm(f => ({ ...f, sortOrder: parseInt(e.target.value) || 0 }))}
+              data-testid="input-service-sort"
+            />
           </div>
 
           <div className="space-y-2 pt-1">
             <label className="flex items-center gap-3 cursor-pointer">
               <Checkbox
-                checked={form.isDefault ?? false}
-                onCheckedChange={v => setForm(f => ({ ...f, isDefault: !!v }))}
-                data-testid="checkbox-is-default"
-              />
-              <span className="text-sm">Select this service by default</span>
-              {form.isDefault && (
-                <Badge variant="outline" className="text-amber-600 border-amber-300 dark:text-amber-400 dark:border-amber-600 text-[10px]">DEFAULT</Badge>
-              )}
-            </label>
-
-            <label className="flex items-center gap-3 cursor-pointer">
-              <Checkbox
-                checked={form.isTuning ?? false}
+                checked={form.isTuning}
                 onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
                 data-testid="checkbox-is-tuning"
               />
@@ -262,16 +191,7 @@ function ServiceCatalogDialog({
 
             <label className="flex items-center gap-3 cursor-pointer">
               <Checkbox
-                checked={form.isTaxable ?? false}
-                onCheckedChange={v => setForm(f => ({ ...f, isTaxable: !!v }))}
-                data-testid="checkbox-is-taxable"
-              />
-              <span className="text-sm">This item is taxable</span>
-            </label>
-
-            <label className="flex items-center gap-3 cursor-pointer">
-              <Checkbox
-                checked={form.isActive !== false}
+                checked={form.isActive}
                 onCheckedChange={v => setForm(f => ({ ...f, isActive: !!v }))}
                 data-testid="checkbox-is-active"
               />
@@ -286,7 +206,7 @@ function ServiceCatalogDialog({
           </Button>
           <Button
             onClick={() => onSave(form)}
-            disabled={isSaving || !form.name?.trim()}
+            disabled={isSaving || !form.name.trim()}
             data-testid="button-service-save"
           >
             {isSaving ? "Saving…" : "Save"}
@@ -305,52 +225,42 @@ export default function SettingsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
-  const catalogUrl = showInactive
-    ? "/api/service-catalog?includeInactive=true"
-    : "/api/service-catalog";
-
   const { data: catalog, isLoading } = useQuery<ServiceCatalogItem[]>({
-    queryKey: ["/api/service-catalog", showInactive ? "all" : "active"],
-    queryFn: () => fetch(catalogUrl, { credentials: "include" }).then(r => r.json()),
+    queryKey: ["/api/service-catalog"],
   });
 
-  function invalidateCatalog() {
-    queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
-  }
-
   const createMutation = useMutation({
-    mutationFn: (data: Partial<InsertServiceCatalogItem>) =>
-      apiRequest("POST", "/api/service-catalog", data),
+    mutationFn: (data: CatalogForm) => apiRequest("POST", "/api/service-catalog", data),
     onSuccess: () => {
-      invalidateCatalog();
+      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
       setDialogOpen(false);
       toast({ title: "Service added" });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<InsertServiceCatalogItem> }) =>
+    mutationFn: ({ id, data }: { id: number; data: CatalogForm }) =>
       apiRequest("PATCH", `/api/service-catalog/${id}`, data),
     onSuccess: () => {
-      invalidateCatalog();
+      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
       setDialogOpen(false);
       toast({ title: "Service updated" });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/service-catalog/${id}`),
     onSuccess: () => {
-      invalidateCatalog();
+      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
       setDeleteId(null);
       toast({ title: "Service deleted" });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  function handleSave(data: Partial<InsertServiceCatalogItem>) {
+  function handleSave(data: CatalogForm) {
     if (editItem) {
       updateMutation.mutate({ id: editItem.id, data });
     } else {
@@ -358,9 +268,11 @@ export default function SettingsPage() {
     }
   }
 
-  const filtered = (catalog ?? []).filter(item =>
-    !search || item.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = (catalog ?? []).filter(item => {
+    const matchesSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
+    const matchesActive = showInactive || item.isActive !== false;
+    return matchesSearch && matchesActive;
+  });
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
@@ -368,7 +280,7 @@ export default function SettingsPage() {
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="text-settings-title">
             <Settings className="h-6 w-6" /> Settings
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -377,122 +289,118 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="services" data-testid="settings-tabs">
-        <TabsList className="mb-4">
-          <TabsTrigger value="services" className="gap-1.5" data-testid="tab-services">
-            <ClipboardList className="h-3.5 w-3.5" />
-            Master Service List
-          </TabsTrigger>
-        </TabsList>
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <ClipboardList className="h-4 w-4" /> Service Catalog
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Services available in the appointment completion workflow
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-48">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                className="pl-8 h-9 text-sm"
+                placeholder="Search services…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                data-testid="input-search-services"
+              />
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 gap-1.5 text-xs"
+              onClick={() => setShowInactive(v => !v)}
+              data-testid="button-toggle-inactive"
+            >
+              {showInactive ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+              {showInactive ? "Hide Inactive" : "Show Inactive"}
+            </Button>
+            <Button
+              size="sm"
+              className="h-9 gap-1.5 text-xs"
+              onClick={() => { setEditItem(null); setDialogOpen(true); }}
+              data-testid="button-add-service"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add Service
+            </Button>
+          </div>
 
-        <TabsContent value="services" className="mt-0">
-          <Card>
-            <CardContent className="pt-4 space-y-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <div className="relative flex-1 min-w-48">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    className="pl-8 h-9 text-sm"
-                    placeholder="Search services…"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    data-testid="input-search-services"
-                  />
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-9 gap-1.5 text-xs"
-                  onClick={() => setShowInactive(v => !v)}
-                  data-testid="button-toggle-inactive"
+          {isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-14 w-full rounded-md" />
+              ))}
+            </div>
+          ) : filtered.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-6">
+              {search ? "No services match your search." : "No services yet. Add your first service."}
+            </p>
+          ) : (
+            <div className="divide-y rounded-md border">
+              {filtered.map(item => (
+                <div
+                  key={item.id}
+                  className={`flex items-center gap-3 px-4 py-3 ${item.isActive === false ? "opacity-50" : ""}`}
+                  data-testid={`service-row-${item.id}`}
                 >
-                  {showInactive ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                  {showInactive ? "Hide Inactive" : "Show Inactive"}
-                </Button>
-                <Button
-                  size="sm"
-                  className="h-9 gap-1.5 text-xs"
-                  onClick={() => { setEditItem(null); setDialogOpen(true); }}
-                  data-testid="button-add-service"
-                >
-                  <Plus className="h-3.5 w-3.5" /> Add Service
-                </Button>
-              </div>
-
-              {isLoading ? (
-                <div className="space-y-2">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <Skeleton key={i} className="h-14 w-full rounded-md" />
-                  ))}
-                </div>
-              ) : filtered.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">
-                  {search ? "No services match your search." : "No services yet. Add your first service."}
-                </p>
-              ) : (
-                <div className="divide-y rounded-md border">
-                  {filtered.map(item => (
-                    <div
-                      key={item.id}
-                      className={`flex items-center gap-3 px-4 py-3 ${item.isActive === false ? "opacity-50" : ""}`}
-                      data-testid={`service-row-${item.id}`}
-                    >
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-teal-600/10 text-teal-700 dark:text-teal-400">
-                        <ClipboardList className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>{item.name}</span>
-                          {item.isDefault && (
-                            <Badge variant="outline" className="text-amber-600 border-amber-300 dark:text-amber-400 dark:border-amber-600 text-[10px] px-1.5 py-0">
-                              DEFAULT
-                            </Badge>
-                          )}
-                          {item.isTuning && (
-                            <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0">
-                              TUNING
-                            </Badge>
-                          )}
-                          {item.isActive === false && (
-                            <Badge variant="outline" className="text-muted-foreground text-[10px] px-1.5 py-0">
-                              INACTIVE
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-0.5" data-testid={`service-price-${item.id}`}>
-                          {formatPrice(item)}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => { setEditItem(item); setDialogOpen(true); }}
-                          data-testid={`button-edit-service-${item.id}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => setDeleteId(item.id)}
-                          data-testid={`button-delete-service-${item.id}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-teal-600/10 text-teal-700 dark:text-teal-400">
+                    <ClipboardList className="h-4 w-4" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>{item.name}</span>
+                      {item.isTuning && (
+                        <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0 gap-0.5">
+                          <Music className="h-2.5 w-2.5" /> TUNING
+                        </Badge>
+                      )}
+                      {item.isActive === false && (
+                        <Badge variant="outline" className="text-muted-foreground text-[10px] px-1.5 py-0">
+                          INACTIVE
+                        </Badge>
+                      )}
+                      {item.category && (
+                        <span className="text-xs text-muted-foreground">{item.category}</span>
+                      )}
                     </div>
-                  ))}
+                    <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
+                      {item.defaultCost && <span data-testid={`service-cost-${item.id}`}>{item.defaultCost}</span>}
+                      {item.defaultDuration && <span data-testid={`service-duration-${item.id}`}>{item.defaultDuration}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => { setEditItem(item); setDialogOpen(true); }}
+                      data-testid={`button-edit-service-${item.id}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => setDeleteId(item.id)}
+                      data-testid={`button-delete-service-${item.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
-      <ServiceCatalogDialog
+      <CatalogDialog
         open={dialogOpen}
         onOpenChange={v => { setDialogOpen(v); if (!v) setEditItem(null); }}
         item={editItem}
@@ -500,19 +408,19 @@ export default function SettingsPage() {
         isSaving={isSaving}
       />
 
-      <AlertDialog open={deleteId !== null} onOpenChange={v => !v && setDeleteId(null)}>
-        <AlertDialogContent data-testid="dialog-delete-service">
+      <AlertDialog open={deleteId !== null} onOpenChange={v => { if (!v) setDeleteId(null); }}>
+        <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete service?</AlertDialogTitle>
+            <AlertDialogTitle>Delete Service</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove the service from your catalog. It won't affect existing service records.
+              Are you sure you want to delete this service from the catalog? This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel data-testid="button-delete-cancel">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deleteId !== null && deleteMutation.mutate(deleteId)}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteMutation.isPending}
               data-testid="button-delete-confirm"
             >
               Delete

@@ -498,6 +498,100 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/appointments/:id/complete", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getAppointment(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Appointment not found" });
+      const { result, clientNotes, pianoRecords, miscServices } = req.body;
+      const allowedResults = ["completed", "no-show", "cancelled"];
+      const sanitizedResult = allowedResults.includes(result) ? result : "completed";
+      const customerPianos = await storage.getPianos(existing.customerId);
+      const customerPianoIds = new Set(customerPianos.map(p => p.id));
+      interface PianoRecordPayload {
+        pianoId: number | null | undefined;
+        isTuning: boolean;
+        notes: string;
+        humidity: string;
+        temperature: string;
+        services: string;
+      }
+      const sanitizedPianoRecords = (Array.isArray(pianoRecords) ? pianoRecords : []).filter((rec: PianoRecordPayload) => {
+        if (rec.pianoId === null || rec.pianoId === undefined) return true;
+        return customerPianoIds.has(rec.pianoId);
+      });
+      await storage.completeAppointment(id, {
+        result: sanitizedResult,
+        clientNotes: clientNotes || "",
+        pianoRecords: sanitizedPianoRecords,
+        miscServices: miscServices || "[]",
+        appointmentDate: existing.date,
+        customerId: existing.customerId,
+      });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/service-catalog", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      await storage.seedServiceCatalog(userId);
+      const catalog = await storage.getServiceCatalog(userId);
+      res.json(catalog);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/service-catalog", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const parsed = insertServiceCatalogSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const item = await storage.createServiceCatalogItem(parsed.data, userId);
+      res.status(201).json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/service-catalog/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const updateSchema = insertServiceCatalogSchema.partial();
+      const parsed = updateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      }
+      const item = await storage.updateServiceCatalogItem(id, parsed.data, userId);
+      if (!item) return res.status(404).json({ message: "Item not found" });
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/service-catalog/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const deleted = await storage.deleteServiceCatalogItem(id, userId);
+      if (!deleted) return res.status(404).json({ message: "Item not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/calendar-notes", async (req, res) => {
     try {
       const userId = getUserId(req);

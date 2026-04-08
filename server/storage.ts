@@ -4,19 +4,21 @@ import {
   customers,
   pianos,
   serviceRecords,
+  serviceCatalog,
   appointments,
   calendarNotes,
   calendarEvents,
   trips,
   tripAppointments,
   invoices,
-  serviceCatalog,
   type Customer,
   type InsertCustomer,
   type Piano,
   type InsertPiano,
   type ServiceRecord,
   type InsertServiceRecord,
+  type ServiceCatalogItem,
+  type InsertServiceCatalogItem,
   type Appointment,
   type InsertAppointment,
   type CalendarNote,
@@ -29,8 +31,6 @@ import {
   type InsertTripAppointment,
   type Invoice,
   type InsertInvoice,
-  type ServiceCatalogItem,
-  type InsertServiceCatalogItem,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -84,11 +84,27 @@ export interface IStorage {
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<boolean>;
   getNextInvoiceNumber(userId: string): Promise<number>;
-  getServiceCatalog(includeInactive?: boolean): Promise<ServiceCatalogItem[]>;
-  createServiceCatalogItem(item: InsertServiceCatalogItem): Promise<ServiceCatalogItem>;
-  updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>): Promise<ServiceCatalogItem | undefined>;
-  deleteServiceCatalogItem(id: number): Promise<boolean>;
-  seedServiceCatalogIfEmpty(): Promise<void>;
+  getServiceCatalog(userId: string): Promise<ServiceCatalogItem[]>;
+  getServiceCatalogItem(id: number): Promise<ServiceCatalogItem | undefined>;
+  createServiceCatalogItem(item: InsertServiceCatalogItem, userId: string): Promise<ServiceCatalogItem>;
+  updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>, userId?: string): Promise<ServiceCatalogItem | undefined>;
+  deleteServiceCatalogItem(id: number, userId?: string): Promise<boolean>;
+  seedServiceCatalog(userId: string): Promise<void>;
+  completeAppointment(appointmentId: number, data: {
+    result: string;
+    clientNotes: string;
+    pianoRecords: Array<{
+      pianoId: number | null;
+      isTuning: boolean;
+      notes: string;
+      humidity: string;
+      temperature: string;
+      services: string;
+    }>;
+    miscServices: string;
+    appointmentDate: string;
+    customerId: number;
+  }): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -385,6 +401,123 @@ export class DatabaseStorage implements IStorage {
       if (!isNaN(n) && n > max) max = n;
     }
     return max + 1;
+  }
+
+  async getServiceCatalog(userId: string): Promise<ServiceCatalogItem[]> {
+    return db.select().from(serviceCatalog)
+      .where(eq(serviceCatalog.userId, userId))
+      .orderBy(serviceCatalog.sortOrder, serviceCatalog.name);
+  }
+
+  async getServiceCatalogItem(id: number): Promise<ServiceCatalogItem | undefined> {
+    const [item] = await db.select().from(serviceCatalog).where(eq(serviceCatalog.id, id));
+    return item;
+  }
+
+  async createServiceCatalogItem(item: InsertServiceCatalogItem, userId: string): Promise<ServiceCatalogItem> {
+    const [created] = await db.insert(serviceCatalog).values({ ...item, userId }).returning();
+    return created;
+  }
+
+  async updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>, userId?: string): Promise<ServiceCatalogItem | undefined> {
+    const condition = userId
+      ? and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId))
+      : eq(serviceCatalog.id, id);
+    const [updated] = await db.update(serviceCatalog).set(data).where(condition).returning();
+    return updated;
+  }
+
+  async deleteServiceCatalogItem(id: number, userId?: string): Promise<boolean> {
+    const condition = userId
+      ? and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId))
+      : eq(serviceCatalog.id, id);
+    const result = await db.delete(serviceCatalog).where(condition).returning();
+    return result.length > 0;
+  }
+
+  async seedServiceCatalog(userId: string): Promise<void> {
+    const existing = await this.getServiceCatalog(userId);
+    if (existing.length > 0) return;
+    const seeds = [
+      { name: "Tuning", category: "Tuning", defaultCost: "$150", defaultDuration: "1 hour", isTuning: true, sortOrder: 0 },
+      { name: "Pitch Raise", category: "Tuning", defaultCost: "$75", defaultDuration: "30 min", isTuning: true, sortOrder: 1 },
+      { name: "Regulation", category: "Maintenance", defaultCost: "$200", defaultDuration: "2 hours", isTuning: false, sortOrder: 2 },
+      { name: "Voicing", category: "Maintenance", defaultCost: "$175", defaultDuration: "1.5 hours", isTuning: false, sortOrder: 3 },
+      { name: "Minor Repair", category: "Repair", defaultCost: "$100", defaultDuration: "1 hour", isTuning: false, sortOrder: 4 },
+      { name: "Major Repair", category: "Repair", defaultCost: "$300", defaultDuration: "4 hours", isTuning: false, sortOrder: 5 },
+      { name: "Cleaning/Inspection", category: "Maintenance", defaultCost: "$75", defaultDuration: "45 min", isTuning: false, sortOrder: 6 },
+      { name: "Estimate", category: "Consultation", defaultCost: "$0", defaultDuration: "30 min", isTuning: false, sortOrder: 7 },
+    ];
+    for (const seed of seeds) {
+      await db.insert(serviceCatalog).values({ ...seed, userId, isActive: true });
+    }
+  }
+
+  async completeAppointment(appointmentId: number, data: {
+    result: string;
+    clientNotes: string;
+    pianoRecords: Array<{
+      pianoId: number | null;
+      isTuning: boolean;
+      notes: string;
+      humidity: string;
+      temperature: string;
+      services: string;
+    }>;
+    miscServices: string;
+    appointmentDate: string;
+    customerId: number;
+  }): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.update(appointments)
+        .set({ status: data.result, notes: data.clientNotes || null })
+        .where(eq(appointments.id, appointmentId));
+
+      for (const rec of data.pianoRecords) {
+        const serviceType = rec.isTuning ? "tuning" : "service";
+        await tx.insert(serviceRecords).values({
+          customerId: data.customerId,
+          pianoId: rec.pianoId ?? null,
+          serviceDate: data.appointmentDate,
+          serviceType,
+          notes: rec.notes || null,
+          cost: null,
+          humidity: rec.humidity || null,
+          temperature: rec.temperature || null,
+          services: rec.services || "[]",
+          isTuning: rec.isTuning,
+          appointmentId,
+        });
+
+        if (rec.isTuning && rec.pianoId) {
+          await tx.update(pianos)
+            .set({ lastTuned: data.appointmentDate })
+            .where(eq(pianos.id, rec.pianoId));
+        }
+      }
+
+      if (data.miscServices && data.miscServices !== "[]") {
+        await tx.insert(serviceRecords).values({
+          customerId: data.customerId,
+          pianoId: null,
+          serviceDate: data.appointmentDate,
+          serviceType: "misc",
+          notes: null,
+          cost: null,
+          humidity: null,
+          temperature: null,
+          services: data.miscServices,
+          isTuning: false,
+          appointmentId,
+        });
+      }
+
+      await tx.update(customers)
+        .set({ lastContacted: data.appointmentDate })
+        .where(eq(customers.id, data.customerId));
+    });
+
+    await this.syncCustomerFromPianos(data.customerId);
   }
 
   async syncCustomerFromPianos(customerId: number): Promise<void> {
