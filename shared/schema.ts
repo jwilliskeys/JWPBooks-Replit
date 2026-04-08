@@ -69,6 +69,7 @@ export const serviceCatalog = pgTable("service_catalog", {
   defaultCost: text("default_cost"),
   defaultDuration: text("default_duration"),
   isTuning: boolean("is_tuning").default(false),
+  isDefault: boolean("is_default").default(false),
   description: text("description"),
   isActive: boolean("is_active").default(true),
   sortOrder: integer("sort_order").default(0),

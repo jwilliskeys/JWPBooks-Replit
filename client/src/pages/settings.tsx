@@ -10,6 +10,13 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -29,16 +36,32 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Pencil, Trash2, Search, Settings, ClipboardList, Music,
-  ChevronUp, ChevronDown, FolderPlus,
+  ChevronUp, ChevronDown, FolderPlus, Minus,
 } from "lucide-react";
 import type { ServiceCatalogItem, ServiceGroup } from "@shared/schema";
+
+function parseDurationHours(s: string): number {
+  if (!s) return 1.0;
+  const numMatch = s.match(/(\d+(?:\.\d+)?)/);
+  if (!numMatch) return 1.0;
+  const val = parseFloat(numMatch[1]);
+  const isMin = /min/i.test(s);
+  const hours = isMin ? val / 60 : val;
+  return Math.max(0.5, Math.round(hours * 2) / 2);
+}
+
+function formatDurationHours(h: number): string {
+  return `${h.toFixed(1)} hr`;
+}
 
 interface CatalogForm {
   name: string;
   category: string;
   defaultCost: string;
   defaultDuration: string;
+  durationHours: number;
   isTuning: boolean;
+  isDefault: boolean;
   description: string;
   sortOrder: number;
 }
@@ -47,8 +70,10 @@ const emptyCatalogForm = (category = "", sortOrder = 0): CatalogForm => ({
   name: "",
   category,
   defaultCost: "",
-  defaultDuration: "",
+  defaultDuration: "1.0 hr",
+  durationHours: 1.0,
   isTuning: false,
+  isDefault: false,
   description: "",
   sortOrder,
 });
@@ -58,6 +83,7 @@ function ServiceDialog({
   onOpenChange,
   item,
   groupName,
+  groups,
   nextSortOrder,
   onSave,
   isSaving,
@@ -66,41 +92,41 @@ function ServiceDialog({
   onOpenChange: (v: boolean) => void;
   item: ServiceCatalogItem | null;
   groupName: string;
+  groups: ServiceGroup[];
   nextSortOrder: number;
   onSave: (data: CatalogForm) => void;
   isSaving: boolean;
 }) {
-  const [form, setForm] = useState<CatalogForm>(
-    item
-      ? {
-          name: item.name,
-          category: item.category || groupName,
-          defaultCost: item.defaultCost || "",
-          defaultDuration: item.defaultDuration || "",
-          isTuning: item.isTuning ?? false,
-          description: item.description || "",
-          sortOrder: item.sortOrder ?? 0,
-        }
-      : emptyCatalogForm(groupName, nextSortOrder)
-  );
+  function buildForm(): CatalogForm {
+    if (item) {
+      const hours = parseDurationHours(item.defaultDuration || "");
+      return {
+        name: item.name,
+        category: item.category || groupName,
+        defaultCost: item.defaultCost || "",
+        defaultDuration: formatDurationHours(hours),
+        durationHours: hours,
+        isTuning: item.isTuning ?? false,
+        isDefault: item.isDefault ?? false,
+        description: item.description || "",
+        sortOrder: item.sortOrder ?? 0,
+      };
+    }
+    return emptyCatalogForm(groupName, nextSortOrder);
+  }
+
+  const [form, setForm] = useState<CatalogForm>(buildForm);
 
   function handleOpen(v: boolean) {
-    if (v) {
-      setForm(
-        item
-          ? {
-              name: item.name,
-              category: item.category || groupName,
-              defaultCost: item.defaultCost || "",
-              defaultDuration: item.defaultDuration || "",
-              isTuning: item.isTuning ?? false,
-              description: item.description || "",
-              sortOrder: item.sortOrder ?? 0,
-            }
-          : emptyCatalogForm(groupName, nextSortOrder)
-      );
-    }
+    if (v) setForm(buildForm());
     onOpenChange(v);
+  }
+
+  function adjustDuration(delta: number) {
+    setForm(f => {
+      const next = Math.max(0.5, Math.round((f.durationHours + delta) * 2) / 2);
+      return { ...f, durationHours: next, defaultDuration: formatDurationHours(next) };
+    });
   }
 
   return (
@@ -108,9 +134,6 @@ function ServiceDialog({
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-service-catalog">
         <DialogHeader>
           <DialogTitle>{item ? "Edit Service" : "Add Service"}</DialogTitle>
-          {groupName && (
-            <p className="text-xs text-muted-foreground">Group: <span className="font-medium">{groupName}</span></p>
-          )}
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -120,9 +143,26 @@ function ServiceDialog({
               id="svc-name"
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="Service name"
               data-testid="input-service-name"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="svc-group">Group</Label>
+            <Select
+              value={form.category}
+              onValueChange={v => setForm(f => ({ ...f, category: v }))}
+            >
+              <SelectTrigger id="svc-group" data-testid="select-service-group">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {groups.map(g => (
+                  <SelectItem key={g.id} value={g.name}>{g.name}</SelectItem>
+                ))}
+                <SelectItem value="">Uncategorized</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -132,19 +172,37 @@ function ServiceDialog({
                 id="svc-cost"
                 value={form.defaultCost}
                 onChange={e => setForm(f => ({ ...f, defaultCost: e.target.value }))}
-                placeholder="e.g. $120.00"
                 data-testid="input-service-cost"
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="svc-duration">Default Duration</Label>
-              <Input
-                id="svc-duration"
-                value={form.defaultDuration}
-                onChange={e => setForm(f => ({ ...f, defaultDuration: e.target.value }))}
-                placeholder="e.g. 1.5 hours"
-                data-testid="input-service-duration"
-              />
+              <Label>Default Duration</Label>
+              <div className="flex items-center gap-1" data-testid="input-service-duration">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  onClick={() => adjustDuration(-0.5)}
+                  disabled={form.durationHours <= 0.5}
+                  data-testid="button-duration-minus"
+                >
+                  <Minus className="h-3.5 w-3.5" />
+                </Button>
+                <div className="flex-1 h-9 flex items-center justify-center border rounded-md text-sm font-medium bg-background">
+                  {formatDurationHours(form.durationHours)}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  onClick={() => adjustDuration(0.5)}
+                  data-testid="button-duration-plus"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -154,7 +212,6 @@ function ServiceDialog({
               id="svc-desc"
               value={form.description}
               onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-              placeholder="Describe what this service includes…"
               rows={3}
               data-testid="input-service-description"
             />
@@ -169,6 +226,18 @@ function ServiceDialog({
             <span className="text-sm">This item is a tuning</span>
             {form.isTuning && (
               <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px]">TUNING</Badge>
+            )}
+          </label>
+
+          <label className="flex items-center gap-3 cursor-pointer">
+            <Checkbox
+              checked={form.isDefault}
+              onCheckedChange={v => setForm(f => ({ ...f, isDefault: !!v }))}
+              data-testid="checkbox-is-default"
+            />
+            <span className="text-sm">Default service</span>
+            {form.isDefault && (
+              <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px]">DEFAULT</Badge>
             )}
           </label>
         </div>
@@ -222,7 +291,6 @@ function GroupDialog({
             id="group-name"
             value={name}
             onChange={e => setName(e.target.value)}
-            placeholder="e.g. Field Service"
             className="mt-1.5"
             data-testid="input-group-name"
             onKeyDown={e => { if (e.key === "Enter" && name.trim()) onSave(name.trim()); }}
@@ -298,8 +366,10 @@ export default function SettingsPage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  type CatalogPayload = Omit<CatalogForm, "isDefault" | "durationHours">;
+
   const createItemMutation = useMutation({
-    mutationFn: (data: CatalogForm) => apiRequest("POST", "/api/service-catalog", data),
+    mutationFn: (data: CatalogPayload) => apiRequest("POST", "/api/service-catalog", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
       setServiceDialogOpen(false);
@@ -309,7 +379,7 @@ export default function SettingsPage() {
   });
 
   const updateItemMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<CatalogForm> }) =>
+    mutationFn: ({ id, data }: { id: number; data: Partial<CatalogPayload> }) =>
       apiRequest("PATCH", `/api/service-catalog/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
@@ -328,11 +398,32 @@ export default function SettingsPage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const setDefaultMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/service-catalog/${id}/set-default`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   function handleSaveService(data: CatalogForm) {
+    const { isDefault, durationHours: _dh, ...rest } = data;
     if (editItem) {
-      updateItemMutation.mutate({ id: editItem.id, data });
+      updateItemMutation.mutate({ id: editItem.id, data: rest }, {
+        onSuccess: () => {
+          if (isDefault) setDefaultMutation.mutate(editItem.id);
+        },
+      });
     } else {
-      createItemMutation.mutate(data);
+      createItemMutation.mutate(rest, {
+        onSuccess: async () => {
+          if (isDefault) {
+            const updated = await queryClient.fetchQuery<ServiceCatalogItem[]>({ queryKey: ["/api/service-catalog"] });
+            const newItem = updated.find(i => i.name === data.name && i.category === data.category);
+            if (newItem) setDefaultMutation.mutate(newItem.id);
+          }
+        },
+      });
     }
   }
 
@@ -399,7 +490,7 @@ export default function SettingsPage() {
     ? uncategorized.filter(i => i.name.toLowerCase().includes(search.toLowerCase()))
     : uncategorized;
 
-  const isSavingItem = createItemMutation.isPending || updateItemMutation.isPending;
+  const isSavingItem = createItemMutation.isPending || updateItemMutation.isPending || setDefaultMutation.isPending;
   const isSavingGroup = createGroupMutation.isPending || updateGroupMutation.isPending;
 
   return (
@@ -556,6 +647,11 @@ export default function SettingsPage() {
                                       <Music className="h-2.5 w-2.5" /> TUNING
                                     </Badge>
                                   )}
+                                  {item.isDefault && (
+                                    <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px] px-1.5 py-0" data-testid={`badge-default-${item.id}`}>
+                                      DEFAULT
+                                    </Badge>
+                                  )}
                                 </div>
                                 <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
                                   {item.defaultCost && <span data-testid={`service-cost-${item.id}`}>{item.defaultCost}</span>}
@@ -667,6 +763,7 @@ export default function SettingsPage() {
         onOpenChange={v => { setServiceDialogOpen(v); if (!v) setEditItem(null); }}
         item={editItem}
         groupName={activeGroupName}
+        groups={groups}
         nextSortOrder={nextItemOrder}
         onSave={handleSaveService}
         isSaving={isSavingItem}

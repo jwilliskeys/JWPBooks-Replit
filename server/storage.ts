@@ -98,6 +98,7 @@ export interface IStorage {
   updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>, userId?: string): Promise<ServiceCatalogItem | undefined>;
   deleteServiceCatalogItem(id: number, userId?: string): Promise<boolean>;
   seedServiceCatalog(userId: string): Promise<void>;
+  setDefaultService(id: number, userId: string): Promise<ServiceCatalogItem | undefined>;
   completeAppointment(appointmentId: number, data: {
     result: string;
     clientNotes: string;
@@ -500,18 +501,29 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getServiceCatalog(userId);
     if (existing.length > 0) return;
     const seeds = [
-      { name: "Tuning", category: "Field Service", defaultCost: "$150", defaultDuration: "1 hour", isTuning: true, sortOrder: 0 },
-      { name: "Pitch Raise", category: "Field Service", defaultCost: "$75", defaultDuration: "30 min", isTuning: true, sortOrder: 1 },
-      { name: "Regulation", category: "Shopwork", defaultCost: "$200", defaultDuration: "2 hours", isTuning: false, sortOrder: 0 },
-      { name: "Voicing", category: "Shopwork", defaultCost: "$175", defaultDuration: "1.5 hours", isTuning: false, sortOrder: 1 },
-      { name: "Minor Repair", category: "Shopwork", defaultCost: "$100", defaultDuration: "1 hour", isTuning: false, sortOrder: 2 },
-      { name: "Major Repair", category: "Shopwork", defaultCost: "$300", defaultDuration: "4 hours", isTuning: false, sortOrder: 3 },
-      { name: "Cleaning/Inspection", category: "Inspection", defaultCost: "$75", defaultDuration: "45 min", isTuning: false, sortOrder: 0 },
-      { name: "Estimate", category: "Inspection", defaultCost: "$0", defaultDuration: "30 min", isTuning: false, sortOrder: 1 },
+      { name: "Tuning", category: "Field Service", defaultCost: "$150", defaultDuration: "1.0 hr", isTuning: true, isDefault: true, sortOrder: 0 },
+      { name: "Pitch Raise", category: "Field Service", defaultCost: "$75", defaultDuration: "0.5 hr", isTuning: true, isDefault: false, sortOrder: 1 },
+      { name: "Regulation", category: "Shopwork", defaultCost: "$200", defaultDuration: "2.0 hr", isTuning: false, isDefault: false, sortOrder: 0 },
+      { name: "Voicing", category: "Shopwork", defaultCost: "$175", defaultDuration: "1.5 hr", isTuning: false, isDefault: false, sortOrder: 1 },
+      { name: "Minor Repair", category: "Shopwork", defaultCost: "$100", defaultDuration: "1.0 hr", isTuning: false, isDefault: false, sortOrder: 2 },
+      { name: "Major Repair", category: "Shopwork", defaultCost: "$300", defaultDuration: "4.0 hr", isTuning: false, isDefault: false, sortOrder: 3 },
+      { name: "Cleaning/Inspection", category: "Inspection", defaultCost: "$75", defaultDuration: "1.0 hr", isTuning: false, isDefault: false, sortOrder: 0 },
+      { name: "Estimate", category: "Inspection", defaultCost: "$0", defaultDuration: "0.5 hr", isTuning: false, isDefault: false, sortOrder: 1 },
     ];
     for (const seed of seeds) {
       await db.insert(serviceCatalog).values({ ...seed, userId, isActive: true }).onConflictDoNothing();
     }
+  }
+
+  async setDefaultService(id: number, userId: string): Promise<ServiceCatalogItem | undefined> {
+    await db.update(serviceCatalog)
+      .set({ isDefault: false })
+      .where(eq(serviceCatalog.userId, userId));
+    const [updated] = await db.update(serviceCatalog)
+      .set({ isDefault: true })
+      .where(and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId)))
+      .returning();
+    return updated;
   }
 
   async completeAppointment(appointmentId: number, data: {

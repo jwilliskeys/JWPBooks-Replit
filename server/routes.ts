@@ -645,6 +645,19 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/service-catalog/:id/set-default", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const item = await storage.setDefaultService(id, userId);
+      if (!item) return res.status(404).json({ message: "Item not found" });
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/calendar-notes", async (req, res) => {
     try {
       const userId = getUserId(req);
