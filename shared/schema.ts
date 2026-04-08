@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, serial, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, serial, boolean, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -59,7 +59,7 @@ export const serviceGroups = pgTable("service_groups", {
   name: text("name").notNull(),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [unique("service_groups_user_name_unique").on(table.userId, table.name)]);
 
 export const serviceCatalog = pgTable("service_catalog", {
   id: serial("id").primaryKey(),
@@ -73,7 +73,7 @@ export const serviceCatalog = pgTable("service_catalog", {
   isActive: boolean("is_active").default(true),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [unique("service_catalog_user_name_unique").on(table.userId, table.name)]);
 
 export const appointments = pgTable("appointments", {
   id: serial("id").primaryKey(),
