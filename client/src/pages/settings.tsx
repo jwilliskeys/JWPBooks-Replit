@@ -50,6 +50,7 @@ import {
   SortableContext,
   useSortable,
   verticalListSortingStrategy,
+  arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { ServiceCatalogItem, ServiceGroup } from "@shared/schema";
@@ -553,11 +554,15 @@ export default function SettingsPage() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const sorted = [...groupItems].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    const activeItem = sorted.find(i => i.id === active.id);
-    const overItem = sorted.find(i => i.id === over.id);
-    if (!activeItem || !overItem) return;
-    updateItemMutation.mutate({ id: activeItem.id, data: { sortOrder: overItem.sortOrder ?? 0 } });
-    updateItemMutation.mutate({ id: overItem.id, data: { sortOrder: activeItem.sortOrder ?? 0 } });
+    const oldIndex = sorted.findIndex(i => i.id === active.id);
+    const newIndex = sorted.findIndex(i => i.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(sorted, oldIndex, newIndex);
+    reordered.forEach((item, idx) => {
+      if ((item.sortOrder ?? 0) !== idx) {
+        updateItemMutation.mutate({ id: item.id, data: { sortOrder: idx } });
+      }
+    });
   }
 
   function openAddItem(groupName: string, groupItems: ServiceCatalogItem[]) {
