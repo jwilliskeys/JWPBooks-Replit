@@ -539,6 +539,8 @@ export async function registerRoutes(
   app.get("/api/service-catalog", async (req, res) => {
     try {
       const userId = getUserId(req);
+      await storage.seedServiceCatalog(userId);
+      await storage.seedServiceGroups(userId);
       const catalog = await storage.getServiceCatalog(userId);
       res.json(catalog);
     } catch (error: any) {
