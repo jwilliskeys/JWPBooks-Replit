@@ -235,7 +235,7 @@ function ServiceDialog({
               onCheckedChange={v => setForm(f => ({ ...f, isDefault: !!v }))}
               data-testid="checkbox-is-default"
             />
-            <span className="text-sm">Default service</span>
+            <span className="text-sm">Mark as default service</span>
             {form.isDefault && (
               <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px]">DEFAULT</Badge>
             )}

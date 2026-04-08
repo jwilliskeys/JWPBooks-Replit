@@ -519,14 +519,16 @@ export class DatabaseStorage implements IStorage {
     const [target] = await db.select().from(serviceCatalog)
       .where(and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId)));
     if (!target) return undefined;
-    await db.update(serviceCatalog)
-      .set({ isDefault: false })
-      .where(eq(serviceCatalog.userId, userId));
-    const [updated] = await db.update(serviceCatalog)
-      .set({ isDefault: true })
-      .where(and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId)))
-      .returning();
-    return updated;
+    return db.transaction(async (tx) => {
+      await tx.update(serviceCatalog)
+        .set({ isDefault: false })
+        .where(eq(serviceCatalog.userId, userId));
+      const [updated] = await tx.update(serviceCatalog)
+        .set({ isDefault: true })
+        .where(and(eq(serviceCatalog.id, id), eq(serviceCatalog.userId, userId)))
+        .returning();
+      return updated;
+    });
   }
 
   async completeAppointment(appointmentId: number, data: {
