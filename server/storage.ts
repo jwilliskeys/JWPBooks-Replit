@@ -437,6 +437,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async seedServiceGroups(userId: string): Promise<void> {
+    const existing = await this.getServiceGroups(userId);
+    if (existing.length > 0) return;
     const groups = [
       { name: "Field Service", sortOrder: 0 },
       { name: "Shopwork", sortOrder: 1 },
@@ -495,6 +497,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async seedServiceCatalog(userId: string): Promise<void> {
+    const existing = await this.getServiceCatalog(userId);
+    if (existing.length > 0) return;
     const seeds = [
       { name: "Tuning", category: "Field Service", defaultCost: "$150", defaultDuration: "1 hour", isTuning: true, sortOrder: 0 },
       { name: "Pitch Raise", category: "Field Service", defaultCost: "$75", defaultDuration: "30 min", isTuning: true, sortOrder: 1 },
