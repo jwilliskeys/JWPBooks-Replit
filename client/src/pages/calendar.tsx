@@ -55,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano } from "@shared/schema";
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
+import { ServicePicker } from "@/components/service-picker";
 
 function parseMDYY(dateStr: string): Date | null {
   if (!dateStr) return null;
@@ -277,9 +278,10 @@ export default function CalendarPage() {
   const [apptTimeMinutes, setApptTimeMinutes] = useState(DEFAULT_TIME_MINUTES);
   const [apptDurationMinutes, setApptDurationMinutes] = useState(DEFAULT_DURATION_MINUTES);
   const [apptServices, setApptServices] = useState("");
-  const [apptPrice, setApptPrice] = useState("$180");
+  const [apptPrice, setApptPrice] = useState("");
   const [apptNotes, setApptNotes] = useState("");
-  const [apptIsTuning, setApptIsTuning] = useState(true);
+  const [apptIsTuning, setApptIsTuning] = useState(false);
+  const [apptSelectedNames, setApptSelectedNames] = useState<string[]>([]);
   const [editingApptId, setEditingApptId] = useState<number | null>(null);
   const [customerComboOpen, setCustomerComboOpen] = useState(false);
   const [customerSearch, setCustomerSearch] = useState("");
@@ -509,9 +511,10 @@ export default function CalendarPage() {
     setApptTimeMinutes(DEFAULT_TIME_MINUTES);
     setApptDurationMinutes(DEFAULT_DURATION_MINUTES);
     setApptServices("");
-    setApptPrice("$180");
+    setApptPrice("");
     setApptNotes("");
-    setApptIsTuning(true);
+    setApptIsTuning(false);
+    setApptSelectedNames([]);
     setEditingApptId(null);
     setCustomerSearch("");
     setEvTitle("");
@@ -536,8 +539,12 @@ export default function CalendarPage() {
     setApptPianoId(appt.pianoId ?? null);
     setApptTimeMinutes(parseTimeString(appt.time));
     setApptDurationMinutes(parseDurationString(appt.duration ?? ""));
+    const existingNames = appt.servicesRequested
+      ? appt.servicesRequested.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    setApptSelectedNames(existingNames);
     setApptServices(appt.servicesRequested ?? "");
-    setApptPrice(appt.priceEstimate ?? "$180");
+    setApptPrice(appt.priceEstimate ?? "");
     setApptNotes(appt.notes ?? "");
     setApptIsTuning(appt.isTuning ?? false);
     const parsed = parseMDYY(appt.date);
@@ -1290,23 +1297,15 @@ export default function CalendarPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Checkbox
-                        id="appt-is-tuning"
-                        checked={apptIsTuning}
-                        onCheckedChange={(v) => setApptIsTuning(!!v)}
-                        data-testid="checkbox-appt-is-tuning"
-                      />
-                      <Label htmlFor="appt-is-tuning" className="cursor-pointer whitespace-nowrap">Tuning</Label>
-                    </div>
-                    <Label className="flex-1">Services Requested</Label>
-                  </div>
-                  <Input
-                    placeholder="e.g. Tuning, regulation..."
-                    value={apptServices}
-                    onChange={(e) => setApptServices(e.target.value)}
-                    data-testid="input-appt-services"
+                  <Label>Services</Label>
+                  <ServicePicker
+                    value={apptSelectedNames}
+                    onChange={(names, isTuning, totalCost) => {
+                      setApptSelectedNames(names);
+                      setApptServices(names.join(", "));
+                      setApptIsTuning(isTuning);
+                      if (totalCost > 0) setApptPrice(`$${totalCost.toFixed(0)}`);
+                    }}
                   />
                 </div>
 

@@ -44,6 +44,7 @@ import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { ServicePicker } from "@/components/service-picker";
 import type { Trip, TripAppointment, Customer, Piano } from "@shared/schema";
 import {
   getNearbyCities,
@@ -473,14 +474,17 @@ export default function SlcSchedule() {
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   const [apptTime, setApptTime] = useState("8:00 AM");
   const [apptDuration, setApptDuration] = useState("2 hours");
-  const [apptServices, setApptServices] = useState("Tuning");
-  const [apptPrice, setApptPrice] = useState("$180");
+  const [apptServices, setApptServices] = useState("");
+  const [apptPrice, setApptPrice] = useState("");
   const [apptNotes, setApptNotes] = useState("");
+  const [apptSelectedNames, setApptSelectedNames] = useState<string[]>([]);
+  const [addDialogKey, setAddDialogKey] = useState(0);
   const [conflictError, setConflictError] = useState("");
   const [editingAppt, setEditingAppt] = useState<TripAppointment | null>(null);
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
   const [editServices, setEditServices] = useState("");
+  const [editSelectedNames, setEditSelectedNames] = useState<string[]>([]);
   const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editConflictError, setEditConflictError] = useState("");
@@ -644,8 +648,12 @@ export default function SlcSchedule() {
     setEditingAppt(appt);
     setEditTime(roundToSlot(appt.time || "8:00 AM"));
     setEditDuration(roundToDurationSlot(appt.duration || "2 hours"));
-    setEditServices(appt.servicesRequested || "Tuning");
-    setEditPrice(appt.priceEstimate || "$180");
+    const existingNames = appt.servicesRequested
+      ? appt.servicesRequested.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+    setEditSelectedNames(existingNames);
+    setEditServices(appt.servicesRequested || "");
+    setEditPrice(appt.priceEstimate || "");
     setEditNotes(appt.notes || "");
     setEditConflictError("");
   }
@@ -718,8 +726,10 @@ export default function SlcSchedule() {
     setSelectedCustomerId("");
     setCustomerSearch("");
     setApptDuration("2 hours");
-    setApptServices("Tuning");
-    setApptPrice("$180");
+    setApptServices("");
+    setApptPrice("");
+    setApptSelectedNames([]);
+    setAddDialogKey((k) => k + 1);
     setApptNotes("");
     setConflictError("");
 
@@ -1111,13 +1121,15 @@ export default function SlcSchedule() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="appt-services">Services Requested</Label>
-              <Input
-                id="appt-services"
-                value={apptServices}
-                onChange={(e) => setApptServices(e.target.value)}
-                placeholder="Tuning, voicing..."
-                data-testid="input-appt-services"
+              <Label>Services</Label>
+              <ServicePicker
+                key={addDialogKey}
+                value={apptSelectedNames}
+                onChange={(names, _isTuning, totalCost) => {
+                  setApptSelectedNames(names);
+                  setApptServices(names.join(", "));
+                  if (totalCost > 0) setApptPrice(`$${totalCost.toFixed(0)}`);
+                }}
               />
             </div>
             <div className="space-y-2">
@@ -1215,13 +1227,14 @@ export default function SlcSchedule() {
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="edit-services">Services Requested</Label>
-                <Input
-                  id="edit-services"
-                  value={editServices}
-                  onChange={(e) => setEditServices(e.target.value)}
-                  placeholder="Tuning, voicing..."
-                  data-testid="input-edit-services"
+                <Label>Services</Label>
+                <ServicePicker
+                  value={editSelectedNames}
+                  onChange={(names, _isTuning, totalCost) => {
+                    setEditSelectedNames(names);
+                    setEditServices(names.join(", "));
+                    if (totalCost > 0) setEditPrice(`$${totalCost.toFixed(0)}`);
+                  }}
                 />
               </div>
               <div className="space-y-2">

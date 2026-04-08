@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -26,6 +25,7 @@ import {
   checkTimeConflict,
   type ExistingAppointment,
 } from "@/lib/scheduling";
+import { ServicePicker } from "@/components/service-picker";
 
 interface AppointmentDialogProps {
   open: boolean;
@@ -44,13 +44,16 @@ export function AppointmentDialog({
 }: AppointmentDialogProps) {
   const { toast } = useToast();
   const [conflictError, setConflictError] = useState("");
+  const [selectedServiceNames, setSelectedServiceNames] = useState<string[]>([]);
+  const [pickerKey, setPickerKey] = useState(0);
+
   const defaultForm = {
     customerId: customerId ?? 0,
     pianoId: pianoId ?? null as number | null,
     date: "",
     time: "",
     servicesRequested: "",
-    priceEstimate: "$180",
+    priceEstimate: "",
     notes: "",
     isTuning: false,
   };
@@ -64,10 +67,12 @@ export function AppointmentDialog({
         date: "",
         time: "",
         servicesRequested: "",
-        priceEstimate: "$180",
+        priceEstimate: "",
         notes: "",
         isTuning: false,
       });
+      setSelectedServiceNames([]);
+      setPickerKey((k) => k + 1);
       setConflictError("");
     }
   }, [open, customerId, pianoId]);
@@ -113,6 +118,16 @@ export function AppointmentDialog({
       });
   }, [form.date, allAppointments, customerMap]);
 
+  function handleServiceChange(names: string[], isTuning: boolean, totalCost: number) {
+    setSelectedServiceNames(names);
+    setForm((f) => ({
+      ...f,
+      servicesRequested: names.join(", "),
+      isTuning,
+      priceEstimate: totalCost > 0 ? `$${totalCost.toFixed(0)}` : f.priceEstimate,
+    }));
+  }
+
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/appointments", data),
     onSuccess: () => {
@@ -127,10 +142,11 @@ export function AppointmentDialog({
         date: "",
         time: "",
         servicesRequested: "",
-        priceEstimate: "$180",
+        priceEstimate: "",
         notes: "",
         isTuning: false,
       });
+      setSelectedServiceNames([]);
       toast({ title: "Appointment scheduled" });
     },
     onError: () => {
@@ -241,12 +257,11 @@ export function AppointmentDialog({
           )}
 
           <div className="space-y-2">
-            <Label>Services Requested</Label>
-            <Input
-              value={form.servicesRequested}
-              onChange={(e) => setForm({ ...form, servicesRequested: e.target.value })}
-              placeholder="Tuning, regulation, voicing..."
-              data-testid="input-appointment-services"
+            <Label>Services</Label>
+            <ServicePicker
+              key={pickerKey}
+              value={selectedServiceNames}
+              onChange={handleServiceChange}
             />
           </div>
 
@@ -269,18 +284,6 @@ export function AppointmentDialog({
               className="min-h-[60px]"
               data-testid="input-appointment-notes"
             />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="is-tuning"
-              checked={form.isTuning}
-              onCheckedChange={(checked) => setForm({ ...form, isTuning: checked === true })}
-              data-testid="checkbox-appointment-tuning"
-            />
-            <Label htmlFor="is-tuning" className="text-sm cursor-pointer">
-              This is a tuning appointment
-            </Label>
           </div>
 
           <div className="flex justify-end gap-2">
