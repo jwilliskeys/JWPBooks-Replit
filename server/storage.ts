@@ -84,7 +84,7 @@ export interface IStorage {
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<boolean>;
   getNextInvoiceNumber(userId: string): Promise<number>;
-  getServiceCatalog(): Promise<ServiceCatalogItem[]>;
+  getServiceCatalog(includeInactive?: boolean): Promise<ServiceCatalogItem[]>;
   createServiceCatalogItem(item: InsertServiceCatalogItem): Promise<ServiceCatalogItem>;
   updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>): Promise<ServiceCatalogItem | undefined>;
   deleteServiceCatalogItem(id: number): Promise<boolean>;
@@ -415,8 +415,13 @@ export class DatabaseStorage implements IStorage {
     await this.updateCustomer(customerId, { pianoType, lastTuned: mostRecentTuned });
   }
 
-  async getServiceCatalog(): Promise<ServiceCatalogItem[]> {
-    return db.select().from(serviceCatalog).orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
+  async getServiceCatalog(includeInactive = false): Promise<ServiceCatalogItem[]> {
+    if (includeInactive) {
+      return db.select().from(serviceCatalog).orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
+    }
+    return db.select().from(serviceCatalog)
+      .where(eq(serviceCatalog.isActive, true))
+      .orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
   }
 
   async createServiceCatalogItem(item: InsertServiceCatalogItem): Promise<ServiceCatalogItem> {

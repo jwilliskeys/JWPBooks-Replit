@@ -966,9 +966,10 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/service-catalog", async (_req, res) => {
+  app.get("/api/service-catalog", async (req, res) => {
     try {
-      const items = await storage.getServiceCatalog();
+      const includeInactive = req.query.includeInactive === "true";
+      const items = await storage.getServiceCatalog(includeInactive);
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -989,7 +990,10 @@ export async function registerRoutes(
   app.patch("/api/service-catalog/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const updated = await storage.updateServiceCatalogItem(id, req.body);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
+      const parsed = insertServiceCatalogSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.issues });
+      const updated = await storage.updateServiceCatalogItem(id, parsed.data);
       if (!updated) return res.status(404).json({ message: "Not found" });
       res.json(updated);
     } catch (error: any) {
@@ -1000,6 +1004,7 @@ export async function registerRoutes(
   app.delete("/api/service-catalog/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
       const ok = await storage.deleteServiceCatalogItem(id);
       if (!ok) return res.status(404).json({ message: "Not found" });
       res.json({ success: true });

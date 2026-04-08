@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
@@ -304,15 +305,24 @@ export default function SettingsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
+  const catalogUrl = showInactive
+    ? "/api/service-catalog?includeInactive=true"
+    : "/api/service-catalog";
+
   const { data: catalog, isLoading } = useQuery<ServiceCatalogItem[]>({
-    queryKey: ["/api/service-catalog"],
+    queryKey: ["/api/service-catalog", showInactive ? "all" : "active"],
+    queryFn: () => fetch(catalogUrl, { credentials: "include" }).then(r => r.json()),
   });
+
+  function invalidateCatalog() {
+    queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
+  }
 
   const createMutation = useMutation({
     mutationFn: (data: Partial<InsertServiceCatalogItem>) =>
       apiRequest("POST", "/api/service-catalog", data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
+      invalidateCatalog();
       setDialogOpen(false);
       toast({ title: "Service added" });
     },
@@ -323,7 +333,7 @@ export default function SettingsPage() {
     mutationFn: ({ id, data }: { id: number; data: Partial<InsertServiceCatalogItem> }) =>
       apiRequest("PATCH", `/api/service-catalog/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
+      invalidateCatalog();
       setDialogOpen(false);
       toast({ title: "Service updated" });
     },
@@ -333,7 +343,7 @@ export default function SettingsPage() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/service-catalog/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
+      invalidateCatalog();
       setDeleteId(null);
       toast({ title: "Service deleted" });
     },
@@ -348,11 +358,9 @@ export default function SettingsPage() {
     }
   }
 
-  const filtered = (catalog ?? []).filter(item => {
-    const matchesSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
-    const matchesActive = showInactive || item.isActive !== false;
-    return matchesSearch && matchesActive;
-  });
+  const filtered = (catalog ?? []).filter(item =>
+    !search || item.name.toLowerCase().includes(search.toLowerCase())
+  );
 
   const isSaving = createMutation.isPending || updateMutation.isPending;
 
@@ -369,114 +377,120 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <ClipboardList className="h-4 w-4" /> Master Service List
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-48">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                className="pl-8 h-9 text-sm"
-                placeholder="Search services…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                data-testid="input-search-services"
-              />
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-9 gap-1.5 text-xs"
-              onClick={() => setShowInactive(v => !v)}
-              data-testid="button-toggle-inactive"
-            >
-              {showInactive ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-              {showInactive ? "Hide Inactive" : "Show Inactive"}
-            </Button>
-            <Button
-              size="sm"
-              className="h-9 gap-1.5 text-xs"
-              onClick={() => { setEditItem(null); setDialogOpen(true); }}
-              data-testid="button-add-service"
-            >
-              <Plus className="h-3.5 w-3.5" /> Add Service
-            </Button>
-          </div>
+      <Tabs defaultValue="services" data-testid="settings-tabs">
+        <TabsList className="mb-4">
+          <TabsTrigger value="services" className="gap-1.5" data-testid="tab-services">
+            <ClipboardList className="h-3.5 w-3.5" />
+            Master Service List
+          </TabsTrigger>
+        </TabsList>
 
-          {isLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-14 w-full rounded-md" />
-              ))}
-            </div>
-          ) : filtered.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">
-              {search ? "No services match your search." : "No services yet. Add your first service."}
-            </p>
-          ) : (
-            <div className="divide-y rounded-md border">
-              {filtered.map(item => (
-                <div
-                  key={item.id}
-                  className={`flex items-center gap-3 px-4 py-3 ${item.isActive === false ? "opacity-50" : ""}`}
-                  data-testid={`service-row-${item.id}`}
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-teal-600/10 text-teal-700 dark:text-teal-400">
-                    <ClipboardList className="h-4 w-4" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>{item.name}</span>
-                      {item.isDefault && (
-                        <Badge variant="outline" className="text-amber-600 border-amber-300 dark:text-amber-400 dark:border-amber-600 text-[10px] px-1.5 py-0">
-                          DEFAULT
-                        </Badge>
-                      )}
-                      {item.isTuning && (
-                        <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0">
-                          TUNING
-                        </Badge>
-                      )}
-                      {item.isActive === false && (
-                        <Badge variant="outline" className="text-muted-foreground text-[10px] px-1.5 py-0">
-                          INACTIVE
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-0.5" data-testid={`service-price-${item.id}`}>
-                      {formatPrice(item)}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => { setEditItem(item); setDialogOpen(true); }}
-                      data-testid={`button-edit-service-${item.id}`}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                      onClick={() => setDeleteId(item.id)}
-                      data-testid={`button-delete-service-${item.id}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+        <TabsContent value="services" className="mt-0">
+          <Card>
+            <CardContent className="pt-4 space-y-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative flex-1 min-w-48">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    className="pl-8 h-9 text-sm"
+                    placeholder="Search services…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    data-testid="input-search-services"
+                  />
                 </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 gap-1.5 text-xs"
+                  onClick={() => setShowInactive(v => !v)}
+                  data-testid="button-toggle-inactive"
+                >
+                  {showInactive ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                  {showInactive ? "Hide Inactive" : "Show Inactive"}
+                </Button>
+                <Button
+                  size="sm"
+                  className="h-9 gap-1.5 text-xs"
+                  onClick={() => { setEditItem(null); setDialogOpen(true); }}
+                  data-testid="button-add-service"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Add Service
+                </Button>
+              </div>
+
+              {isLoading ? (
+                <div className="space-y-2">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Skeleton key={i} className="h-14 w-full rounded-md" />
+                  ))}
+                </div>
+              ) : filtered.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6">
+                  {search ? "No services match your search." : "No services yet. Add your first service."}
+                </p>
+              ) : (
+                <div className="divide-y rounded-md border">
+                  {filtered.map(item => (
+                    <div
+                      key={item.id}
+                      className={`flex items-center gap-3 px-4 py-3 ${item.isActive === false ? "opacity-50" : ""}`}
+                      data-testid={`service-row-${item.id}`}
+                    >
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-teal-600/10 text-teal-700 dark:text-teal-400">
+                        <ClipboardList className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>{item.name}</span>
+                          {item.isDefault && (
+                            <Badge variant="outline" className="text-amber-600 border-amber-300 dark:text-amber-400 dark:border-amber-600 text-[10px] px-1.5 py-0">
+                              DEFAULT
+                            </Badge>
+                          )}
+                          {item.isTuning && (
+                            <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0">
+                              TUNING
+                            </Badge>
+                          )}
+                          {item.isActive === false && (
+                            <Badge variant="outline" className="text-muted-foreground text-[10px] px-1.5 py-0">
+                              INACTIVE
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5" data-testid={`service-price-${item.id}`}>
+                          {formatPrice(item)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => { setEditItem(item); setDialogOpen(true); }}
+                          data-testid={`button-edit-service-${item.id}`}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => setDeleteId(item.id)}
+                          data-testid={`button-delete-service-${item.id}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <ServiceCatalogDialog
         open={dialogOpen}
