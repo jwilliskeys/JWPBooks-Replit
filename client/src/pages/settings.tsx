@@ -58,6 +58,7 @@ function ServiceDialog({
   onOpenChange,
   item,
   groupName,
+  nextSortOrder,
   onSave,
   isSaving,
 }: {
@@ -65,6 +66,7 @@ function ServiceDialog({
   onOpenChange: (v: boolean) => void;
   item: ServiceCatalogItem | null;
   groupName: string;
+  nextSortOrder: number;
   onSave: (data: CatalogForm) => void;
   isSaving: boolean;
 }) {
@@ -79,7 +81,7 @@ function ServiceDialog({
           description: item.description || "",
           sortOrder: item.sortOrder ?? 0,
         }
-      : emptyCatalogForm(groupName)
+      : emptyCatalogForm(groupName, nextSortOrder)
   );
 
   function handleOpen(v: boolean) {
@@ -95,7 +97,7 @@ function ServiceDialog({
               description: item.description || "",
               sortOrder: item.sortOrder ?? 0,
             }
-          : emptyCatalogForm(groupName)
+          : emptyCatalogForm(groupName, nextSortOrder)
       );
     }
     onOpenChange(v);
@@ -249,6 +251,7 @@ export default function SettingsPage() {
   const [editItem, setEditItem] = useState<ServiceCatalogItem | null>(null);
   const [serviceDialogOpen, setServiceDialogOpen] = useState(false);
   const [activeGroupName, setActiveGroupName] = useState("");
+  const [nextItemOrder, setNextItemOrder] = useState(0);
   const [editGroup, setEditGroup] = useState<ServiceGroup | null>(null);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
   const [deleteItemId, setDeleteItemId] = useState<number | null>(null);
@@ -370,6 +373,7 @@ export default function SettingsPage() {
     setEditItem(null);
     setActiveGroupName(groupName);
     const nextOrder = groupItems.length > 0 ? Math.max(...groupItems.map(i => i.sortOrder ?? 0)) + 1 : 0;
+    setNextItemOrder(nextOrder);
     setServiceDialogOpen(true);
   }
 
@@ -663,6 +667,7 @@ export default function SettingsPage() {
         onOpenChange={v => { setServiceDialogOpen(v); if (!v) setEditItem(null); }}
         item={editItem}
         groupName={activeGroupName}
+        nextSortOrder={nextItemOrder}
         onSave={handleSaveService}
         isSaving={isSavingItem}
       />
