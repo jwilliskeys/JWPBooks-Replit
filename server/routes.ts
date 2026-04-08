@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema } from "@shared/schema";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
@@ -540,8 +540,61 @@ export async function registerRoutes(
     try {
       const userId = getUserId(req);
       await storage.seedServiceCatalog(userId);
+      await storage.seedServiceGroups(userId);
       const catalog = await storage.getServiceCatalog(userId);
       res.json(catalog);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/service-groups", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      await storage.seedServiceCatalog(userId);
+      await storage.seedServiceGroups(userId);
+      const groups = await storage.getServiceGroups(userId);
+      res.json(groups);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/service-groups", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const parsed = insertServiceGroupSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const group = await storage.createServiceGroup(parsed.data, userId);
+      res.status(201).json(group);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/service-groups/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const parsed = insertServiceGroupSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const updated = await storage.updateServiceGroup(id, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Group not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/service-groups/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const ok = await storage.deleteServiceGroup(id, userId);
+      if (!ok) return res.status(404).json({ message: "Group not found" });
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1057,53 +1110,6 @@ export async function registerRoutes(
       res.json({ durations });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/service-catalog", async (req, res) => {
-    try {
-      const includeInactive = req.query.includeInactive === "true";
-      const items = await storage.getServiceCatalog(includeInactive);
-      res.json(items);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/service-catalog", async (req, res) => {
-    try {
-      const parsed = insertServiceCatalogSchema.safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.issues });
-      const item = await storage.createServiceCatalogItem(parsed.data);
-      res.status(201).json(item);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.patch("/api/service-catalog/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-      const parsed = insertServiceCatalogSchema.partial().safeParse(req.body);
-      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.issues });
-      const updated = await storage.updateServiceCatalogItem(id, parsed.data);
-      if (!updated) return res.status(404).json({ message: "Not found" });
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/service-catalog/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      if (isNaN(id)) return res.status(400).json({ message: "Invalid id" });
-      const ok = await storage.deleteServiceCatalogItem(id);
-      if (!ok) return res.status(404).json({ message: "Not found" });
-      res.json({ success: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
     }
   });
 

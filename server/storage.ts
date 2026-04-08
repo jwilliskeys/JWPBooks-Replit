@@ -1,9 +1,10 @@
 import { db } from "./db";
-import { eq, and, isNull, asc } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import {
   customers,
   pianos,
   serviceRecords,
+  serviceGroups,
   serviceCatalog,
   appointments,
   calendarNotes,
@@ -17,6 +18,8 @@ import {
   type InsertPiano,
   type ServiceRecord,
   type InsertServiceRecord,
+  type ServiceGroup,
+  type InsertServiceGroup,
   type ServiceCatalogItem,
   type InsertServiceCatalogItem,
   type Appointment,
@@ -84,6 +87,11 @@ export interface IStorage {
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<boolean>;
   getNextInvoiceNumber(userId: string): Promise<number>;
+  getServiceGroups(userId: string): Promise<ServiceGroup[]>;
+  createServiceGroup(data: InsertServiceGroup, userId: string): Promise<ServiceGroup>;
+  updateServiceGroup(id: number, data: Partial<InsertServiceGroup>): Promise<ServiceGroup | undefined>;
+  deleteServiceGroup(id: number, userId: string): Promise<boolean>;
+  seedServiceGroups(userId: string): Promise<void>;
   getServiceCatalog(userId: string): Promise<ServiceCatalogItem[]>;
   getServiceCatalogItem(id: number): Promise<ServiceCatalogItem | undefined>;
   createServiceCatalogItem(item: InsertServiceCatalogItem, userId: string): Promise<ServiceCatalogItem>;
@@ -403,10 +411,61 @@ export class DatabaseStorage implements IStorage {
     return max + 1;
   }
 
+  async getServiceGroups(userId: string): Promise<ServiceGroup[]> {
+    return db.select().from(serviceGroups)
+      .where(eq(serviceGroups.userId, userId))
+      .orderBy(asc(serviceGroups.sortOrder), asc(serviceGroups.name));
+  }
+
+  async createServiceGroup(data: InsertServiceGroup, userId: string): Promise<ServiceGroup> {
+    const [created] = await db.insert(serviceGroups).values({ ...data, userId }).returning();
+    return created;
+  }
+
+  async updateServiceGroup(id: number, data: Partial<InsertServiceGroup>): Promise<ServiceGroup | undefined> {
+    const [updated] = await db.update(serviceGroups).set(data).where(eq(serviceGroups.id, id)).returning();
+    return updated;
+  }
+
+  async deleteServiceGroup(id: number, userId: string): Promise<boolean> {
+    const result = await db.delete(serviceGroups)
+      .where(and(eq(serviceGroups.id, id), eq(serviceGroups.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async seedServiceGroups(userId: string): Promise<void> {
+    const existing = await this.getServiceGroups(userId);
+    if (existing.length > 0) return;
+    const groups = [
+      { name: "Field Service", sortOrder: 0 },
+      { name: "Shopwork", sortOrder: 1 },
+      { name: "Institutional", sortOrder: 2 },
+      { name: "Inspection", sortOrder: 3 },
+    ];
+    for (const g of groups) {
+      await db.insert(serviceGroups).values({ ...g, userId });
+    }
+    const categoryRemap: Record<string, string> = {
+      "Tuning": "Field Service",
+      "Maintenance": "Field Service",
+      "Repair": "Shopwork",
+      "Consultation": "Inspection",
+    };
+    const items = await this.getServiceCatalog(userId);
+    for (const item of items) {
+      if (item.category && categoryRemap[item.category]) {
+        await db.update(serviceCatalog)
+          .set({ category: categoryRemap[item.category] })
+          .where(eq(serviceCatalog.id, item.id));
+      }
+    }
+  }
+
   async getServiceCatalog(userId: string): Promise<ServiceCatalogItem[]> {
     return db.select().from(serviceCatalog)
       .where(eq(serviceCatalog.userId, userId))
-      .orderBy(serviceCatalog.sortOrder, serviceCatalog.name);
+      .orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
   }
 
   async getServiceCatalogItem(id: number): Promise<ServiceCatalogItem | undefined> {
@@ -439,14 +498,14 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.getServiceCatalog(userId);
     if (existing.length > 0) return;
     const seeds = [
-      { name: "Tuning", category: "Tuning", defaultCost: "$150", defaultDuration: "1 hour", isTuning: true, sortOrder: 0 },
-      { name: "Pitch Raise", category: "Tuning", defaultCost: "$75", defaultDuration: "30 min", isTuning: true, sortOrder: 1 },
-      { name: "Regulation", category: "Maintenance", defaultCost: "$200", defaultDuration: "2 hours", isTuning: false, sortOrder: 2 },
-      { name: "Voicing", category: "Maintenance", defaultCost: "$175", defaultDuration: "1.5 hours", isTuning: false, sortOrder: 3 },
-      { name: "Minor Repair", category: "Repair", defaultCost: "$100", defaultDuration: "1 hour", isTuning: false, sortOrder: 4 },
-      { name: "Major Repair", category: "Repair", defaultCost: "$300", defaultDuration: "4 hours", isTuning: false, sortOrder: 5 },
-      { name: "Cleaning/Inspection", category: "Maintenance", defaultCost: "$75", defaultDuration: "45 min", isTuning: false, sortOrder: 6 },
-      { name: "Estimate", category: "Consultation", defaultCost: "$0", defaultDuration: "30 min", isTuning: false, sortOrder: 7 },
+      { name: "Tuning", category: "Field Service", defaultCost: "$150", defaultDuration: "1 hour", isTuning: true, sortOrder: 0 },
+      { name: "Pitch Raise", category: "Field Service", defaultCost: "$75", defaultDuration: "30 min", isTuning: true, sortOrder: 1 },
+      { name: "Regulation", category: "Shopwork", defaultCost: "$200", defaultDuration: "2 hours", isTuning: false, sortOrder: 0 },
+      { name: "Voicing", category: "Shopwork", defaultCost: "$175", defaultDuration: "1.5 hours", isTuning: false, sortOrder: 1 },
+      { name: "Minor Repair", category: "Shopwork", defaultCost: "$100", defaultDuration: "1 hour", isTuning: false, sortOrder: 2 },
+      { name: "Major Repair", category: "Shopwork", defaultCost: "$300", defaultDuration: "4 hours", isTuning: false, sortOrder: 3 },
+      { name: "Cleaning/Inspection", category: "Inspection", defaultCost: "$75", defaultDuration: "45 min", isTuning: false, sortOrder: 0 },
+      { name: "Estimate", category: "Inspection", defaultCost: "$0", defaultDuration: "30 min", isTuning: false, sortOrder: 1 },
     ];
     for (const seed of seeds) {
       await db.insert(serviceCatalog).values({ ...seed, userId, isActive: true });
@@ -548,45 +607,6 @@ export class DatabaseStorage implements IStorage {
     await this.updateCustomer(customerId, { pianoType, lastTuned: mostRecentTuned });
   }
 
-  async getServiceCatalog(includeInactive = false): Promise<ServiceCatalogItem[]> {
-    if (includeInactive) {
-      return db.select().from(serviceCatalog).orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
-    }
-    return db.select().from(serviceCatalog)
-      .where(eq(serviceCatalog.isActive, true))
-      .orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
-  }
-
-  async createServiceCatalogItem(item: InsertServiceCatalogItem): Promise<ServiceCatalogItem> {
-    const [created] = await db.insert(serviceCatalog).values(item).returning();
-    return created;
-  }
-
-  async updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>): Promise<ServiceCatalogItem | undefined> {
-    const [updated] = await db.update(serviceCatalog).set(data).where(eq(serviceCatalog.id, id)).returning();
-    return updated;
-  }
-
-  async deleteServiceCatalogItem(id: number): Promise<boolean> {
-    const result = await db.delete(serviceCatalog).where(eq(serviceCatalog.id, id)).returning();
-    return result.length > 0;
-  }
-
-  async seedServiceCatalogIfEmpty(): Promise<void> {
-    const existing = await db.select({ id: serviceCatalog.id }).from(serviceCatalog).limit(1);
-    if (existing.length > 0) return;
-    const seeds = [
-      { name: "Tuning", description: "Standard piano tuning to A440.", serviceType: "fixed", unitPrice: "195.00", durationMinutes: 90, isTuning: true, isDefault: true, sortOrder: 1 },
-      { name: "Complimentary Tuning", description: "Complimentary tuning included with service.", serviceType: "fixed", unitPrice: "0.00", durationMinutes: 60, isTuning: true, isDefault: false, sortOrder: 2 },
-      { name: "Pitch Adjustment", description: "Pitch raise or lowering before fine tuning.", serviceType: "fixed", unitPrice: "55.00", durationMinutes: 30, isTuning: false, isDefault: false, sortOrder: 3 },
-      { name: "Voicing", description: "Adjust hammer felt to change tone quality.", serviceType: "hourly", hourlyRate: "100.00", durationMinutes: 60, isTuning: false, isDefault: false, sortOrder: 4 },
-      { name: "Regulation", description: "Regulate piano's action to improve touch and make your piano easier to play.", serviceType: "hourly", hourlyRate: "100.00", durationMinutes: 720, isTuning: false, isDefault: false, sortOrder: 5 },
-      { name: "Custom Order a New Bass String", description: "Order and install a custom bass string.", serviceType: "fixed", unitPrice: "60.00", durationMinutes: 25, isTuning: false, isDefault: false, sortOrder: 6 },
-      { name: "Replace a Broken String", description: "Replace a broken treble string.", serviceType: "fixed", unitPrice: "25.00", durationMinutes: 30, isTuning: false, isDefault: false, sortOrder: 7 },
-      { name: "Light Cleaning", description: "Clean interior and keys.", serviceType: "hourly", hourlyRate: "100.00", durationMinutes: 30, isTuning: false, isDefault: false, sortOrder: 8 },
-    ];
-    await db.insert(serviceCatalog).values(seeds);
-  }
 }
 
 export const storage = new DatabaseStorage();

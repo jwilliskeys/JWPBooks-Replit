@@ -53,6 +53,10 @@ Preferred communication style: Simple, everyday language.
   - `GET/POST /api/invoices` — List and create invoices
   - `GET /api/invoices/next-number` — Get next auto-incremented invoice number
   - `GET/PATCH/DELETE /api/invoices/:id` — Individual invoice CRUD
+  - `GET/POST /api/service-groups` — Service group CRUD (categories for service catalog)
+  - `PATCH/DELETE /api/service-groups/:id` — Individual service group CRUD
+  - `GET/POST /api/service-catalog` — Service catalog items
+  - `PATCH/DELETE /api/service-catalog/:id` — Individual catalog item CRUD
   - `POST /api/sync` — Sync data from Google Sheets
 
 ### Data Storage
@@ -69,6 +73,8 @@ Preferred communication style: Simple, everyday language.
   - `trips` — id, name, startDate, endDate, notes, createdAt
   - `trip_appointments` — id, tripId, customerId, pianoId, date, time, duration, servicesRequested, priceEstimate, notes, status, serviceArea, linkedAppointmentId (nullable FK to appointments.id), createdAt
   - `invoices` — id, invoiceNumber (text), customerId (int, required), appointmentId (nullable), pianoId (nullable), invoiceDate, dueDate, status ("draft"|"open"|"paid"|"cancelled"), lineItems (JSON text), subtotal, total, paidAmount, notes, customerName, customerEmail, customerAddress, customerPhone, pianoDescription, assignedTo (default "John Willis"), createdAt
+  - `service_groups` — id, userId, name, sortOrder, createdAt; pre-seeded with "Field Service", "Shopwork", "Institutional", "Inspection"
+  - `service_catalog` — id, userId, name, category (matches service_group name), defaultCost, defaultDuration, isTuning, description, isActive, sortOrder, createdAt
   - `users` — id (varchar UUID), email, firstName, lastName, profileImageUrl, createdAt, updatedAt (Replit Auth)
   - `sessions` — sid, sess (jsonb), expire (Replit Auth session store)
 - **Migrations**: Generated via `drizzle-kit` into `./migrations` directory

@@ -180,7 +180,6 @@ async function migrateExistingDataToUser() {
 
   await seedDatabaseIfEmpty();
   await migrateExistingDataToUser();
-  await storage.seedServiceCatalogIfEmpty();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
