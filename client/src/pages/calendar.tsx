@@ -1304,7 +1304,7 @@ export default function CalendarPage() {
                       setApptSelectedNames(names);
                       setApptServices(names.join(", "));
                       setApptIsTuning(isTuning);
-                      if (totalCost > 0) setApptPrice(`$${totalCost.toFixed(0)}`);
+                      setApptPrice(totalCost > 0 ? `$${totalCost.toFixed(0)}` : "");
                     }}
                   />
                 </div>

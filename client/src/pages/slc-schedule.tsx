@@ -1128,7 +1128,7 @@ export default function SlcSchedule() {
                 onChange={(names, _isTuning, totalCost) => {
                   setApptSelectedNames(names);
                   setApptServices(names.join(", "));
-                  if (totalCost > 0) setApptPrice(`$${totalCost.toFixed(0)}`);
+                  setApptPrice(totalCost > 0 ? `$${totalCost.toFixed(0)}` : "");
                 }}
               />
             </div>
@@ -1233,7 +1233,7 @@ export default function SlcSchedule() {
                   onChange={(names, _isTuning, totalCost) => {
                     setEditSelectedNames(names);
                     setEditServices(names.join(", "));
-                    if (totalCost > 0) setEditPrice(`$${totalCost.toFixed(0)}`);
+                    setEditPrice(totalCost > 0 ? `$${totalCost.toFixed(0)}` : "");
                   }}
                 />
               </div>
