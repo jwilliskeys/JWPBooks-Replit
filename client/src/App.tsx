@@ -23,6 +23,7 @@ import CalendarPage from "@/pages/calendar";
 import SlcSchedule from "@/pages/slc-schedule";
 import InvoicesPage from "@/pages/invoices";
 import InvoiceDetailPage from "@/pages/invoice-detail";
+import SettingsPage from "@/pages/settings";
 
 function Router() {
   return (
@@ -37,6 +38,7 @@ function Router() {
       <Route path="/invoices/new" component={InvoiceDetailPage} />
       <Route path="/invoices/:id" component={InvoiceDetailPage} />
       <Route path="/invoices" component={InvoicesPage} />
+      <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>
   );

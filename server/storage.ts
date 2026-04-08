@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, asc } from "drizzle-orm";
 import {
   customers,
   pianos,
@@ -10,6 +10,7 @@ import {
   trips,
   tripAppointments,
   invoices,
+  serviceCatalog,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -28,6 +29,8 @@ import {
   type InsertTripAppointment,
   type Invoice,
   type InsertInvoice,
+  type ServiceCatalogItem,
+  type InsertServiceCatalogItem,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -81,6 +84,11 @@ export interface IStorage {
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<boolean>;
   getNextInvoiceNumber(userId: string): Promise<number>;
+  getServiceCatalog(): Promise<ServiceCatalogItem[]>;
+  createServiceCatalogItem(item: InsertServiceCatalogItem): Promise<ServiceCatalogItem>;
+  updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>): Promise<ServiceCatalogItem | undefined>;
+  deleteServiceCatalogItem(id: number): Promise<boolean>;
+  seedServiceCatalogIfEmpty(): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -405,6 +413,41 @@ export class DatabaseStorage implements IStorage {
       }
     }
     await this.updateCustomer(customerId, { pianoType, lastTuned: mostRecentTuned });
+  }
+
+  async getServiceCatalog(): Promise<ServiceCatalogItem[]> {
+    return db.select().from(serviceCatalog).orderBy(asc(serviceCatalog.sortOrder), asc(serviceCatalog.name));
+  }
+
+  async createServiceCatalogItem(item: InsertServiceCatalogItem): Promise<ServiceCatalogItem> {
+    const [created] = await db.insert(serviceCatalog).values(item).returning();
+    return created;
+  }
+
+  async updateServiceCatalogItem(id: number, data: Partial<InsertServiceCatalogItem>): Promise<ServiceCatalogItem | undefined> {
+    const [updated] = await db.update(serviceCatalog).set(data).where(eq(serviceCatalog.id, id)).returning();
+    return updated;
+  }
+
+  async deleteServiceCatalogItem(id: number): Promise<boolean> {
+    const result = await db.delete(serviceCatalog).where(eq(serviceCatalog.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async seedServiceCatalogIfEmpty(): Promise<void> {
+    const existing = await db.select({ id: serviceCatalog.id }).from(serviceCatalog).limit(1);
+    if (existing.length > 0) return;
+    const seeds = [
+      { name: "Tuning", description: "Standard piano tuning to A440.", serviceType: "fixed", unitPrice: "195.00", durationMinutes: 90, isTuning: true, isDefault: true, sortOrder: 1 },
+      { name: "Complimentary Tuning", description: "Complimentary tuning included with service.", serviceType: "fixed", unitPrice: "0.00", durationMinutes: 60, isTuning: true, isDefault: false, sortOrder: 2 },
+      { name: "Pitch Adjustment", description: "Pitch raise or lowering before fine tuning.", serviceType: "fixed", unitPrice: "55.00", durationMinutes: 30, isTuning: false, isDefault: false, sortOrder: 3 },
+      { name: "Voicing", description: "Adjust hammer felt to change tone quality.", serviceType: "hourly", hourlyRate: "100.00", durationMinutes: 60, isTuning: false, isDefault: false, sortOrder: 4 },
+      { name: "Regulation", description: "Regulate piano's action to improve touch and make your piano easier to play.", serviceType: "hourly", hourlyRate: "100.00", durationMinutes: 720, isTuning: false, isDefault: false, sortOrder: 5 },
+      { name: "Custom Order a New Bass String", description: "Order and install a custom bass string.", serviceType: "fixed", unitPrice: "60.00", durationMinutes: 25, isTuning: false, isDefault: false, sortOrder: 6 },
+      { name: "Replace a Broken String", description: "Replace a broken treble string.", serviceType: "fixed", unitPrice: "25.00", durationMinutes: 30, isTuning: false, isDefault: false, sortOrder: 7 },
+      { name: "Light Cleaning", description: "Clean interior and keys.", serviceType: "hourly", hourlyRate: "100.00", durationMinutes: 30, isTuning: false, isDefault: false, sortOrder: 8 },
+    ];
+    await db.insert(serviceCatalog).values(seeds);
   }
 }
 

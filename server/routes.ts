@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema } from "@shared/schema";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
@@ -963,6 +963,48 @@ export async function registerRoutes(
       res.json({ durations });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/service-catalog", async (_req, res) => {
+    try {
+      const items = await storage.getServiceCatalog();
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/service-catalog", async (req, res) => {
+    try {
+      const parsed = insertServiceCatalogSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.issues });
+      const item = await storage.createServiceCatalogItem(parsed.data);
+      res.status(201).json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/service-catalog/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateServiceCatalogItem(id, req.body);
+      if (!updated) return res.status(404).json({ message: "Not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/service-catalog/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const ok = await storage.deleteServiceCatalogItem(id);
+      if (!ok) return res.status(404).json({ message: "Not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 

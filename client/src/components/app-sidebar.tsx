@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin, Star, Phone, FileText } from "lucide-react";
+import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin, Star, Phone, FileText, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -25,6 +25,7 @@ const navItems = [
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "SLC Schedule", url: "/slc-schedule", icon: MapPin },
   { title: "Invoices", url: "/invoices", icon: FileText },
+  { title: "Settings", url: "/settings", icon: Settings },
 ];
 
 function getMonthsSince(dateStr: string | null | undefined): number | null {

@@ -4,6 +4,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabaseIfEmpty } from "./seed";
 import { setupAuth } from "./simpleAuth";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -179,6 +180,7 @@ async function migrateExistingDataToUser() {
 
   await seedDatabaseIfEmpty();
   await migrateExistingDataToUser();
+  await storage.seedServiceCatalogIfEmpty();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
