@@ -603,12 +603,12 @@ export async function registerRoutes(
   app.post("/api/service-catalog", async (req, res) => {
     try {
       const userId = getUserId(req);
-      const parsed = insertServiceCatalogSchema.safeParse(req.body);
+      const catalogCreateSchema = insertServiceCatalogSchema.omit({ isDefault: true });
+      const parsed = catalogCreateSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const { isDefault: _ignored, ...safeData } = parsed.data as any;
-      const item = await storage.createServiceCatalogItem(safeData, userId);
+      const item = await storage.createServiceCatalogItem(parsed.data, userId);
       res.status(201).json(item);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -620,13 +620,12 @@ export async function registerRoutes(
       const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-      const updateSchema = insertServiceCatalogSchema.partial();
-      const parsed = updateSchema.safeParse(req.body);
+      const catalogUpdateSchema = insertServiceCatalogSchema.omit({ isDefault: true }).partial();
+      const parsed = catalogUpdateSchema.safeParse(req.body);
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      const { isDefault: _ignored, ...safeData } = parsed.data as any;
-      const item = await storage.updateServiceCatalogItem(id, safeData, userId);
+      const item = await storage.updateServiceCatalogItem(id, parsed.data, userId);
       if (!item) return res.status(404).json({ message: "Item not found" });
       res.json(item);
     } catch (error: any) {

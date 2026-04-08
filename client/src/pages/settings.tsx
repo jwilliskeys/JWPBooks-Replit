@@ -369,7 +369,10 @@ export default function SettingsPage() {
   type CatalogPayload = Omit<CatalogForm, "isDefault" | "durationHours">;
 
   const createItemMutation = useMutation({
-    mutationFn: (data: CatalogPayload) => apiRequest("POST", "/api/service-catalog", data),
+    mutationFn: async (data: CatalogPayload): Promise<ServiceCatalogItem> => {
+      const res = await apiRequest("POST", "/api/service-catalog", data);
+      return res.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
       setServiceDialogOpen(false);
@@ -417,12 +420,8 @@ export default function SettingsPage() {
       });
     } else {
       createItemMutation.mutate(rest, {
-        onSuccess: async () => {
-          if (isDefault) {
-            const updated = await queryClient.fetchQuery<ServiceCatalogItem[]>({ queryKey: ["/api/service-catalog"] });
-            const newItem = updated.find(i => i.name === data.name && i.category === data.category);
-            if (newItem) setDefaultMutation.mutate(newItem.id);
-          }
+        onSuccess: (createdItem) => {
+          if (isDefault) setDefaultMutation.mutate(createdItem.id);
         },
       });
     }
