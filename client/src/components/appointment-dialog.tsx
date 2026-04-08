@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Plus, X, Music } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer, Piano, Appointment } from "@shared/schema";
@@ -26,6 +26,26 @@ import {
   type ExistingAppointment,
 } from "@/lib/scheduling";
 import { ServicePicker } from "@/components/service-picker";
+
+interface PianoSection {
+  sectionId: string;
+  pianoId: number | null;
+  selectedNames: string[];
+  isTuning: boolean;
+  price: string;
+  pickerKey: number;
+}
+
+function makeSection(pianoId: number | null = null): PianoSection {
+  return {
+    sectionId: `${Date.now()}-${Math.random()}`,
+    pianoId,
+    selectedNames: [],
+    isTuning: false,
+    price: "",
+    pickerKey: 0,
+  };
+}
 
 interface AppointmentDialogProps {
   open: boolean;
@@ -44,35 +64,22 @@ export function AppointmentDialog({
 }: AppointmentDialogProps) {
   const { toast } = useToast();
   const [conflictError, setConflictError] = useState("");
-  const [selectedServiceNames, setSelectedServiceNames] = useState<string[]>([]);
-  const [pickerKey, setPickerKey] = useState(0);
+  const [pickerMountKey, setPickerMountKey] = useState(0);
 
-  const defaultForm = {
-    customerId: customerId ?? 0,
-    pianoId: pianoId ?? null as number | null,
-    date: "",
-    time: "",
-    servicesRequested: "",
-    priceEstimate: "",
-    notes: "",
-    isTuning: false,
-  };
-  const [form, setForm] = useState(defaultForm);
+  const [selectedClientId, setSelectedClientId] = useState(customerId ?? 0);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [notes, setNotes] = useState("");
+  const [sections, setSections] = useState<PianoSection[]>([makeSection(pianoId ?? null)]);
 
   useEffect(() => {
     if (open) {
-      setForm({
-        customerId: customerId ?? 0,
-        pianoId: pianoId ?? null,
-        date: "",
-        time: "",
-        servicesRequested: "",
-        priceEstimate: "",
-        notes: "",
-        isTuning: false,
-      });
-      setSelectedServiceNames([]);
-      setPickerKey((k) => k + 1);
+      setSelectedClientId(customerId ?? 0);
+      setDate("");
+      setTime("");
+      setNotes("");
+      setSections([makeSection(pianoId ?? null)]);
+      setPickerMountKey((k) => k + 1);
       setConflictError("");
     }
   }, [open, customerId, pianoId]);
@@ -86,12 +93,17 @@ export function AppointmentDialog({
     enabled: open,
   });
 
-  const selectedCustomerId = customerId ?? form.customerId;
+  const effectiveCustomerId = customerId ?? selectedClientId;
 
   const { data: customerPianos } = useQuery<Piano[]>({
-    queryKey: ["/api/customers", String(selectedCustomerId), "pianos"],
-    enabled: !!selectedCustomerId,
+    queryKey: ["/api/customers", String(effectiveCustomerId), "pianos"],
+    enabled: !!effectiveCustomerId,
   });
+
+  const activePianos = useMemo(
+    () => (customerPianos ?? []).filter((p) => p.isActive !== false),
+    [customerPianos]
+  );
 
   const customerMap = useMemo(
     () => new Map(customers?.map((c) => [c.id, c]) ?? []),
@@ -99,55 +111,61 @@ export function AppointmentDialog({
   );
 
   const selectedCustomerCity = useMemo(() => {
-    if (!selectedCustomerId) return "";
-    const cust = customerMap.get(selectedCustomerId);
+    const cust = customerMap.get(effectiveCustomerId);
     return cust?.city || "";
-  }, [selectedCustomerId, customerMap]);
+  }, [effectiveCustomerId, customerMap]);
 
   const existingApptsForDate = useMemo((): ExistingAppointment[] => {
-    if (!form.date || !allAppointments) return [];
+    if (!date || !allAppointments) return [];
     return allAppointments
-      .filter((a) => a.date === form.date && a.status !== "cancelled")
+      .filter((a) => a.date === date && a.status !== "cancelled")
       .map((a) => {
         const cust = customerMap.get(a.customerId);
-        return {
-          time: a.time,
-          duration: "2 hours",
-          city: cust?.city || "",
-        };
+        return { time: a.time, duration: "2 hours", city: cust?.city || "" };
       });
-  }, [form.date, allAppointments, customerMap]);
+  }, [date, allAppointments, customerMap]);
 
-  function handleServiceChange(names: string[], isTuning: boolean, totalCost: number) {
-    setSelectedServiceNames(names);
-    setForm((f) => ({
-      ...f,
-      servicesRequested: names.join(", "),
-      isTuning,
-      priceEstimate: totalCost > 0 ? `$${totalCost.toFixed(0)}` : f.priceEstimate,
-    }));
+  function updateSection(sectionId: string, patch: Partial<PianoSection>) {
+    setSections((prev) =>
+      prev.map((s) => (s.sectionId === sectionId ? { ...s, ...patch } : s))
+    );
+  }
+
+  function addSection() {
+    setSections((prev) => [...prev, makeSection(null)]);
+  }
+
+  function removeSection(sectionId: string) {
+    setSections((prev) => prev.filter((s) => s.sectionId !== sectionId));
   }
 
   const createMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/appointments", data),
+    mutationFn: async () => {
+      const results = [];
+      for (const sec of sections) {
+        const payload = {
+          customerId: effectiveCustomerId,
+          pianoId: sec.pianoId ?? undefined,
+          date,
+          time,
+          servicesRequested: sec.selectedNames.join(", ") || undefined,
+          priceEstimate: sec.price || undefined,
+          notes: notes || undefined,
+          isTuning: sec.isTuning,
+          status: "scheduled",
+        };
+        const res = await apiRequest("POST", "/api/appointments", payload);
+        results.push(await res.json());
+      }
+      return results;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      if (selectedCustomerId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/customers", String(selectedCustomerId), "appointments"] });
+      if (effectiveCustomerId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/customers", String(effectiveCustomerId), "appointments"] });
       }
       onOpenChange(false);
-      setForm({
-        customerId: customerId ?? 0,
-        pianoId: pianoId ?? null,
-        date: "",
-        time: "",
-        servicesRequested: "",
-        priceEstimate: "",
-        notes: "",
-        isTuning: false,
-      });
-      setSelectedServiceNames([]);
-      toast({ title: "Appointment scheduled" });
+      toast({ title: sections.length > 1 ? `${sections.length} appointments scheduled` : "Appointment scheduled" });
     },
     onError: () => {
       toast({ title: "Failed to schedule appointment", variant: "destructive" });
@@ -155,35 +173,40 @@ export function AppointmentDialog({
   });
 
   const handleSubmit = () => {
-    if (form.time && form.date) {
-      const result = checkTimeConflict(form.time, "2 hours", selectedCustomerCity, existingApptsForDate);
+    if (time && date) {
+      const result = checkTimeConflict(time, "2 hours", selectedCustomerCity, existingApptsForDate);
       if (!result.valid) {
         setConflictError(result.message || "Time conflict detected.");
         return;
       }
     }
-
-    const submitData = {
-      ...form,
-      customerId: selectedCustomerId,
-      pianoId: form.pianoId || (pianoId ?? null),
-    };
-    createMutation.mutate(submitData);
+    createMutation.mutate();
   };
+
+  const canSubmit = !!effectiveCustomerId && !!date && !!time && sections.length > 0;
+
+  const pianoLabel = (p: Piano) =>
+    [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Schedule Appointment</DialogTitle>
         </DialogHeader>
         <div className="space-y-4 mt-2">
+          {/* Client */}
           {!customerId && (
             <div className="space-y-2">
               <Label>Client</Label>
               <Select
-                value={form.customerId ? String(form.customerId) : ""}
-                onValueChange={(v) => { setForm({ ...form, customerId: parseInt(v), pianoId: null }); setConflictError(""); }}
+                value={selectedClientId ? String(selectedClientId) : ""}
+                onValueChange={(v) => {
+                  setSelectedClientId(parseInt(v));
+                  setSections([makeSection(null)]);
+                  setPickerMountKey((k) => k + 1);
+                  setConflictError("");
+                }}
               >
                 <SelectTrigger data-testid="select-appointment-client">
                   <SelectValue placeholder="Select a client..." />
@@ -206,34 +229,13 @@ export function AppointmentDialog({
             </div>
           )}
 
-          {!pianoId && selectedCustomerId > 0 && customerPianos && customerPianos.length > 0 && (
-            <div className="space-y-2">
-              <Label>Piano (optional)</Label>
-              <Select
-                value={form.pianoId ? String(form.pianoId) : "none"}
-                onValueChange={(v) => setForm({ ...form, pianoId: v === "none" ? null : parseInt(v) })}
-              >
-                <SelectTrigger data-testid="select-appointment-piano">
-                  <SelectValue placeholder="Select a piano..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No specific piano</SelectItem>
-                  {customerPianos.map((p) => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
+          {/* Date & Time */}
           <div className="grid gap-4 grid-cols-2">
             <div className="space-y-2">
               <Label>Date (M/D/YY)</Label>
               <Input
-                value={form.date}
-                onChange={(e) => { setForm({ ...form, date: e.target.value }); setConflictError(""); }}
+                value={date}
+                onChange={(e) => { setDate(e.target.value); setConflictError(""); }}
                 placeholder="3/15/26"
                 data-testid="input-appointment-date"
               />
@@ -241,8 +243,8 @@ export function AppointmentDialog({
             <div className="space-y-2">
               <Label>Time</Label>
               <Input
-                value={form.time}
-                onChange={(e) => { setForm({ ...form, time: e.target.value }); setConflictError(""); }}
+                value={time}
+                onChange={(e) => { setTime(e.target.value); setConflictError(""); }}
                 placeholder="10:00 AM"
                 data-testid="input-appointment-time"
               />
@@ -256,30 +258,117 @@ export function AppointmentDialog({
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label>Services</Label>
-            <ServicePicker
-              key={pickerKey}
-              value={selectedServiceNames}
-              onChange={handleServiceChange}
-            />
-          </div>
+          {/* Piano / Service Sections */}
+          {sections.map((sec, idx) => (
+            <div
+              key={sec.sectionId}
+              className="rounded-lg border border-border p-3 space-y-3 bg-muted/20"
+              data-testid={`piano-section-${idx}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-sm font-medium">
+                  <Music className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  {sections.length > 1 ? `Piano ${idx + 1}` : "Piano & Services"}
+                </div>
+                {sections.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeSection(sec.sectionId)}
+                    className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    data-testid={`button-remove-section-${idx}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
 
-          <div className="space-y-2">
-            <Label>Price Estimate</Label>
-            <Input
-              value={form.priceEstimate}
-              onChange={(e) => setForm({ ...form, priceEstimate: e.target.value })}
-              placeholder="$175"
-              data-testid="input-appointment-price"
-            />
-          </div>
+              {/* Piano picker */}
+              {!pianoId && effectiveCustomerId > 0 && activePianos.length > 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Piano</Label>
+                  <Select
+                    value={sec.pianoId ? String(sec.pianoId) : "none"}
+                    onValueChange={(v) =>
+                      updateSection(sec.sectionId, { pianoId: v === "none" ? null : parseInt(v) })
+                    }
+                  >
+                    <SelectTrigger data-testid={`select-piano-${idx}`}>
+                      <SelectValue placeholder="Select a piano..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No specific piano</SelectItem>
+                      {activePianos.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {pianoLabel(p)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
+              {pianoId && activePianos.length > 0 && idx === 0 && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Piano</Label>
+                  <Input
+                    value={pianoLabel(activePianos.find((p) => p.id === pianoId) ?? activePianos[0])}
+                    disabled
+                    className="h-8 text-sm"
+                  />
+                </div>
+              )}
+
+              {/* Services */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Services</Label>
+                <ServicePicker
+                  key={`${pickerMountKey}-${sec.sectionId}`}
+                  value={sec.selectedNames}
+                  onChange={(names, isTuning, totalCost) => {
+                    updateSection(sec.sectionId, {
+                      selectedNames: names,
+                      isTuning,
+                      price: totalCost > 0 ? `$${totalCost.toFixed(0)}` : "",
+                    });
+                  }}
+                />
+              </div>
+
+              {/* Price */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Price Estimate</Label>
+                <Input
+                  value={sec.price}
+                  onChange={(e) => updateSection(sec.sectionId, { price: e.target.value })}
+                  placeholder="$175"
+                  className="h-8"
+                  data-testid={`input-price-${idx}`}
+                />
+              </div>
+            </div>
+          ))}
+
+          {/* Add Piano button */}
+          {!pianoId && effectiveCustomerId > 0 && activePianos.length > 1 && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={addSection}
+              className="w-full"
+              data-testid="button-add-piano-section"
+            >
+              <Plus className="h-4 w-4 mr-1" />
+              Add Another Piano
+            </Button>
+          )}
+
+          {/* Notes */}
           <div className="space-y-2">
             <Label>Notes</Label>
             <Textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
               placeholder="General notes about the appointment..."
               className="min-h-[60px]"
               data-testid="input-appointment-notes"
@@ -292,10 +381,14 @@ export function AppointmentDialog({
             </Button>
             <Button
               onClick={handleSubmit}
-              disabled={createMutation.isPending || !selectedCustomerId || !form.date || !form.time}
+              disabled={createMutation.isPending || !canSubmit}
               data-testid="button-save-appointment"
             >
-              {createMutation.isPending ? "Scheduling..." : "Schedule"}
+              {createMutation.isPending
+                ? "Scheduling..."
+                : sections.length > 1
+                ? `Schedule ${sections.length} Appointments`
+                : "Schedule"}
             </Button>
           </div>
         </div>
