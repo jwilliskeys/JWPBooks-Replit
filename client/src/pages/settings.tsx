@@ -332,12 +332,14 @@ function SortableItemRow({
   item,
   onEdit,
   onDelete,
+  dragDisabled,
 }: {
   item: ServiceCatalogItem;
   onEdit: (item: ServiceCatalogItem) => void;
   onDelete: (id: number) => void;
+  dragDisabled?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id, disabled: dragDisabled });
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -354,10 +356,12 @@ function SortableItemRow({
     >
       <button
         {...attributes}
-        {...listeners}
-        className="cursor-grab active:cursor-grabbing p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors shrink-0"
+        {...(dragDisabled ? {} : listeners)}
+        className={`p-0.5 rounded text-muted-foreground transition-colors shrink-0 ${dragDisabled ? "cursor-default opacity-30" : "cursor-grab active:cursor-grabbing hover:text-foreground"}`}
         data-testid={`button-drag-item-${item.id}`}
         type="button"
+        disabled={dragDisabled}
+        title={dragDisabled ? "Clear search to reorder" : "Drag to reorder"}
       >
         <GripVertical className="h-3.5 w-3.5" />
       </button>
@@ -730,6 +734,7 @@ export default function SettingsPage() {
                                 item={item}
                                 onEdit={openEditItem}
                                 onDelete={setDeleteItemId}
+                                dragDisabled={!!search}
                               />
                             ))}
                           </div>
