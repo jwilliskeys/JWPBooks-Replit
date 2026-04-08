@@ -36,8 +36,22 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Pencil, Trash2, Search, Settings, ClipboardList, Music,
-  ChevronUp, ChevronDown, FolderPlus, Minus,
+  ChevronUp, ChevronDown, FolderPlus, Minus, GripVertical,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import type { ServiceCatalogItem, ServiceGroup } from "@shared/schema";
 
 function parseDurationHours(s: string): number {
@@ -313,6 +327,84 @@ function GroupDialog({
   );
 }
 
+function SortableItemRow({
+  item,
+  onEdit,
+  onDelete,
+}: {
+  item: ServiceCatalogItem;
+  onEdit: (item: ServiceCatalogItem) => void;
+  onDelete: (id: number) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    position: isDragging ? ("relative" as const) : undefined,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex items-center gap-2 px-3 py-2"
+      data-testid={`service-row-${item.id}`}
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing p-0.5 rounded text-muted-foreground hover:text-foreground transition-colors shrink-0"
+        data-testid={`button-drag-item-${item.id}`}
+        type="button"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </button>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>
+            {item.name}
+          </span>
+          {item.isTuning && (
+            <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0 gap-0.5">
+              <Music className="h-2.5 w-2.5" /> TUNING
+            </Badge>
+          )}
+          {item.isDefault && (
+            <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px] px-1.5 py-0" data-testid={`badge-default-${item.id}`}>
+              DEFAULT
+            </Badge>
+          )}
+        </div>
+        <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
+          {item.defaultCost && <span data-testid={`service-cost-${item.id}`}>{item.defaultCost}</span>}
+          {item.defaultDuration && <span data-testid={`service-duration-${item.id}`}>{item.defaultDuration}</span>}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 shrink-0">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => onEdit(item)}
+          data-testid={`button-edit-service-${item.id}`}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={() => onDelete(item.id)}
+          data-testid={`button-delete-service-${item.id}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -350,7 +442,6 @@ export default function SettingsPage() {
       apiRequest("PATCH", `/api/service-groups/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/service-groups"] });
-      setGroupDialogOpen(false);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -375,8 +466,6 @@ export default function SettingsPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
-      setServiceDialogOpen(false);
-      toast({ title: "Service added" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -386,7 +475,6 @@ export default function SettingsPage() {
       apiRequest("PATCH", `/api/service-catalog/${id}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/service-catalog"] });
-      setServiceDialogOpen(false);
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -415,12 +503,16 @@ export default function SettingsPage() {
     if (editItem) {
       updateItemMutation.mutate({ id: editItem.id, data: rest }, {
         onSuccess: () => {
+          setServiceDialogOpen(false);
+          setEditItem(null);
           if (isDefault) setDefaultMutation.mutate(editItem.id);
         },
       });
     } else {
       createItemMutation.mutate(rest, {
         onSuccess: (createdItem) => {
+          setServiceDialogOpen(false);
+          toast({ title: "Service added" });
           if (isDefault) setDefaultMutation.mutate(createdItem.id);
         },
       });
@@ -429,7 +521,12 @@ export default function SettingsPage() {
 
   function handleSaveGroup(name: string) {
     if (editGroup) {
-      updateGroupMutation.mutate({ id: editGroup.id, data: { name } });
+      updateGroupMutation.mutate({ id: editGroup.id, data: { name } }, {
+        onSuccess: () => {
+          setGroupDialogOpen(false);
+          setEditGroup(null);
+        },
+      });
       const oldName = editGroup.name;
       catalog.filter(i => i.category === oldName).forEach(i => {
         updateItemMutation.mutate({ id: i.id, data: { category: name } });
@@ -450,14 +547,17 @@ export default function SettingsPage() {
     updateGroupMutation.mutate({ id: other.id, data: { sortOrder: group.sortOrder ?? 0 } });
   }
 
-  function moveItem(item: ServiceCatalogItem, groupItems: ServiceCatalogItem[], direction: "up" | "down") {
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+
+  function handleItemDragEnd(event: DragEndEvent, groupItems: ServiceCatalogItem[]) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
     const sorted = [...groupItems].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-    const idx = sorted.findIndex(i => i.id === item.id);
-    const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-    if (swapIdx < 0 || swapIdx >= sorted.length) return;
-    const other = sorted[swapIdx];
-    updateItemMutation.mutate({ id: item.id, data: { sortOrder: other.sortOrder ?? 0 } });
-    updateItemMutation.mutate({ id: other.id, data: { sortOrder: item.sortOrder ?? 0 } });
+    const activeItem = sorted.find(i => i.id === active.id);
+    const overItem = sorted.find(i => i.id === over.id);
+    if (!activeItem || !overItem) return;
+    updateItemMutation.mutate({ id: activeItem.id, data: { sortOrder: overItem.sortOrder ?? 0 } });
+    updateItemMutation.mutate({ id: overItem.id, data: { sortOrder: activeItem.sortOrder ?? 0 } });
   }
 
   function openAddItem(groupName: string, groupItems: ServiceCatalogItem[]) {
@@ -608,80 +708,28 @@ export default function SettingsPage() {
                         No services yet
                       </p>
                     )}
-                    {search && groupItems.length === 0 ? null : (
-                      <div className="divide-y">
-                        {groupItems.map((item, itemIdx) => {
-                          const isFirstItem = itemIdx === 0;
-                          const isLastItem = itemIdx === groupItems.length - 1;
-                          return (
-                            <div
-                              key={item.id}
-                              className="flex items-center gap-2 px-3 py-2"
-                              data-testid={`service-row-${item.id}`}
-                            >
-                              <div className="flex flex-col -space-y-1">
-                                <button
-                                  className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
-                                  disabled={isFirstItem || updateItemMutation.isPending}
-                                  onClick={() => moveItem(item, groupItems, "up")}
-                                  data-testid={`button-item-up-${item.id}`}
-                                >
-                                  <ChevronUp className="h-3 w-3" />
-                                </button>
-                                <button
-                                  className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
-                                  disabled={isLastItem || updateItemMutation.isPending}
-                                  onClick={() => moveItem(item, groupItems, "down")}
-                                  data-testid={`button-item-down-${item.id}`}
-                                >
-                                  <ChevronDown className="h-3 w-3" />
-                                </button>
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>
-                                    {item.name}
-                                  </span>
-                                  {item.isTuning && (
-                                    <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0 gap-0.5">
-                                      <Music className="h-2.5 w-2.5" /> TUNING
-                                    </Badge>
-                                  )}
-                                  {item.isDefault && (
-                                    <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px] px-1.5 py-0" data-testid={`badge-default-${item.id}`}>
-                                      DEFAULT
-                                    </Badge>
-                                  )}
-                                </div>
-                                <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
-                                  {item.defaultCost && <span data-testid={`service-cost-${item.id}`}>{item.defaultCost}</span>}
-                                  {item.defaultDuration && <span data-testid={`service-duration-${item.id}`}>{item.defaultDuration}</span>}
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  onClick={() => openEditItem(item)}
-                                  data-testid={`button-edit-service-${item.id}`}
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                                  onClick={() => setDeleteItemId(item.id)}
-                                  data-testid={`button-delete-service-${item.id}`}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                    {search && groupItems.length === 0 ? null : groupItems.length > 0 && (
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={(e) => handleItemDragEnd(e, groupItems)}
+                      >
+                        <SortableContext
+                          items={groupItems.map(i => i.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          <div className="divide-y">
+                            {groupItems.map((item) => (
+                              <SortableItemRow
+                                key={item.id}
+                                item={item}
+                                onEdit={openEditItem}
+                                onDelete={setDeleteItemId}
+                              />
+                            ))}
+                          </div>
+                        </SortableContext>
+                      </DndContext>
                     )}
 
                     <div className="px-3 py-2 border-t bg-muted/20">
@@ -759,6 +807,7 @@ export default function SettingsPage() {
       </Card>
 
       <ServiceDialog
+        key={editItem?.id ?? "new"}
         open={serviceDialogOpen}
         onOpenChange={v => { setServiceDialogOpen(v); if (!v) setEditItem(null); }}
         item={editItem}
