@@ -708,6 +708,9 @@ export default function SettingsPage() {
                 onChange={e => setPayForm(f => ({ ...f, stripePaymentLink: e.target.value }))}
                 data-testid="input-stripe-link"
               />
+              <p className="text-xs text-muted-foreground">
+                Create a payment link in your Stripe dashboard (Dashboard → Payment Links → + New) and paste the URL here.
+              </p>
             </div>
           </div>
           <div className="flex justify-end">

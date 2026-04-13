@@ -872,19 +872,39 @@ export default function InvoiceDetailPage() {
               <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Ways to Pay</div>
               <div className="flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
                 {paymentSettings.zelleHandle && (
-                  <div><span className="font-medium">Zelle: </span><span>{paymentSettings.zelleHandle}</span></div>
+                  <div><span className="font-medium">Zelle</span> — Send to <span>{paymentSettings.zelleHandle}</span></div>
                 )}
                 {paymentSettings.venmoHandle && (
-                  <div><span className="font-medium">Venmo: </span><span>{paymentSettings.venmoHandle.startsWith("@") ? paymentSettings.venmoHandle : `@${paymentSettings.venmoHandle}`}</span></div>
+                  <div><span className="font-medium">Venmo</span> — Send to <span>{paymentSettings.venmoHandle.startsWith("@") ? paymentSettings.venmoHandle : `@${paymentSettings.venmoHandle}`}</span></div>
                 )}
                 {paymentSettings.cashAppHandle && (
-                  <div><span className="font-medium">Cash App: </span><span>{paymentSettings.cashAppHandle.startsWith("$") ? paymentSettings.cashAppHandle : `$${paymentSettings.cashAppHandle}`}</span></div>
+                  <div><span className="font-medium">Cash App</span> — Send to <span>{paymentSettings.cashAppHandle.startsWith("$") ? paymentSettings.cashAppHandle : `$${paymentSettings.cashAppHandle}`}</span></div>
                 )}
                 {paymentSettings.paypalMe && (
-                  <div><span className="font-medium">PayPal: </span><span>{paymentSettings.paypalMe}</span></div>
+                  <div>
+                    <span className="font-medium">PayPal</span> — Pay at{" "}
+                    <a
+                      href={paymentSettings.paypalMe.startsWith("http") ? paymentSettings.paypalMe : `https://${paymentSettings.paypalMe}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 underline break-all"
+                    >
+                      {paymentSettings.paypalMe}
+                    </a>
+                  </div>
                 )}
                 {paymentSettings.stripePaymentLink && (
-                  <div className="w-full"><span className="font-medium">Pay by card: </span><span className="break-all">{paymentSettings.stripePaymentLink}</span></div>
+                  <div className="w-full">
+                    <span className="font-medium">Credit / Debit Card</span> — Pay at{" "}
+                    <a
+                      href={paymentSettings.stripePaymentLink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-blue-600 underline break-all"
+                    >
+                      {paymentSettings.stripePaymentLink}
+                    </a>
+                  </div>
                 )}
               </div>
             </div>
