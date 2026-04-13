@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useLocation, Link } from "wouter";
+import { Link } from "wouter";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Calendar, Clock, Music, Pencil, FileText, CheckCircle, Trash2,
+  Calendar, Clock, Music, Pencil, FileText, CheckCircle, Trash2, ExternalLink,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -56,12 +56,12 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const [editMode, setEditMode] = useState(false);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
   const [localAppt, setLocalAppt] = useState<Appointment | null>(null);
+  const [createdInvoiceId, setCreatedInvoiceId] = useState<number | null>(null);
   const [form, setForm] = useState<FormState>({
     date: "", time: "", duration: "",
     servicesRequested: "", priceEstimate: "", notes: "", status: "scheduled",
   });
   const { toast } = useToast();
-  const [, navigate] = useLocation();
 
   useEffect(() => {
     if (appointment) {
@@ -76,6 +76,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
         status: appointment.status ?? "scheduled",
       });
       setEditMode(false);
+      setCreatedInvoiceId(null);
     }
   }, [appointment?.id]);
 
@@ -154,9 +155,8 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     },
     onSuccess: (invoice) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      toast({ title: "Invoice created" });
-      onOpenChange(false);
-      navigate(`/invoices/${invoice.id}`);
+      setCreatedInvoiceId(invoice.id);
+      toast({ title: `Invoice #${invoice.invoiceNumber} created` });
     },
     onError: () => toast({ title: "Failed to create invoice", variant: "destructive" }),
   });
@@ -173,22 +173,16 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     if (confirm("Delete this appointment?")) deleteMutation.mutate();
   }
 
-  function handleCompleteDialogClose(o: boolean) {
-    if (!o) {
-      setShowCompleteDialog(false);
-      queryClient.fetchQuery({ queryKey: ["/api/appointments"] }).then(() => {
-        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/customers", displayed?.customerId, "appointments"] });
-        if (displayed) {
-          setLocalAppt(prev => prev ? { ...prev, status: "completed" } : prev);
-        }
-      });
-    }
+  async function handleCompleteSuccess() {
+    await queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+    const refreshed = queryClient.getQueryData<Appointment[]>(["/api/appointments"]);
+    const fresh = refreshed?.find(a => a.id === displayed.id);
+    if (fresh) setLocalAppt(fresh);
   }
 
   return (
     <>
-      <Dialog open={open && !showCompleteDialog} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <div className="pr-6">
@@ -350,6 +344,17 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   <p className="text-muted-foreground">{displayed.notes}</p>
                 </div>
               )}
+              {createdInvoiceId && (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="text-muted-foreground flex-1">Invoice created.</span>
+                  <Link href={`/invoices/${createdInvoiceId}`} onClick={() => onOpenChange(false)}>
+                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-view-invoice">
+                      Open <ExternalLink className="h-3 w-3" />
+                    </Button>
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 
@@ -366,16 +371,18 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   >
                     <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => createInvoiceMutation.mutate()}
-                    disabled={createInvoiceMutation.isPending}
-                    data-testid="button-create-invoice-appt"
-                  >
-                    <FileText className="h-3.5 w-3.5 mr-1" />
-                    {createInvoiceMutation.isPending ? "Creating…" : "Invoice"}
-                  </Button>
+                  {!createdInvoiceId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => createInvoiceMutation.mutate()}
+                      disabled={createInvoiceMutation.isPending}
+                      data-testid="button-create-invoice-appt"
+                    >
+                      <FileText className="h-3.5 w-3.5 mr-1" />
+                      {createInvoiceMutation.isPending ? "Creating…" : "Invoice"}
+                    </Button>
+                  )}
                   {isScheduled && (
                     <Button
                       size="sm"
@@ -407,7 +414,8 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
         <CompleteAppointmentDialog
           appointment={displayed}
           open={showCompleteDialog}
-          onOpenChange={handleCompleteDialogClose}
+          onOpenChange={(o) => { if (!o) setShowCompleteDialog(false); }}
+          onComplete={handleCompleteSuccess}
         />
       )}
     </>
