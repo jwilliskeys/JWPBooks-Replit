@@ -95,7 +95,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
       const updated = await res.json();
       setLocalAppt(updated);
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", displayed?.customerId, "appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers", String(displayed?.customerId), "appointments"] });
       setEditMode(false);
       toast({ title: "Appointment updated" });
     },
@@ -115,10 +115,11 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const createInvoiceMutation = useMutation({
     mutationFn: async () => {
       const today = new Date();
-      const invoiceDate = today.toISOString().split("T")[0];
+      const mdyy = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear() % 100}`;
+      const invoiceDate = mdyy(today);
       const due = new Date(today);
       due.setDate(due.getDate() + 30);
-      const dueDate = due.toISOString().split("T")[0];
+      const dueDate = mdyy(due);
 
       const numRes = await fetch("/api/invoices/next-number");
       const numData = await numRes.json();
