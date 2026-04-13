@@ -869,7 +869,7 @@ export default function InvoiceDetailPage() {
           {/* Ways to Pay — print only */}
           {paymentSettings && (paymentSettings.zelleHandle || paymentSettings.venmoHandle || paymentSettings.cashAppHandle || paymentSettings.paypalMe || paymentSettings.stripePaymentLink) && (
             <div className="mt-8 pt-6 border-t border-border/50 hidden print:block">
-              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Ways to Pay</div>
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Payment Methods</div>
               <div className="flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
                 {paymentSettings.zelleHandle && (
                   <div><span className="font-medium">Zelle</span> — Send to <span>{paymentSettings.zelleHandle}</span></div>
