@@ -27,7 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Invoice, Customer, Piano, Appointment } from "@shared/schema";
+import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem } from "@shared/schema";
 
 const COMPANY_NAME = "John Willis Piano";
 const COMPANY_ADDRESS = "14 Murdock St. APT #3-4\nSomerville, MA 02145";
@@ -99,37 +99,35 @@ function statusBadge(status: string | null) {
   }
 }
 
-function buildLineItemsFromAppointment(appt: Appointment): LineItem[] {
-  const items: LineItem[] = [];
-  if (appt.isTuning) {
+function buildLineItemsFromAppointment(appt: Appointment, catalog: ServiceCatalogItem[]): LineItem[] {
+  const services = appt.servicesRequested
+    ? appt.servicesRequested.split(",").map(s => s.trim()).filter(Boolean)
+    : [];
+
+  if (services.length === 0) {
     const price = appt.priceEstimate ?? "$0.00";
-    items.push({
-      description: "Full Service Tuning",
+    return [{
+      description: "Service",
       quantity: 1,
       unitPrice: price,
       taxes: "",
       lineTotal: price,
-    });
+    }];
   }
-  if (appt.servicesRequested && appt.servicesRequested.trim()) {
-    items.push({
-      description: appt.servicesRequested.trim(),
+
+  return services.map(name => {
+    const catalogItem = catalog.find(
+      c => c.name.toLowerCase() === name.toLowerCase()
+    );
+    const price = catalogItem?.defaultCost ?? "$0.00";
+    return {
+      description: name,
       quantity: 1,
-      unitPrice: "$0.00",
+      unitPrice: price,
       taxes: "",
-      lineTotal: "$0.00",
-    });
-  }
-  if (items.length === 0) {
-    items.push({
-      description: "Service",
-      quantity: 1,
-      unitPrice: appt.priceEstimate ?? "$0.00",
-      taxes: "",
-      lineTotal: appt.priceEstimate ?? "$0.00",
-    });
-  }
-  return items;
+      lineTotal: price,
+    };
+  });
 }
 
 interface InvoiceFormState {
@@ -246,6 +244,11 @@ export default function InvoiceDetailPage() {
     enabled: !!appointmentIdParam && isNew === true,
   });
 
+  const { data: serviceCatalog } = useQuery<ServiceCatalogItem[]>({
+    queryKey: ["/api/service-catalog"],
+    enabled: !!appointmentIdParam && isNew === true,
+  });
+
   useEffect(() => {
     if (invoice && !isNew) {
       setForm(invoiceToForm(invoice));
@@ -262,7 +265,7 @@ export default function InvoiceDetailPage() {
     if (!isNew || !appointmentData) return;
     const customer = customers?.find(c => c.id === appointmentData.customerId);
     const piano = allPianos?.find(p => p.id === appointmentData.pianoId);
-    const lineItems = buildLineItemsFromAppointment(appointmentData);
+    const lineItems = buildLineItemsFromAppointment(appointmentData, serviceCatalog ?? []);
     const { subtotal, total } = computeTotals(lineItems);
     const pianoDesc = piano
       ? [piano.make, piano.model, piano.pianoType, piano.year].filter(Boolean).join(" ")
@@ -286,7 +289,7 @@ export default function InvoiceDetailPage() {
       subtotal,
       total,
     }));
-  }, [appointmentData, customers, allPianos, isNew]);
+  }, [appointmentData, customers, allPianos, isNew, serviceCatalog]);
 
   const createMutation = useMutation({
     mutationFn: (data: object) => apiRequest("POST", "/api/invoices", data).then(r => r.json()),
