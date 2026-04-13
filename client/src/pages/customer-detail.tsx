@@ -50,6 +50,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { Customer, Piano, ServiceRecord, Appointment } from "@shared/schema";
+import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { Link } from "wouter";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 
@@ -535,6 +536,7 @@ export default function CustomerDetail() {
   const [showAddPiano, setShowAddPiano] = useState(false);
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
   const [appointmentPianoId, setAppointmentPianoId] = useState<number | undefined>(undefined);
+  const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
   const [editForm, setEditForm] = useState<Partial<Customer>>({});
   const [newPianoForm, setNewPianoForm] = useState({
     make: "",
@@ -1045,9 +1047,9 @@ export default function CustomerDetail() {
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7"
-                          onClick={() => navigate("/appointments")}
+                          onClick={() => setDetailAppt(appt)}
                           data-testid={`button-open-appt-${appt.id}`}
-                          title="Open in Appointments"
+                          title="Open appointment"
                         >
                           <ExternalLink className="h-3 w-3" />
                         </Button>
@@ -1093,6 +1095,12 @@ export default function CustomerDetail() {
         customerId={customer.id}
         pianoId={appointmentPianoId}
         customerName={`${customer.firstName} ${customer.lastName}`}
+      />
+
+      <AppointmentDetailDialog
+        appointment={detailAppt}
+        open={!!detailAppt}
+        onOpenChange={(open) => { if (!open) setDetailAppt(null); }}
       />
     </div>
   );

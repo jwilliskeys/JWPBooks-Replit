@@ -27,6 +27,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Customer } from "@shared/schema";
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
+import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 
 type AppointmentSortOption = "date" | "lastName" | "location";
 
@@ -34,6 +35,7 @@ export default function Appointments() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<AppointmentSortOption>("date");
   const [completeDialogAppt, setCompleteDialogAppt] = useState<Appointment | null>(null);
+  const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
   const { toast } = useToast();
 
   const { data: appointments, isLoading } = useQuery<Appointment[]>({
@@ -206,6 +208,16 @@ export default function Appointments() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1 justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-7 gap-1"
+                        onClick={() => setDetailAppt(appointment)}
+                        data-testid={`button-open-appointment-${appointment.id}`}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Open
+                      </Button>
                       {isScheduled && (
                         <Button
                           variant="outline"
@@ -247,6 +259,12 @@ export default function Appointments() {
           onOpenChange={(open) => { if (!open) setCompleteDialogAppt(null); }}
         />
       )}
+
+      <AppointmentDetailDialog
+        appointment={detailAppt}
+        open={!!detailAppt}
+        onOpenChange={(open) => { if (!open) setDetailAppt(null); }}
+      />
     </div>
   );
 }
