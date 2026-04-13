@@ -55,6 +55,7 @@ function statusBadge(status: string | null | undefined) {
 export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Props) {
   const [editMode, setEditMode] = useState(false);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
+  const [localAppt, setLocalAppt] = useState<Appointment | null>(null);
   const [form, setForm] = useState<FormState>({
     date: "", time: "", duration: "",
     servicesRequested: "", priceEstimate: "", notes: "", status: "scheduled",
@@ -64,6 +65,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
 
   useEffect(() => {
     if (appointment) {
+      setLocalAppt(appointment);
       setForm({
         date: appointment.date ?? "",
         time: appointment.time ?? "",
@@ -80,16 +82,19 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const { data: customers } = useQuery<Customer[]>({ queryKey: ["/api/customers"] });
   const { data: allPianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
 
-  const customer = customers?.find(c => c.id === appointment?.customerId);
-  const piano = allPianos?.find(p => p.id === appointment?.pianoId);
+  const displayed = localAppt ?? appointment;
+  const customer = customers?.find(c => c.id === displayed?.customerId);
+  const piano = allPianos?.find(p => p.id === displayed?.pianoId);
   const pianoLabel = piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : null;
 
   const updateMutation = useMutation({
     mutationFn: (data: Partial<FormState>) =>
-      apiRequest("PATCH", `/api/appointments/${appointment?.id}`, data),
-    onSuccess: () => {
+      apiRequest("PATCH", `/api/appointments/${displayed?.id}`, data),
+    onSuccess: async (res) => {
+      const updated = await res.json();
+      setLocalAppt(updated);
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", appointment?.customerId, "appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers", displayed?.customerId, "appointments"] });
       setEditMode(false);
       toast({ title: "Appointment updated" });
     },
@@ -97,7 +102,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", `/api/appointments/${appointment?.id}`),
+    mutationFn: () => apiRequest("DELETE", `/api/appointments/${displayed?.id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       onOpenChange(false);
@@ -106,9 +111,59 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     onError: () => toast({ title: "Failed to delete", variant: "destructive" }),
   });
 
-  if (!appointment) return null;
+  const createInvoiceMutation = useMutation({
+    mutationFn: async () => {
+      const today = new Date();
+      const invoiceDate = today.toISOString().split("T")[0];
+      const due = new Date(today);
+      due.setDate(due.getDate() + 30);
+      const dueDate = due.toISOString().split("T")[0];
 
-  const isScheduled = appointment.status === "scheduled" || !appointment.status;
+      const numRes = await fetch("/api/invoices/next-number");
+      const numData = await numRes.json();
+      const invoiceNumber = String(numData.nextNumber ?? "1");
+
+      const customerName = customer
+        ? `${customer.firstName} ${customer.lastName}`
+        : "";
+      const rawPrice = parseFloat(displayed?.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
+      const priceStr = `$${rawPrice.toFixed(2)}`;
+      const lineItems = displayed?.servicesRequested
+        ? JSON.stringify([{
+            description: displayed.servicesRequested,
+            quantity: 1,
+            unitPrice: rawPrice,
+          }])
+        : JSON.stringify([]);
+
+      const res = await apiRequest("POST", "/api/invoices", {
+        customerId: displayed?.customerId,
+        appointmentId: displayed?.id,
+        pianoId: displayed?.pianoId ?? null,
+        invoiceDate,
+        dueDate,
+        invoiceNumber,
+        status: "draft",
+        lineItems,
+        subtotal: priceStr,
+        total: priceStr,
+        customerName,
+        pianoDescription: pianoLabel ?? "",
+      });
+      return res.json();
+    },
+    onSuccess: (invoice) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      toast({ title: "Invoice created" });
+      onOpenChange(false);
+      navigate(`/invoices/${invoice.id}`);
+    },
+    onError: () => toast({ title: "Failed to create invoice", variant: "destructive" }),
+  });
+
+  if (!displayed) return null;
+
+  const isScheduled = displayed.status === "scheduled" || !displayed.status;
 
   function handleSave() {
     updateMutation.mutate(form);
@@ -118,9 +173,17 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     if (confirm("Delete this appointment?")) deleteMutation.mutate();
   }
 
-  function handleCreateInvoice() {
-    onOpenChange(false);
-    navigate(`/invoices/new?appointmentId=${appointment.id}`);
+  function handleCompleteDialogClose(o: boolean) {
+    if (!o) {
+      setShowCompleteDialog(false);
+      queryClient.fetchQuery({ queryKey: ["/api/appointments"] }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/customers", displayed?.customerId, "appointments"] });
+        if (displayed) {
+          setLocalAppt(prev => prev ? { ...prev, status: "completed" } : prev);
+        }
+      });
+    }
   }
 
   return (
@@ -139,8 +202,8 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                 <DialogTitle>Appointment</DialogTitle>
               )}
               <div className="flex items-center gap-2 mt-1.5">
-                {statusBadge(appointment.status)}
-                {appointment.isTuning && (
+                {statusBadge(displayed.status)}
+                {displayed.isTuning && (
                   <Badge variant="secondary" className="text-xs">
                     <Music className="h-3 w-3 mr-1" /> Tuning
                   </Badge>
@@ -257,14 +320,14 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
               <div className="flex items-center gap-4 text-muted-foreground flex-wrap">
                 <span className="flex items-center gap-1.5">
                   <Calendar className="h-3.5 w-3.5 shrink-0" />
-                  {appointment.date}
+                  {displayed.date}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5 shrink-0" />
-                  {appointment.time}
+                  {displayed.time}
                 </span>
-                {appointment.duration && (
-                  <span>{appointment.duration}</span>
+                {displayed.duration && (
+                  <span>{displayed.duration}</span>
                 )}
               </div>
               {pianoLabel && (
@@ -272,19 +335,19 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   Piano: <span className="text-foreground font-medium">{pianoLabel}</span>
                 </p>
               )}
-              {appointment.servicesRequested && (
+              {displayed.servicesRequested && (
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-0.5">Services</p>
-                  <p>{appointment.servicesRequested}</p>
+                  <p>{displayed.servicesRequested}</p>
                 </div>
               )}
-              {appointment.priceEstimate && (
-                <p className="font-semibold text-base">{appointment.priceEstimate}</p>
+              {displayed.priceEstimate && (
+                <p className="font-semibold text-base">{displayed.priceEstimate}</p>
               )}
-              {appointment.notes && (
+              {displayed.notes && (
                 <div>
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-0.5">Notes</p>
-                  <p className="text-muted-foreground">{appointment.notes}</p>
+                  <p className="text-muted-foreground">{displayed.notes}</p>
                 </div>
               )}
             </div>
@@ -306,10 +369,12 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={handleCreateInvoice}
+                    onClick={() => createInvoiceMutation.mutate()}
+                    disabled={createInvoiceMutation.isPending}
                     data-testid="button-create-invoice-appt"
                   >
-                    <FileText className="h-3.5 w-3.5 mr-1" /> Invoice
+                    <FileText className="h-3.5 w-3.5 mr-1" />
+                    {createInvoiceMutation.isPending ? "Creating…" : "Invoice"}
                   </Button>
                   {isScheduled && (
                     <Button
@@ -338,14 +403,11 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
         </DialogContent>
       </Dialog>
 
-      {showCompleteDialog && (
+      {showCompleteDialog && displayed && (
         <CompleteAppointmentDialog
-          appointment={appointment}
+          appointment={displayed}
           open={showCompleteDialog}
-          onOpenChange={(o) => {
-            setShowCompleteDialog(o);
-            if (!o) onOpenChange(false);
-          }}
+          onOpenChange={handleCompleteDialogClose}
         />
       )}
     </>
