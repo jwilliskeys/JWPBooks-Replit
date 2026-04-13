@@ -1127,5 +1127,40 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/settings", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const settings = await storage.getUserSettings(userId);
+      res.json(settings ?? {
+        userId,
+        zelleHandle: null,
+        paypalMe: null,
+        venmoHandle: null,
+        cashAppHandle: null,
+        stripePaymentLink: null,
+        updatedAt: null,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/settings", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const { zelleHandle, paypalMe, venmoHandle, cashAppHandle, stripePaymentLink } = req.body;
+      const settings = await storage.upsertUserSettings(userId, {
+        zelleHandle: zelleHandle ?? null,
+        paypalMe: paypalMe ?? null,
+        venmoHandle: venmoHandle ?? null,
+        cashAppHandle: cashAppHandle ?? null,
+        stripePaymentLink: stripePaymentLink ?? null,
+      });
+      res.json(settings);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   return httpServer;
 }

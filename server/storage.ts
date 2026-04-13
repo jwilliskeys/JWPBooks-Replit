@@ -12,6 +12,7 @@ import {
   trips,
   tripAppointments,
   invoices,
+  userSettings,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -34,6 +35,7 @@ import {
   type InsertTripAppointment,
   type Invoice,
   type InsertInvoice,
+  type UserSettings,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -114,6 +116,8 @@ export interface IStorage {
     appointmentDate: string;
     customerId: number;
   }): Promise<void>;
+  getUserSettings(userId: string): Promise<UserSettings | undefined>;
+  upsertUserSettings(userId: string, data: Partial<Omit<UserSettings, "userId" | "updatedAt">>): Promise<UserSettings>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -624,6 +628,22 @@ export class DatabaseStorage implements IStorage {
       }
     }
     await this.updateCustomer(customerId, { pianoType, lastTuned: mostRecentTuned });
+  }
+
+  async getUserSettings(userId: string): Promise<UserSettings | undefined> {
+    const [row] = await db.select().from(userSettings).where(eq(userSettings.userId, userId));
+    return row;
+  }
+
+  async upsertUserSettings(userId: string, data: Partial<Omit<UserSettings, "userId" | "updatedAt">>): Promise<UserSettings> {
+    const [row] = await db.insert(userSettings)
+      .values({ userId, ...data })
+      .onConflictDoUpdate({
+        target: userSettings.userId,
+        set: { ...data, updatedAt: new Date() },
+      })
+      .returning();
+    return row;
   }
 
 }

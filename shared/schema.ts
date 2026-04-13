@@ -258,4 +258,16 @@ export const insertInvoiceSchema = createInsertSchema(invoices).omit({
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 
+export const userSettings = pgTable("user_settings", {
+  userId: text("user_id").primaryKey(),
+  zelleHandle: text("zelle_handle"),
+  paypalMe: text("paypal_me"),
+  venmoHandle: text("venmo_handle"),
+  cashAppHandle: text("cash_app_handle"),
+  stripePaymentLink: text("stripe_payment_link"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type UserSettings = typeof userSettings.$inferSelect;
+
 export * from "./models/auth";

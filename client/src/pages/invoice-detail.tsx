@@ -27,7 +27,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem } from "@shared/schema";
+import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings } from "@shared/schema";
 
 const COMPANY_NAME = "John Willis Piano";
 const COMPANY_ADDRESS = "14 Murdock St. APT #3-4\nSomerville, MA 02145";
@@ -247,6 +247,10 @@ export default function InvoiceDetailPage() {
   const { data: serviceCatalog } = useQuery<ServiceCatalogItem[]>({
     queryKey: ["/api/service-catalog"],
     enabled: !!appointmentIdParam && isNew === true,
+  });
+
+  const { data: paymentSettings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
   });
 
   useEffect(() => {
@@ -862,8 +866,32 @@ export default function InvoiceDetailPage() {
             </div>
           </div>
 
+          {/* Ways to Pay — print only */}
+          {paymentSettings && (paymentSettings.zelleHandle || paymentSettings.venmoHandle || paymentSettings.cashAppHandle || paymentSettings.paypalMe || paymentSettings.stripePaymentLink) && (
+            <div className="mt-8 pt-6 border-t border-border/50 hidden print:block">
+              <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Ways to Pay</div>
+              <div className="flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
+                {paymentSettings.zelleHandle && (
+                  <div><span className="font-medium">Zelle: </span><span>{paymentSettings.zelleHandle}</span></div>
+                )}
+                {paymentSettings.venmoHandle && (
+                  <div><span className="font-medium">Venmo: </span><span>{paymentSettings.venmoHandle.startsWith("@") ? paymentSettings.venmoHandle : `@${paymentSettings.venmoHandle}`}</span></div>
+                )}
+                {paymentSettings.cashAppHandle && (
+                  <div><span className="font-medium">Cash App: </span><span>{paymentSettings.cashAppHandle.startsWith("$") ? paymentSettings.cashAppHandle : `$${paymentSettings.cashAppHandle}`}</span></div>
+                )}
+                {paymentSettings.paypalMe && (
+                  <div><span className="font-medium">PayPal: </span><span>{paymentSettings.paypalMe}</span></div>
+                )}
+                {paymentSettings.stripePaymentLink && (
+                  <div className="w-full"><span className="font-medium">Pay by card: </span><span className="break-all">{paymentSettings.stripePaymentLink}</span></div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Print footer */}
-          <div className="mt-10 pt-6 border-t border-border/50 text-xs text-muted-foreground text-center hidden print:block">
+          <div className="mt-6 pt-4 border-t border-border/50 text-xs text-muted-foreground text-center hidden print:block">
             Page 1 of 1
           </div>
         </div>

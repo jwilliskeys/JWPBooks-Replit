@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +36,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Pencil, Trash2, Search, Settings, ClipboardList, Music,
-  ChevronUp, ChevronDown, FolderPlus, Minus, GripVertical,
+  ChevronUp, ChevronDown, FolderPlus, Minus, GripVertical, CreditCard,
 } from "lucide-react";
 import {
   DndContext,
@@ -53,7 +53,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ServiceCatalogItem, ServiceGroup } from "@shared/schema";
+import type { ServiceCatalogItem, ServiceGroup, UserSettings } from "@shared/schema";
 
 function parseDurationHours(s: string): number {
   if (!s) return 1.0;
@@ -422,6 +422,39 @@ export default function SettingsPage() {
   const [deleteItemId, setDeleteItemId] = useState<number | null>(null);
   const [deleteGroupId, setDeleteGroupId] = useState<number | null>(null);
 
+  const [payForm, setPayForm] = useState({
+    zelleHandle: "",
+    paypalMe: "",
+    venmoHandle: "",
+    cashAppHandle: "",
+    stripePaymentLink: "",
+  });
+
+  const { data: userSettings } = useQuery<UserSettings>({
+    queryKey: ["/api/settings"],
+  });
+
+  useEffect(() => {
+    if (userSettings) {
+      setPayForm({
+        zelleHandle: userSettings.zelleHandle ?? "",
+        paypalMe: userSettings.paypalMe ?? "",
+        venmoHandle: userSettings.venmoHandle ?? "",
+        cashAppHandle: userSettings.cashAppHandle ?? "",
+        stripePaymentLink: userSettings.stripePaymentLink ?? "",
+      });
+    }
+  }, [userSettings]);
+
+  const savePaymentMutation = useMutation({
+    mutationFn: (data: typeof payForm) => apiRequest("PATCH", "/api/settings", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Payment methods saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
   const { data: groups = [], isLoading: groupsLoading } = useQuery<ServiceGroup[]>({
     queryKey: ["/api/service-groups"],
   });
@@ -614,6 +647,81 @@ export default function SettingsPage() {
           </p>
         </div>
       </div>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <CreditCard className="h-4 w-4" /> Payment Methods
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            These appear on printed invoices so customers know how to pay you
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-zelle" className="text-sm">Zelle (phone or email)</Label>
+              <Input
+                id="pay-zelle"
+                placeholder="e.g. 555-555-5555"
+                value={payForm.zelleHandle}
+                onChange={e => setPayForm(f => ({ ...f, zelleHandle: e.target.value }))}
+                data-testid="input-zelle-handle"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-venmo" className="text-sm">Venmo handle</Label>
+              <Input
+                id="pay-venmo"
+                placeholder="e.g. @JohnWillis"
+                value={payForm.venmoHandle}
+                onChange={e => setPayForm(f => ({ ...f, venmoHandle: e.target.value }))}
+                data-testid="input-venmo-handle"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-cashapp" className="text-sm">Cash App $cashtag</Label>
+              <Input
+                id="pay-cashapp"
+                placeholder="e.g. $JohnWillis"
+                value={payForm.cashAppHandle}
+                onChange={e => setPayForm(f => ({ ...f, cashAppHandle: e.target.value }))}
+                data-testid="input-cashapp-handle"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-paypal" className="text-sm">PayPal.me link</Label>
+              <Input
+                id="pay-paypal"
+                placeholder="e.g. paypal.me/johnwillis"
+                value={payForm.paypalMe}
+                onChange={e => setPayForm(f => ({ ...f, paypalMe: e.target.value }))}
+                data-testid="input-paypal-me"
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="pay-stripe" className="text-sm">Stripe payment link (credit/debit card)</Label>
+              <Input
+                id="pay-stripe"
+                placeholder="e.g. https://buy.stripe.com/…"
+                value={payForm.stripePaymentLink}
+                onChange={e => setPayForm(f => ({ ...f, stripePaymentLink: e.target.value }))}
+                data-testid="input-stripe-link"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={() => savePaymentMutation.mutate(payForm)}
+              disabled={savePaymentMutation.isPending}
+              data-testid="button-save-payment-methods"
+            >
+              {savePaymentMutation.isPending ? "Saving…" : "Save Payment Methods"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-4">
