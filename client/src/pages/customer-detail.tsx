@@ -44,6 +44,7 @@ import {
   Eye,
   PhoneCall,
   Star,
+  ExternalLink,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
@@ -1040,6 +1041,16 @@ export default function CustomerDetail() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          onClick={() => navigate("/appointments")}
+                          data-testid={`button-open-appt-${appt.id}`}
+                          title="Open in Appointments"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                        </Button>
                         {!isCompleted && (
                           <Button
                             variant="outline"
@@ -1050,7 +1061,7 @@ export default function CustomerDetail() {
                             data-testid={`button-complete-appt-${appt.id}`}
                           >
                             <CheckCircle className="h-3 w-3 mr-1" />
-                            Done
+                            Complete
                           </Button>
                         )}
                         <Button
