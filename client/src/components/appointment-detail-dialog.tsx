@@ -175,9 +175,10 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   }
 
   async function handleCompleteSuccess() {
-    await queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+    await queryClient.refetchQueries({ queryKey: ["/api/appointments"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/customers", String(displayed?.customerId), "appointments"] });
     const refreshed = queryClient.getQueryData<Appointment[]>(["/api/appointments"]);
-    const fresh = refreshed?.find(a => a.id === displayed.id);
+    const fresh = refreshed?.find(a => a.id === displayed?.id);
     if (fresh) setLocalAppt(fresh);
   }
 
@@ -302,7 +303,18 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setEditMode(false)}
+                  onClick={() => {
+                    setForm({
+                      date: displayed.date ?? "",
+                      time: displayed.time ?? "",
+                      duration: displayed.duration ?? "",
+                      servicesRequested: displayed.servicesRequested ?? "",
+                      priceEstimate: displayed.priceEstimate ?? "",
+                      notes: displayed.notes ?? "",
+                      status: displayed.status ?? "scheduled",
+                    });
+                    setEditMode(false);
+                  }}
                   disabled={updateMutation.isPending}
                   data-testid="button-cancel-appt-edit"
                 >
