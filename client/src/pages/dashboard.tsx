@@ -73,14 +73,6 @@ function parseDate(dateStr: string | null | undefined): Date | null {
   return null;
 }
 
-function getMonthsSinceLastTuned(dateStr: string | null | undefined): number | null {
-  const date = parseDate(dateStr);
-  if (!date) return null;
-  const now = new Date();
-  const months = (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
-  return months;
-}
-
 function parseDollar(value: string | null | undefined): number {
   if (!value) return 0;
   const num = parseFloat(value.replace(/[$,]/g, ""));
@@ -223,7 +215,7 @@ function MonthlyIncomeChart({ invoices, loading }: { invoices: Invoice[] | undef
     <Card data-testid="monthly-income-card">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <DollarSign className="h-4 w-4" /> Monthly Income
+          <DollarSign className="h-4 w-4" /> Invoice Summary
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -301,14 +293,6 @@ export default function Dashboard() {
   const scheduledAppointments = useMemo(() =>
     allAppointments?.filter((a) => a.status === "scheduled") ?? [],
     [allAppointments]
-  );
-
-  const overdueCustomers = useMemo(() =>
-    customers?.filter((c) => {
-      const months = getMonthsSinceLastTuned(c.lastTuned);
-      return months !== null && months >= 12;
-    }) ?? [],
-    [customers]
   );
 
   const serviceAreaCounts = useMemo(() => {
@@ -445,7 +429,7 @@ export default function Dashboard() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Calendar className="h-4 w-4" /> Appointments & Overdue
+            <Calendar className="h-4 w-4" /> Upcoming Appointments
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -490,53 +474,6 @@ export default function Dashboard() {
                 })}
                 {scheduledAppointments.length > 5 && (
                   <p className="text-xs text-muted-foreground text-center pt-1">+{scheduledAppointments.length - 5} more</p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="border-t pt-3">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-medium flex items-center gap-1.5">
-                <span className="flex h-5 w-5 items-center justify-center rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-bold">
-                  {overdueCustomers.length}
-                </span>
-                Overdue
-                <span className="text-xs text-muted-foreground font-normal">12+ months</span>
-              </h3>
-              <Link href="/call-center">
-                <Button variant="ghost" size="sm" className="text-xs h-7" data-testid="link-view-overdue">
-                  Call Center <ArrowRight className="ml-1 h-3 w-3" />
-                </Button>
-              </Link>
-            </div>
-            {isLoading ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-8 w-full" />
-                ))}
-              </div>
-            ) : overdueCustomers.length === 0 ? (
-              <p className="text-xs text-muted-foreground py-3 text-center">All clients up to date</p>
-            ) : (
-              <div className="space-y-1">
-                {overdueCustomers.slice(0, 5).map((customer) => {
-                  const months = getMonthsSinceLastTuned(customer.lastTuned);
-                  return (
-                    <Link key={customer.id} href={`/customers/${customer.id}`}>
-                      <div className="flex items-center justify-between gap-2 p-2 rounded-md hover:bg-accent text-xs cursor-pointer" data-testid={`overdue-customer-${customer.id}`}>
-                        <span className="font-medium truncate">
-                          {customer.firstName} {customer.lastName}
-                        </span>
-                        <Badge variant="outline" className="text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-600 text-[10px] shrink-0">
-                          {months}mo
-                        </Badge>
-                      </div>
-                    </Link>
-                  );
-                })}
-                {overdueCustomers.length > 5 && (
-                  <p className="text-xs text-muted-foreground text-center pt-1">+{overdueCustomers.length - 5} more</p>
                 )}
               </div>
             )}
