@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin, Star, Phone, FileText, Settings } from "lucide-react";
+import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin, FileText, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import type { Customer, Piano } from "@shared/schema";
 import { formatPhone } from "@/lib/utils";
+import { getServiceArea } from "@/lib/scheduling";
 
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -49,9 +50,8 @@ export function AppSidebar() {
   const { data: customers } = useQuery<Customer[]>({ queryKey: ["/api/customers"] });
   const { data: allPianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
 
-  const { pianosByCustomer, customersWithAllInactivePianos } = useMemo(() => {
+  const pianosByCustomer = useMemo(() => {
     const map = new Map<number, Piano>();
-    const allInactive = new Set<number>();
     if (allPianos) {
       const customerPianoMap = new Map<number, Piano[]>();
       allPianos.forEach((p) => {
@@ -63,17 +63,17 @@ export function AppSidebar() {
         if (activePiano) {
           map.set(custId, activePiano);
         } else if (pianosArr.length > 0) {
-          allInactive.add(custId);
+          map.set(custId, pianosArr[0]);
         }
       });
     }
-    return { pianosByCustomer: map, customersWithAllInactivePianos: allInactive };
+    return map;
   }, [allPianos]);
 
-  const topStarredClients = useMemo(() => {
+  const bostonClients = useMemo(() => {
     if (!customers) return [];
-    const starred = customers
-      .filter(c => c.isStarred && !customersWithAllInactivePianos.has(c.id))
+    const pool = customers
+      .filter(c => getServiceArea(c.city ?? "", c.state ?? "") === "Boston")
       .map(c => {
         const score = Math.max(getMonthsSince(c.lastContacted) ?? 999, getMonthsSince(c.lastTuned) ?? 999);
         const piano = pianosByCustomer.get(c.id);
@@ -83,14 +83,14 @@ export function AppSidebar() {
         return { ...c, score, pianoLabel };
       })
       .sort((a, b) => b.score - a.score);
-    if (starred.length <= 3) return starred;
-    const offset = (shuffleSeed * 3) % starred.length;
-    const result: typeof starred = [];
+    if (pool.length <= 3) return pool;
+    const offset = (shuffleSeed * 3) % pool.length;
+    const result: typeof pool = [];
     for (let i = 0; i < 3; i++) {
-      result.push(starred[(offset + i) % starred.length]);
+      result.push(pool[(offset + i) % pool.length]);
     }
     return result;
-  }, [customers, customersWithAllInactivePianos, pianosByCustomer, shuffleSeed]);
+  }, [customers, pianosByCustomer, shuffleSeed]);
 
   return (
     <Sidebar>
@@ -148,19 +148,18 @@ export function AppSidebar() {
             </Button>
           </SidebarGroupLabel>
           <SidebarGroupContent>
-            {topStarredClients.length === 0 ? (
+            {bostonClients.length === 0 ? (
               <p className="text-xs text-muted-foreground px-2 py-1" data-testid="text-no-starred">
-                Star clients to see them here
+                No Boston clients found
               </p>
             ) : (
               <div className="space-y-0.5 px-1">
-                {topStarredClients.map(c => (
+                {bostonClients.map(c => (
                   <Link key={c.id} href={`/customers/${c.id}`}>
                     <div
                       className="flex items-start gap-2 text-xs rounded-md px-2 py-1.5 hover:bg-accent cursor-pointer"
                       data-testid={`call-center-client-${c.id}`}
                     >
-                      <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
                         <span className="font-medium truncate block">{c.firstName} {c.lastName}</span>
                         <span className="text-muted-foreground truncate block text-[10px]">
