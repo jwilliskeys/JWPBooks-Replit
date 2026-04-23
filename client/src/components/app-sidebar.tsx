@@ -50,8 +50,9 @@ export function AppSidebar() {
   const { data: customers } = useQuery<Customer[]>({ queryKey: ["/api/customers"] });
   const { data: allPianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
 
-  const pianosByCustomer = useMemo(() => {
+  const { pianosByCustomer, customersWithAllInactivePianos } = useMemo(() => {
     const map = new Map<number, Piano>();
+    const allInactive = new Set<number>();
     if (allPianos) {
       const customerPianoMap = new Map<number, Piano[]>();
       allPianos.forEach((p) => {
@@ -63,17 +64,18 @@ export function AppSidebar() {
         if (activePiano) {
           map.set(custId, activePiano);
         } else if (pianosArr.length > 0) {
+          allInactive.add(custId);
           map.set(custId, pianosArr[0]);
         }
       });
     }
-    return map;
+    return { pianosByCustomer: map, customersWithAllInactivePianos: allInactive };
   }, [allPianos]);
 
   const bostonClients = useMemo(() => {
     if (!customers) return [];
     const pool = customers
-      .filter(c => getServiceArea(c.city ?? "", c.state ?? "") === "Boston")
+      .filter(c => getServiceArea(c.city ?? "", c.state ?? "") === "Boston" && !customersWithAllInactivePianos.has(c.id))
       .map(c => {
         const score = Math.max(getMonthsSince(c.lastContacted) ?? 999, getMonthsSince(c.lastTuned) ?? 999);
         const piano = pianosByCustomer.get(c.id);
@@ -90,7 +92,7 @@ export function AppSidebar() {
       result.push(pool[(offset + i) % pool.length]);
     }
     return result;
-  }, [customers, pianosByCustomer, shuffleSeed]);
+  }, [customers, pianosByCustomer, customersWithAllInactivePianos, shuffleSeed]);
 
   return (
     <Sidebar>
@@ -149,7 +151,7 @@ export function AppSidebar() {
           </SidebarGroupLabel>
           <SidebarGroupContent>
             {bostonClients.length === 0 ? (
-              <p className="text-xs text-muted-foreground px-2 py-1" data-testid="text-no-starred">
+              <p className="text-xs text-muted-foreground px-2 py-1" data-testid="text-no-boston-clients">
                 No Boston clients found
               </p>
             ) : (
