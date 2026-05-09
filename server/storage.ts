@@ -123,6 +123,7 @@ export interface IStorage {
   upsertUserSettings(userId: string, data: Partial<Omit<UserSettings, "userId" | "updatedAt">>): Promise<UserSettings>;
   getCustomerContacts(customerId: number): Promise<CustomerContact[]>;
   createCustomerContact(contact: InsertCustomerContact, userId: string): Promise<CustomerContact>;
+  getCustomerContact(id: number): Promise<CustomerContact | undefined>;
   updateCustomerContact(id: number, data: Partial<InsertCustomerContact>): Promise<CustomerContact | undefined>;
   deleteCustomerContact(id: number): Promise<boolean>;
   setPrimaryContact(id: number, customerId: number): Promise<CustomerContact | undefined>;
@@ -668,6 +669,11 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(customerContacts).values({ ...contact, userId }).returning();
     return created;
+  }
+
+  async getCustomerContact(id: number): Promise<CustomerContact | undefined> {
+    const [contact] = await db.select().from(customerContacts).where(eq(customerContacts.id, id));
+    return contact;
   }
 
   async updateCustomerContact(id: number, data: Partial<InsertCustomerContact>): Promise<CustomerContact | undefined> {

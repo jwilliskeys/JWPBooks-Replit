@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, FileText } from "lucide-react";
+import { Plus, Search, FileText, Mail } from "lucide-react";
 import type { Invoice, Customer } from "@shared/schema";
 
 function parseDollar(str: string | null | undefined): number {
@@ -169,6 +169,7 @@ export default function InvoicesPage() {
                   <th className="text-right px-4 py-2.5 font-semibold text-foreground">Total</th>
                   <th className="text-right px-4 py-2.5 font-semibold text-foreground">Paid</th>
                   <th className="text-right px-4 py-2.5 font-semibold text-foreground whitespace-nowrap">Amount Due</th>
+                  <th className="px-2 py-2.5"></th>
                 </tr>
               </thead>
               <tbody>
@@ -193,6 +194,26 @@ export default function InvoicesPage() {
                     <td className="px-4 py-3 text-right font-medium tabular-nums">{inv.total ?? "$0.00"}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{inv.paidAmount ?? "$0.00"}</td>
                     <td className="px-4 py-3 text-right font-medium tabular-nums">{amountDue(inv)}</td>
+                    <td className="px-4 py-2 text-right" onClick={e => e.stopPropagation()}>
+                      {inv.customerEmail && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7"
+                          title={`Email invoice to ${inv.customerEmail}`}
+                          onClick={() => {
+                            const subject = encodeURIComponent(`Invoice #${inv.invoiceNumber} – John Willis Piano`);
+                            const body = encodeURIComponent(
+                              `Hi ${inv.customerName ?? getCustomerName(inv)},\n\nPlease find your invoice below:\n\nInvoice #${inv.invoiceNumber}\nDate: ${inv.invoiceDate ?? ""}\nDue: ${inv.dueDate ?? ""}\nTotal: ${inv.total ?? "$0.00"}\n\nThank you!\nJohn Willis Piano`
+                            );
+                            window.location.href = `mailto:${inv.customerEmail}?subject=${subject}&body=${body}`;
+                          }}
+                          data-testid={`button-email-invoice-${inv.id}`}
+                        >
+                          <Mail className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

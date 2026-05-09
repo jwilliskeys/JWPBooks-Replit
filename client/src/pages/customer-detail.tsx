@@ -981,7 +981,23 @@ export default function CustomerDetail() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {(!contacts || contacts.length === 0) && !showAddContact && (
+            {/* Main customer as implicit primary row */}
+            {customer && (
+              <div className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/20" data-testid="contact-row-client">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium" data-testid="text-contact-name-client">{customer.firstName} {customer.lastName}</span>
+                    {contacts && contacts.some(c => c.isPrimary)
+                      ? <Badge variant="secondary" className="text-xs">Client</Badge>
+                      : <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>
+                    }
+                  </div>
+                  {customer.phone && <a href={`tel:${customer.phone}`} className="text-xs text-muted-foreground block mt-0.5">{formatPhone(customer.phone)}</a>}
+                  {customer.email && <a href={`mailto:${customer.email}`} className="text-xs text-muted-foreground block">{customer.email}</a>}
+                </div>
+              </div>
+            )}
+            {(!contacts || contacts.length === 0) && !showAddContact && !customer && (
               <p className="text-sm text-muted-foreground text-center py-2">No additional contacts yet</p>
             )}
             {contacts && contacts.map(contact => (

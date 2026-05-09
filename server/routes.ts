@@ -1162,6 +1162,8 @@ export async function registerRoutes(
       const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const contact = await storage.getCustomerContact(id);
+      if (!contact || contact.userId !== userId) return res.status(404).json({ message: "Contact not found" });
       const parsed = insertCustomerContactSchema.partial().safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       const updated = await storage.updateCustomerContact(id, parsed.data);
@@ -1177,10 +1179,12 @@ export async function registerRoutes(
       const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
-      const { customerId } = req.body;
-      if (!customerId) return res.status(400).json({ message: "customerId required" });
+      const contact = await storage.getCustomerContact(id);
+      if (!contact || contact.userId !== userId) return res.status(404).json({ message: "Contact not found" });
+      const customerId = contact.customerId;
       const customer = await storage.getCustomer(customerId);
       if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      if (contact.customerId !== customerId) return res.status(403).json({ message: "Forbidden" });
       const updated = await storage.setPrimaryContact(id, customerId);
       if (!updated) return res.status(404).json({ message: "Contact not found" });
       res.json(updated);
@@ -1191,8 +1195,11 @@ export async function registerRoutes(
 
   app.delete("/api/customer-contacts/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const id = parseInt(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const contact = await storage.getCustomerContact(id);
+      if (!contact || contact.userId !== userId) return res.status(404).json({ message: "Contact not found" });
       const deleted = await storage.deleteCustomerContact(id);
       if (!deleted) return res.status(404).json({ message: "Contact not found" });
       res.json({ success: true });

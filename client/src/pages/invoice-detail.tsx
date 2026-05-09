@@ -290,7 +290,11 @@ export default function InvoiceDetailPage() {
       invoiceDate: appointmentData.date,
       dueDate: appointmentData.date,
       customerName: customer ? `${customer.firstName} ${customer.lastName}` : "",
-      customerEmail: customer?.email ?? "",
+      customerEmail: (() => {
+        const fetchedContacts = queryClient.getQueryData<CustomerContact[]>(["/api/customers", appointmentData.customerId, "contacts"]);
+        const primary = fetchedContacts?.find(c => c.isPrimary);
+        return primary?.email ?? customer?.email ?? "";
+      })(),
       customerAddress: custAddr,
       customerPhone: customer?.phone ?? "",
       pianoDescription: pianoDesc,
