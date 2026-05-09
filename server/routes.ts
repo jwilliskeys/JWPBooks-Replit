@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema } from "@shared/schema";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
@@ -1124,6 +1124,80 @@ export async function registerRoutes(
       res.json({ durations });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/customers/:id/contacts", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(id);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      const contacts = await storage.getCustomerContacts(id);
+      res.json(contacts);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/customers/:id/contacts", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const customerId = parseInt(req.params.id);
+      if (isNaN(customerId)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(customerId);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      const parsed = insertCustomerContactSchema.safeParse({ ...req.body, customerId });
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const contact = await storage.createCustomerContact(parsed.data, userId);
+      res.status(201).json(contact);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/customer-contacts/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const parsed = insertCustomerContactSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const updated = await storage.updateCustomerContact(id, parsed.data);
+      if (!updated) return res.status(404).json({ message: "Contact not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/customer-contacts/:id/set-primary", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const { customerId } = req.body;
+      if (!customerId) return res.status(400).json({ message: "customerId required" });
+      const customer = await storage.getCustomer(customerId);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      const updated = await storage.setPrimaryContact(id, customerId);
+      if (!updated) return res.status(404).json({ message: "Contact not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/customer-contacts/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const deleted = await storage.deleteCustomerContact(id);
+      if (!deleted) return res.status(404).json({ message: "Contact not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 

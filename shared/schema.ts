@@ -167,6 +167,28 @@ export const invoices = pgTable("invoices", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const customerContacts = pgTable("customer_contacts", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id"),
+  customerId: integer("customer_id").notNull(),
+  firstName: text("first_name").notNull(),
+  lastName: text("last_name"),
+  phone: text("phone"),
+  email: text("email"),
+  role: text("role"),
+  isPrimary: boolean("is_primary").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCustomerContactSchema = createInsertSchema(customerContacts).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
+export type CustomerContact = typeof customerContacts.$inferSelect;
+export type InsertCustomerContact = z.infer<typeof insertCustomerContactSchema>;
+
 export const insertCustomerSchema = createInsertSchema(customers).omit({
   id: true,
   userId: true,

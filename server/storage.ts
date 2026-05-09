@@ -13,6 +13,7 @@ import {
   tripAppointments,
   invoices,
   userSettings,
+  customerContacts,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -36,6 +37,8 @@ import {
   type Invoice,
   type InsertInvoice,
   type UserSettings,
+  type CustomerContact,
+  type InsertCustomerContact,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -118,6 +121,11 @@ export interface IStorage {
   }): Promise<void>;
   getUserSettings(userId: string): Promise<UserSettings | undefined>;
   upsertUserSettings(userId: string, data: Partial<Omit<UserSettings, "userId" | "updatedAt">>): Promise<UserSettings>;
+  getCustomerContacts(customerId: number): Promise<CustomerContact[]>;
+  createCustomerContact(contact: InsertCustomerContact, userId: string): Promise<CustomerContact>;
+  updateCustomerContact(id: number, data: Partial<InsertCustomerContact>): Promise<CustomerContact | undefined>;
+  deleteCustomerContact(id: number): Promise<boolean>;
+  setPrimaryContact(id: number, customerId: number): Promise<CustomerContact | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -644,6 +652,53 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return row;
+  }
+
+  async getCustomerContacts(customerId: number): Promise<CustomerContact[]> {
+    return db.select().from(customerContacts)
+      .where(eq(customerContacts.customerId, customerId))
+      .orderBy(customerContacts.createdAt);
+  }
+
+  async createCustomerContact(contact: InsertCustomerContact, userId: string): Promise<CustomerContact> {
+    if (contact.isPrimary) {
+      await db.update(customerContacts)
+        .set({ isPrimary: false })
+        .where(eq(customerContacts.customerId, contact.customerId));
+    }
+    const [created] = await db.insert(customerContacts).values({ ...contact, userId }).returning();
+    return created;
+  }
+
+  async updateCustomerContact(id: number, data: Partial<InsertCustomerContact>): Promise<CustomerContact | undefined> {
+    if (data.isPrimary) {
+      const [existing] = await db.select().from(customerContacts).where(eq(customerContacts.id, id));
+      if (existing) {
+        await db.update(customerContacts)
+          .set({ isPrimary: false })
+          .where(eq(customerContacts.customerId, existing.customerId));
+      }
+    }
+    const [updated] = await db.update(customerContacts).set(data).where(eq(customerContacts.id, id)).returning();
+    return updated;
+  }
+
+  async deleteCustomerContact(id: number): Promise<boolean> {
+    const result = await db.delete(customerContacts).where(eq(customerContacts.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async setPrimaryContact(id: number, customerId: number): Promise<CustomerContact | undefined> {
+    return db.transaction(async (tx) => {
+      await tx.update(customerContacts)
+        .set({ isPrimary: false })
+        .where(eq(customerContacts.customerId, customerId));
+      const [updated] = await tx.update(customerContacts)
+        .set({ isPrimary: true })
+        .where(eq(customerContacts.id, id))
+        .returning();
+      return updated;
+    });
   }
 
 }

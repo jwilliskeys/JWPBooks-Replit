@@ -24,10 +24,10 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft } from "lucide-react";
+import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft, Mail } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings } from "@shared/schema";
+import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings, CustomerContact } from "@shared/schema";
 
 const COMPANY_NAME = "John Willis Piano";
 const COMPANY_ADDRESS = "14 Murdock St. APT #3-4\nSomerville, MA 02145";
@@ -253,6 +253,11 @@ export default function InvoiceDetailPage() {
     queryKey: ["/api/settings"],
   });
 
+  const { data: customerContacts } = useQuery<CustomerContact[]>({
+    queryKey: ["/api/customers", form.customerId, "contacts"],
+    enabled: form.customerId > 0,
+  });
+
   useEffect(() => {
     if (invoice && !isNew) {
       setForm(invoiceToForm(invoice));
@@ -474,6 +479,23 @@ export default function InvoiceDetailPage() {
                     Mark Paid
                   </Button>
                 )}
+                {displayData.customerEmail && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const subject = encodeURIComponent(`Invoice #${displayData.invoiceNumber} – John Willis Piano`);
+                      const body = encodeURIComponent(
+                        `Hi ${displayData.customerName},\n\nPlease find your invoice below:\n\nInvoice #${displayData.invoiceNumber}\nDate: ${displayData.invoiceDate}\nDue: ${displayData.dueDate}\nTotal: ${displayData.total}\n\nThank you!\nJohn Willis Piano`
+                      );
+                      window.location.href = `mailto:${displayData.customerEmail}?subject=${subject}&body=${body}`;
+                    }}
+                    data-testid="button-email-invoice"
+                  >
+                    <Mail className="h-3.5 w-3.5 mr-1" />
+                    Email
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
@@ -642,7 +664,7 @@ export default function InvoiceDetailPage() {
                       ...f,
                       customerId: cust.id,
                       customerName: `${cust.firstName} ${cust.lastName}`,
-                      customerEmail: cust.email ?? "",
+                      customerEmail: customerContacts?.find(c => c.isPrimary)?.email ?? cust.email ?? "",
                       customerPhone: cust.phone ?? "",
                       customerAddress: addr,
                     }));

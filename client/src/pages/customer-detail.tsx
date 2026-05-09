@@ -45,11 +45,13 @@ import {
   PhoneCall,
   Star,
   ExternalLink,
+  Users,
+  Crown,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer, Piano, ServiceRecord, Appointment } from "@shared/schema";
+import type { Customer, Piano, ServiceRecord, Appointment, CustomerContact } from "@shared/schema";
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { Link } from "wouter";
 import { AppointmentDialog } from "@/components/appointment-dialog";
@@ -538,6 +540,9 @@ export default function CustomerDetail() {
   const [appointmentPianoId, setAppointmentPianoId] = useState<number | undefined>(undefined);
   const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
   const [editForm, setEditForm] = useState<Partial<Customer>>({});
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [editingContact, setEditingContact] = useState<CustomerContact | null>(null);
+  const [contactForm, setContactForm] = useState({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false });
   const [newPianoForm, setNewPianoForm] = useState({
     make: "",
     model: "",
@@ -562,6 +567,37 @@ export default function CustomerDetail() {
   const { data: customerAppointments } = useQuery<Appointment[]>({
     queryKey: ["/api/customers", customerId, "appointments"],
     enabled: !!customerId,
+  });
+
+  const { data: contacts } = useQuery<CustomerContact[]>({
+    queryKey: ["/api/customers", customerId, "contacts"],
+    enabled: !!customerId,
+  });
+
+  const invalidateContacts = () => queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "contacts"] });
+
+  const createContactMutation = useMutation({
+    mutationFn: (data: typeof contactForm) => apiRequest("POST", `/api/customers/${customerId}/contacts`, data),
+    onSuccess: () => { invalidateContacts(); setShowAddContact(false); setContactForm({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false }); toast({ title: "Contact added" }); },
+    onError: () => toast({ title: "Failed to add contact", variant: "destructive" }),
+  });
+
+  const updateContactMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: typeof contactForm }) => apiRequest("PATCH", `/api/customer-contacts/${id}`, data),
+    onSuccess: () => { invalidateContacts(); setEditingContact(null); toast({ title: "Contact updated" }); },
+    onError: () => toast({ title: "Failed to update contact", variant: "destructive" }),
+  });
+
+  const deleteContactMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/customer-contacts/${id}`),
+    onSuccess: () => { invalidateContacts(); toast({ title: "Contact removed" }); },
+    onError: () => toast({ title: "Failed to remove contact", variant: "destructive" }),
+  });
+
+  const setPrimaryContactMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/customer-contacts/${id}/set-primary`, { customerId: parseInt(customerId!) }),
+    onSuccess: () => { invalidateContacts(); toast({ title: "Primary contact updated" }); },
+    onError: () => toast({ title: "Failed to update primary contact", variant: "destructive" }),
   });
 
   const completeAppointmentMutation = useMutation({
@@ -920,6 +956,104 @@ export default function CustomerDetail() {
             )}
             {!customer.phone && !customer.email && !customer.address && (
               <p className="text-sm text-muted-foreground text-center py-4">No contact information available</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Additional Contacts */}
+      {!isEditing && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Users className="h-4 w-4" /> Additional Contacts
+              </CardTitle>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => { setContactForm({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false }); setShowAddContact(true); setEditingContact(null); }}
+                data-testid="button-add-contact"
+              >
+                <Plus className="h-3 w-3 mr-1" /> Add Contact
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {(!contacts || contacts.length === 0) && !showAddContact && (
+              <p className="text-sm text-muted-foreground text-center py-2">No additional contacts yet</p>
+            )}
+            {contacts && contacts.map(contact => (
+              <div key={contact.id} className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/30" data-testid={`contact-row-${contact.id}`}>
+                {editingContact?.id === contact.id ? (
+                  <div className="flex-1 space-y-2">
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <Input placeholder="First Name *" value={contactForm.firstName} onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-first" />
+                      <Input placeholder="Last Name" value={contactForm.lastName} onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-last" />
+                      <Input placeholder="Phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-phone" />
+                      <Input placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-email" />
+                      <Input placeholder="Role (e.g. Wife, Music Director)" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} className="h-7 text-sm sm:col-span-2" data-testid="input-edit-contact-role" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                        <input type="checkbox" checked={contactForm.isPrimary} onChange={e => setContactForm(f => ({ ...f, isPrimary: e.target.checked }))} data-testid="checkbox-edit-contact-primary" />
+                        Set as Primary Contact
+                      </label>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" className="h-7 text-xs" onClick={() => updateContactMutation.mutate({ id: contact.id, data: contactForm })} disabled={updateContactMutation.isPending || !contactForm.firstName} data-testid="button-save-contact-edit">Save</Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingContact(null)}>Cancel</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium" data-testid={`text-contact-name-${contact.id}`}>{contact.firstName}{contact.lastName ? ` ${contact.lastName}` : ""}</span>
+                      {contact.role && <Badge variant="secondary" className="text-xs">{contact.role}</Badge>}
+                      {contact.isPrimary && <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>}
+                    </div>
+                    {contact.phone && <a href={`tel:${contact.phone}`} className="text-xs text-muted-foreground block mt-0.5" data-testid={`text-contact-phone-${contact.id}`}>{formatPhone(contact.phone)}</a>}
+                    {contact.email && <a href={`mailto:${contact.email}`} className="text-xs text-muted-foreground block" data-testid={`text-contact-email-${contact.id}`}>{contact.email}</a>}
+                  </div>
+                )}
+                {editingContact?.id !== contact.id && (
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    {!contact.isPrimary && (
+                      <Button variant="ghost" size="icon" className="h-6 w-6" title="Set as Primary" onClick={() => setPrimaryContactMutation.mutate(contact.id)} disabled={setPrimaryContactMutation.isPending} data-testid={`button-set-primary-${contact.id}`}>
+                        <Crown className="h-3 w-3" />
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setContactForm({ firstName: contact.firstName, lastName: contact.lastName ?? "", phone: contact.phone ?? "", email: contact.email ?? "", role: contact.role ?? "", isPrimary: contact.isPrimary ?? false }); setEditingContact(contact); setShowAddContact(false); }} data-testid={`button-edit-contact-${contact.id}`}>
+                      <Edit className="h-3 w-3" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => { if (confirm("Remove this contact?")) deleteContactMutation.mutate(contact.id); }} disabled={deleteContactMutation.isPending} data-testid={`button-delete-contact-${contact.id}`}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {showAddContact && (
+              <div className="p-3 rounded-lg border bg-muted/20 space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Input placeholder="First Name *" value={contactForm.firstName} onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-first" />
+                  <Input placeholder="Last Name" value={contactForm.lastName} onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-last" />
+                  <Input placeholder="Phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-phone" />
+                  <Input placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-email" />
+                  <Input placeholder="Role (e.g. Wife, Music Director)" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} className="h-7 text-sm sm:col-span-2" data-testid="input-new-contact-role" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <input type="checkbox" checked={contactForm.isPrimary} onChange={e => setContactForm(f => ({ ...f, isPrimary: e.target.checked }))} data-testid="checkbox-new-contact-primary" />
+                    Set as Primary Contact
+                  </label>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" className="h-7 text-xs" onClick={() => createContactMutation.mutate(contactForm)} disabled={createContactMutation.isPending || !contactForm.firstName} data-testid="button-save-new-contact">Add</Button>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddContact(false)}>Cancel</Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
