@@ -290,11 +290,7 @@ export default function InvoiceDetailPage() {
       invoiceDate: appointmentData.date,
       dueDate: appointmentData.date,
       customerName: customer ? `${customer.firstName} ${customer.lastName}` : "",
-      customerEmail: (() => {
-        const fetchedContacts = queryClient.getQueryData<CustomerContact[]>(["/api/customers", appointmentData.customerId, "contacts"]);
-        const primary = fetchedContacts?.find(c => c.isPrimary);
-        return primary?.email ?? customer?.email ?? "";
-      })(),
+      customerEmail: customer?.email ?? "",
       customerAddress: custAddr,
       customerPhone: customer?.phone ?? "",
       pianoDescription: pianoDesc,
@@ -303,6 +299,19 @@ export default function InvoiceDetailPage() {
       total,
     }));
   }, [appointmentData, customers, allPianos, isNew, serviceCatalog]);
+
+  // Reactively update customerEmail to primary contact email once contacts load.
+  // Runs whenever the selected customer or their contacts change, but only in
+  // create/edit mode (never overrides a saved invoice being viewed).
+  useEffect(() => {
+    if (!isNew && !editMode) return;
+    if (!form.customerId) return;
+    const customer = customers?.find(c => c.id === form.customerId);
+    if (!customer) return;
+    const primary = customerContacts?.find(c => c.isPrimary);
+    const resolvedEmail = primary?.email ?? customer.email ?? "";
+    setForm(f => ({ ...f, customerEmail: resolvedEmail }));
+  }, [form.customerId, customerContacts, customers, isNew, editMode]);
 
   const createMutation = useMutation({
     mutationFn: (data: object) => apiRequest("POST", "/api/invoices", data).then(r => r.json()),
@@ -668,7 +677,7 @@ export default function InvoiceDetailPage() {
                       ...f,
                       customerId: cust.id,
                       customerName: `${cust.firstName} ${cust.lastName}`,
-                      customerEmail: customerContacts?.find(c => c.isPrimary)?.email ?? cust.email ?? "",
+                      customerEmail: cust.email ?? "",
                       customerPhone: cust.phone ?? "",
                       customerAddress: addr,
                     }));

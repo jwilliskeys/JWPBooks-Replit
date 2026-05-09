@@ -1184,7 +1184,6 @@ export async function registerRoutes(
       const customerId = contact.customerId;
       const customer = await storage.getCustomer(customerId);
       if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
-      if (contact.customerId !== customerId) return res.status(403).json({ message: "Forbidden" });
       const updated = await storage.setPrimaryContact(id, customerId);
       if (!updated) return res.status(404).json({ message: "Contact not found" });
       res.json(updated);
