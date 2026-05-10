@@ -82,8 +82,16 @@ export function CompleteAppointmentDialog({
     enabled: open,
   });
 
+  function deriveIsTuning(): boolean {
+    if (appointment.isTuning) return true;
+    if (!catalog || !appointment.servicesRequested) return false;
+    const requestedNames = appointment.servicesRequested.split(",").map(s => s.trim().toLowerCase());
+    return catalog.some(item => item.isTuning && requestedNames.includes(item.name.toLowerCase()));
+  }
+
   useEffect(() => {
     if (!open || !pianos) return;
+    const isTuning = deriveIsTuning();
     const initialRecords: PianoRecord[] = [];
     if (appointment.pianoId) {
       const piano = pianos.find(p => p.id === appointment.pianoId);
@@ -91,7 +99,7 @@ export function CompleteAppointmentDialog({
         initialRecords.push({
           pianoId: piano.id,
           label: [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || `Piano #${piano.id}`,
-          isTuning: appointment.isTuning ?? false,
+          isTuning,
           notes: "",
           humidity: "",
           temperature: "",
@@ -103,7 +111,7 @@ export function CompleteAppointmentDialog({
       initialRecords.push({
         pianoId: piano.id,
         label: [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || `Piano #${piano.id}`,
-        isTuning: appointment.isTuning ?? false,
+        isTuning,
         notes: "",
         humidity: "",
         temperature: "",
@@ -114,7 +122,7 @@ export function CompleteAppointmentDialog({
     setMiscServices([]);
     setResult("completed");
     setClientNotes(appointment.notes || "");
-  }, [open, pianos, appointment.pianoId, appointment.isTuning, appointment.notes, appointment.id]);
+  }, [open, pianos, catalog, appointment.pianoId, appointment.isTuning, appointment.servicesRequested, appointment.notes, appointment.id]);
 
   const completeMutation = useMutation({
     mutationFn: () =>

@@ -817,7 +817,7 @@ export default function CalendarPage() {
                       {dayAppts.map((appt) => {
                         const customer = customerMap.get(appt.customerId);
                         const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
-                        const pianoMake = piano?.make || null;
+                        const pianoShort = piano ? ([piano.make, piano.model].filter(Boolean).join(" ") || null) : null;
                         const isCompleted = appt.status === "completed";
                         return (
                           <Badge
@@ -829,7 +829,7 @@ export default function CalendarPage() {
                           >
                             <span className={isCompleted ? "line-through" : ""}>
                               {appt.time} {customer ? customer.lastName : ""}
-                              {pianoMake ? ` · ${pianoMake}` : ""}
+                              {pianoShort ? ` · ${pianoShort}` : ""}
                             </span>
                           </Badge>
                         );
