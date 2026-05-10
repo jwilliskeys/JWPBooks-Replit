@@ -24,7 +24,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft, Mail } from "lucide-react";
+import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft, Mail, Download } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings, CustomerContact } from "@shared/schema";
@@ -220,6 +220,7 @@ export default function InvoiceDetailPage() {
   const [form, setForm] = useState<InvoiceFormState>(defaultForm());
   const [printAfterSave, setPrintAfterSave] = useState(false);
   const [printAfterUpdate, setPrintAfterUpdate] = useState(false);
+  const [savingPdf, setSavingPdf] = useState(false);
 
   const { data: invoice, isLoading: loadingInvoice } = useQuery<Invoice>({
     queryKey: ["/api/invoices", invoiceId],
@@ -443,6 +444,29 @@ export default function InvoiceDetailPage() {
     }
   }
 
+  async function handleSaveAsPdf() {
+    const element = document.getElementById("invoice-print-area");
+    if (!element) return;
+    setSavingPdf(true);
+    try {
+      const html2pdf = (await import("html2pdf.js")).default;
+      await html2pdf()
+        .set({
+          margin: [12.7, 12.7, 12.7, 12.7],
+          filename: `invoice-${displayData.invoiceNumber || "draft"}.pdf`,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: "mm", format: "letter", orientation: "portrait" },
+        })
+        .from(element)
+        .save();
+    } catch {
+      toast({ title: "Failed to generate PDF. Please try again.", variant: "destructive" });
+    } finally {
+      setSavingPdf(false);
+    }
+  }
+
   const amountDue = computeAmountDue(form.total, form.paidAmount);
 
   const displayData = editMode ? form : (invoice ? invoiceToForm(invoice) : form);
@@ -509,6 +533,16 @@ export default function InvoiceDetailPage() {
                     Email
                   </Button>
                 )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSaveAsPdf}
+                  disabled={savingPdf}
+                  data-testid="button-save-pdf-invoice"
+                >
+                  <Download className="h-3.5 w-3.5 mr-1" />
+                  {savingPdf ? "Saving…" : "Save as PDF"}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
