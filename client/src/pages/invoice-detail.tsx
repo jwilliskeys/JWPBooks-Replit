@@ -215,8 +215,9 @@ export default function InvoiceDetailPage() {
     ? new URLSearchParams(window.location.search)
     : new URLSearchParams();
   const appointmentIdParam = searchParams.get("appointmentId");
+  const editParam = searchParams.get("edit");
 
-  const [editMode, setEditMode] = useState(isNew ?? false);
+  const [editMode, setEditMode] = useState((isNew ?? false) || editParam === "1");
   const [form, setForm] = useState<InvoiceFormState>(defaultForm());
   const [printAfterSave, setPrintAfterSave] = useState(false);
   const [printAfterUpdate, setPrintAfterUpdate] = useState(false);

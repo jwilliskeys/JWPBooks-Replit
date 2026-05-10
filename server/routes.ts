@@ -566,9 +566,15 @@ export async function registerRoutes(
       if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
       const existing = await storage.getAppointment(id);
       if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Appointment not found" });
-      const { result, clientNotes, pianoRecords, miscServices } = req.body;
+      const { result, clientNotes, pianoRecords, miscServices, paymentMethod, paymentAmount } = req.body;
       const allowedResults = ["completed", "no-show", "cancelled"];
       const sanitizedResult = allowedResults.includes(result) ? result : "completed";
+      const allowedPaymentMethods = ["Zelle", "Venmo", "CashApp", "PayPal", "Stripe", "Cash", "Check", "Other"];
+      const sanitizedPaymentMethod = paymentMethod && allowedPaymentMethods.includes(paymentMethod) ? paymentMethod : null;
+      const paymentNote = sanitizedPaymentMethod
+        ? `Payment: ${sanitizedPaymentMethod}${paymentAmount ? ` — ${String(paymentAmount).slice(0, 50)}` : ""}`
+        : null;
+      const combinedNotes = [clientNotes, paymentNote].filter(Boolean).join("\n");
       const customerPianos = await storage.getPianos(existing.customerId);
       const customerPianoIds = new Set(customerPianos.map(p => p.id));
       interface PianoRecordPayload {
@@ -585,7 +591,7 @@ export async function registerRoutes(
       });
       await storage.completeAppointment(id, {
         result: sanitizedResult,
-        clientNotes: clientNotes || "",
+        clientNotes: combinedNotes || "",
         pianoRecords: sanitizedPianoRecords,
         miscServices: miscServices || "[]",
         appointmentDate: existing.date,

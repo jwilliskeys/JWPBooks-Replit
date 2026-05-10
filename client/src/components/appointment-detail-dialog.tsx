@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Appointment, Customer, Piano } from "@shared/schema";
+import type { Appointment, Customer, Piano, Invoice } from "@shared/schema";
 import { CompleteAppointmentDialog } from "./complete-appointment-dialog";
 
 interface Props {
@@ -52,11 +52,24 @@ function statusBadge(status: string | null | undefined) {
   return <Badge>Scheduled</Badge>;
 }
 
+function invoiceStatusBadge(status: string | null | undefined) {
+  switch (status) {
+    case "paid":
+      return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-0 text-xs">Paid</Badge>;
+    case "open":
+      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-0 text-xs">Open</Badge>;
+    case "cancelled":
+      return <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 border-0 text-xs">Cancelled</Badge>;
+    default:
+      return <Badge variant="secondary" className="text-xs">Draft</Badge>;
+  }
+}
+
 export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Props) {
   const [editMode, setEditMode] = useState(false);
   const [showCompleteDialog, setShowCompleteDialog] = useState(false);
   const [localAppt, setLocalAppt] = useState<Appointment | null>(null);
-  const [createdInvoiceId, setCreatedInvoiceId] = useState<number | null>(null);
+  const [localCreatedInvoice, setLocalCreatedInvoice] = useState<Invoice | null>(null);
   const [form, setForm] = useState<FormState>({
     date: "", time: "", duration: "",
     servicesRequested: "", priceEstimate: "", notes: "", status: "scheduled",
@@ -76,17 +89,22 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
         status: appointment.status ?? "scheduled",
       });
       setEditMode(false);
-      setCreatedInvoiceId(null);
+      setLocalCreatedInvoice(null);
     }
   }, [appointment?.id]);
 
   const { data: customers } = useQuery<Customer[]>({ queryKey: ["/api/customers"] });
   const { data: allPianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
+  const { data: allInvoices } = useQuery<Invoice[]>({ queryKey: ["/api/invoices"], enabled: open });
 
   const displayed = localAppt ?? appointment;
   const customer = customers?.find(c => c.id === displayed?.customerId);
   const piano = allPianos?.find(p => p.id === displayed?.pianoId);
   const pianoLabel = piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : null;
+
+  const linkedInvoice = localCreatedInvoice
+    ?? allInvoices?.find(inv => inv.appointmentId === displayed?.id)
+    ?? null;
 
   const updateMutation = useMutation({
     mutationFn: (data: Partial<FormState>) =>
@@ -156,7 +174,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     },
     onSuccess: (invoice) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
-      setCreatedInvoiceId(invoice.id);
+      setLocalCreatedInvoice(invoice);
       toast({ title: `Invoice #${invoice.invoiceNumber} created` });
     },
     onError: () => toast({ title: "Failed to create invoice", variant: "destructive" }),
@@ -357,17 +375,41 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   <p className="text-muted-foreground">{displayed.notes}</p>
                 </div>
               )}
-              {createdInvoiceId && (
-                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
-                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="text-muted-foreground flex-1">Invoice created.</span>
-                  <Link href={`/invoices/${createdInvoiceId}`} onClick={() => onOpenChange(false)}>
-                    <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-view-invoice">
-                      Open <ExternalLink className="h-3 w-3" />
-                    </Button>
-                  </Link>
-                </div>
-              )}
+
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5 space-y-2" data-testid="invoice-panel">
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Invoice</p>
+                {linkedInvoice ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm font-medium">#{linkedInvoice.invoiceNumber}</span>
+                    {invoiceStatusBadge(linkedInvoice.status)}
+                    <div className="flex gap-1 ml-auto">
+                      <Link href={`/invoices/${linkedInvoice.id}`} onClick={() => onOpenChange(false)}>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-open-invoice">
+                          Open <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </Link>
+                      <Link href={`/invoices/${linkedInvoice.id}?edit=1`} onClick={() => onOpenChange(false)}>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-edit-invoice">
+                          <Pencil className="h-3 w-3" /> Edit
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => createInvoiceMutation.mutate()}
+                    disabled={createInvoiceMutation.isPending}
+                    className="w-full h-8 text-xs"
+                    data-testid="button-create-invoice-panel"
+                  >
+                    <FileText className="h-3.5 w-3.5 mr-1" />
+                    {createInvoiceMutation.isPending ? "Creating…" : "Create Invoice"}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 
@@ -384,18 +426,6 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   >
                     <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                   </Button>
-                  {!createdInvoiceId && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => createInvoiceMutation.mutate()}
-                      disabled={createInvoiceMutation.isPending}
-                      data-testid="button-create-invoice-appt"
-                    >
-                      <FileText className="h-3.5 w-3.5 mr-1" />
-                      {createInvoiceMutation.isPending ? "Creating…" : "Invoice"}
-                    </Button>
-                  )}
                   {isScheduled && (
                     <Button
                       size="sm"

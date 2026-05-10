@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { Link } from "wouter";
 import {
   Dialog,
   DialogContent,
@@ -27,10 +28,10 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Trash2, Music, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Music, ChevronDown, FileText, ExternalLink, Pencil } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Appointment, Piano, ServiceCatalogItem } from "@shared/schema";
+import type { Appointment, Piano, ServiceCatalogItem, Invoice, Customer } from "@shared/schema";
 
 interface SelectedService {
   catalogId: number;
@@ -58,6 +59,21 @@ interface CompleteAppointmentDialogProps {
   onComplete?: () => void;
 }
 
+const PAYMENT_METHODS = ["Zelle", "Venmo", "CashApp", "PayPal", "Stripe", "Cash", "Check", "Other"];
+
+function invoiceStatusBadge(status: string | null | undefined) {
+  switch (status) {
+    case "paid":
+      return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-0 text-xs">Paid</Badge>;
+    case "open":
+      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-0 text-xs">Open</Badge>;
+    case "cancelled":
+      return <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 border-0 text-xs">Cancelled</Badge>;
+    default:
+      return <Badge variant="secondary" className="text-xs">Draft</Badge>;
+  }
+}
+
 export function CompleteAppointmentDialog({
   appointment,
   open,
@@ -70,6 +86,9 @@ export function CompleteAppointmentDialog({
   const [pianoRecords, setPianoRecords] = useState<PianoRecord[]>([]);
   const [miscServices, setMiscServices] = useState<SelectedService[]>([]);
   const [addServiceOpenFor, setAddServiceOpenFor] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [paymentAmount, setPaymentAmount] = useState<string>("");
+  const [localCreatedInvoice, setLocalCreatedInvoice] = useState<Invoice | null>(null);
 
   const { data: pianos } = useQuery<Piano[]>({
     queryKey: ["/api/customers", appointment.customerId, "pianos"],
@@ -81,6 +100,22 @@ export function CompleteAppointmentDialog({
     queryKey: ["/api/service-catalog"],
     enabled: open,
   });
+
+  const { data: allInvoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+    enabled: open,
+  });
+
+  const { data: customers } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+    enabled: open,
+  });
+
+  const linkedInvoice = localCreatedInvoice
+    ?? allInvoices?.find(inv => inv.appointmentId === appointment.id)
+    ?? null;
+
+  const customer = customers?.find(c => c.id === appointment.customerId);
 
   function deriveIsTuning(): boolean {
     if (appointment.isTuning) return true;
@@ -122,7 +157,53 @@ export function CompleteAppointmentDialog({
     setMiscServices([]);
     setResult("completed");
     setClientNotes(appointment.notes || "");
+    setPaymentMethod("");
+    setPaymentAmount("");
+    setLocalCreatedInvoice(null);
   }, [open, pianos, catalog, appointment.pianoId, appointment.isTuning, appointment.servicesRequested, appointment.notes, appointment.id]);
+
+  const createInvoiceMutation = useMutation({
+    mutationFn: async () => {
+      const today = new Date();
+      const mdyy = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear() % 100}`;
+      const invoiceDate = mdyy(today);
+      const due = new Date(today);
+      due.setDate(due.getDate() + 30);
+      const dueDate = mdyy(due);
+
+      const numRes = await fetch("/api/invoices/next-number");
+      const numData = await numRes.json();
+      const invoiceNumber = String(numData.nextNumber ?? "1");
+
+      const customerName = customer ? `${customer.firstName} ${customer.lastName}` : "";
+      const rawPrice = parseFloat(appointment.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
+      const priceStr = `$${rawPrice.toFixed(2)}`;
+      const lineItems = appointment.servicesRequested
+        ? JSON.stringify([{ description: appointment.servicesRequested, quantity: 1, unitPrice: rawPrice }])
+        : JSON.stringify([]);
+
+      const res = await apiRequest("POST", "/api/invoices", {
+        customerId: appointment.customerId,
+        appointmentId: appointment.id,
+        pianoId: appointment.pianoId ?? null,
+        invoiceDate,
+        dueDate,
+        invoiceNumber,
+        status: "draft",
+        lineItems,
+        subtotal: priceStr,
+        total: priceStr,
+        customerName,
+      });
+      return res.json();
+    },
+    onSuccess: (invoice) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      setLocalCreatedInvoice(invoice);
+      toast({ title: `Invoice #${invoice.invoiceNumber} created` });
+    },
+    onError: () => toast({ title: "Failed to create invoice", variant: "destructive" }),
+  });
 
   const completeMutation = useMutation({
     mutationFn: () =>
@@ -138,11 +219,35 @@ export function CompleteAppointmentDialog({
           services: JSON.stringify(r.services),
         })),
         miscServices: JSON.stringify(miscServices),
+        paymentMethod: paymentMethod && paymentMethod !== "none" ? paymentMethod : null,
+        paymentAmount: paymentMethod && paymentMethod !== "none" ? (paymentAmount || null) : null,
       }),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-      toast({ title: "Appointment completed successfully" });
+
+      let invoiceUpdateFailed = false;
+      if (paymentMethod && paymentMethod !== "none" && linkedInvoice && linkedInvoice.status !== "paid") {
+        try {
+          const paidAmount = paymentAmount || linkedInvoice.total || "$0.00";
+          const existingNotes = linkedInvoice.notes ? `${linkedInvoice.notes}\n` : "";
+          await apiRequest("PATCH", `/api/invoices/${linkedInvoice.id}`, {
+            status: "paid",
+            paidAmount,
+            notes: `${existingNotes}Paid via ${paymentMethod}`,
+          });
+          queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+        } catch {
+          invoiceUpdateFailed = true;
+        }
+      }
+
+      toast({
+        title: invoiceUpdateFailed
+          ? "Appointment completed — invoice could not be updated"
+          : "Appointment completed successfully",
+        variant: invoiceUpdateFailed ? "destructive" : "default",
+      });
       onOpenChange(false);
       onComplete?.();
     },
@@ -566,6 +671,81 @@ export function CompleteAppointmentDialog({
                   </div>
                 </PopoverContent>
               </Popover>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-3" data-testid="invoice-payment-section">
+              <h3 className="text-sm font-semibold">Invoice</h3>
+
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5 space-y-2">
+                {linkedInvoice ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm font-medium">#{linkedInvoice.invoiceNumber}</span>
+                    {invoiceStatusBadge(linkedInvoice.status)}
+                    <div className="flex gap-1 ml-auto">
+                      <Link href={`/invoices/${linkedInvoice.id}`} onClick={() => onOpenChange(false)}>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-open-invoice-complete">
+                          Open <ExternalLink className="h-3 w-3" />
+                        </Button>
+                      </Link>
+                      <Link href={`/invoices/${linkedInvoice.id}?edit=1`} onClick={() => onOpenChange(false)}>
+                        <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-edit-invoice-complete">
+                          <Pencil className="h-3 w-3" /> Edit
+                        </Button>
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => createInvoiceMutation.mutate()}
+                    disabled={createInvoiceMutation.isPending}
+                    className="w-full h-8 text-xs"
+                    data-testid="button-create-invoice-complete"
+                  >
+                    <FileText className="h-3.5 w-3.5 mr-1" />
+                    {createInvoiceMutation.isPending ? "Creating…" : "Create Invoice"}
+                  </Button>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold">Payment Received</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Payment Method</Label>
+                    <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                      <SelectTrigger className="h-8 text-sm" data-testid="select-payment-method">
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {PAYMENT_METHODS.map(m => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Amount Paid</Label>
+                    <Input
+                      value={paymentAmount}
+                      onChange={e => setPaymentAmount(e.target.value)}
+                      placeholder={linkedInvoice?.total ?? "$0.00"}
+                      className="h-8 text-sm"
+                      data-testid="input-payment-amount"
+                    />
+                  </div>
+                </div>
+                {paymentMethod && paymentMethod !== "none" && linkedInvoice && linkedInvoice.status !== "paid" && (
+                  <p className="text-xs text-muted-foreground">
+                    Invoice will be marked as <span className="font-medium text-green-700 dark:text-green-400">Paid</span> when you save.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </ScrollArea>
