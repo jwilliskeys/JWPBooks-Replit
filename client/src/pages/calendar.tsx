@@ -63,6 +63,12 @@ import {
   parseTimeString, parseDurationString,
 } from "@/components/time-stepper";
 
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+}
+
 function computeEndTime(startStr: string, durationStr: string): string {
   const startMins = parseTimeString(startStr);
   const durMins = parseDurationString(durationStr);
