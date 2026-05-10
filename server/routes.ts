@@ -116,6 +116,20 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/customers/:id/invoices", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const customer = await storage.getCustomer(id);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      const records = await storage.getInvoicesByCustomer(id, userId);
+      res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/customers/:id/services", async (req, res) => {
     try {
       const userId = getUserId(req);

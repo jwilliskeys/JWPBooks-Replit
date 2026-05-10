@@ -88,6 +88,7 @@ export interface IStorage {
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
   getInvoices(userId: string): Promise<Invoice[]>;
+  getInvoicesByCustomer(customerId: number, userId: string): Promise<Invoice[]>;
   getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice, userId: string): Promise<Invoice>;
@@ -401,6 +402,12 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoices(userId: string): Promise<Invoice[]> {
     return db.select().from(invoices).where(eq(invoices.userId, userId)).orderBy(invoices.createdAt);
+  }
+
+  async getInvoicesByCustomer(customerId: number, userId: string): Promise<Invoice[]> {
+    return db.select().from(invoices)
+      .where(and(eq(invoices.customerId, customerId), eq(invoices.userId, userId)))
+      .orderBy(desc(invoices.createdAt));
   }
 
   async getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]> {

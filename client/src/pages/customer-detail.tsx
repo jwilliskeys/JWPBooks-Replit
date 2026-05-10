@@ -48,11 +48,12 @@ import {
   Users,
   Crown,
   ChevronRight,
+  Wrench,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import type { Customer, Piano, ServiceRecord, Appointment, CustomerContact } from "@shared/schema";
+import type { Customer, Piano, ServiceRecord, Appointment, CustomerContact, Invoice } from "@shared/schema";
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { Link } from "wouter";
 import { AppointmentDialog } from "@/components/appointment-dialog";
@@ -531,6 +532,184 @@ function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano;
   );
 }
 
+function parseMDYY(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date(0);
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return new Date(0);
+  let year = parseInt(parts[2]);
+  if (year < 100) year += 2000;
+  return new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+}
+
+type TimelineEntry =
+  | { type: "service"; date: Date; raw: ServiceRecord; pianoLabel: string }
+  | { type: "appointment"; date: Date; raw: Appointment; pianoLabel: string }
+  | { type: "invoice"; date: Date; raw: Invoice; pianoLabel: string };
+
+function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
+  customerId: string;
+  pianos: Piano[] | undefined;
+  onOpenAppointment: (appt: Appointment) => void;
+}) {
+  const { data: services, isLoading: loadingServices } = useQuery<ServiceRecord[]>({
+    queryKey: ["/api/customers", customerId, "services"],
+    enabled: !!customerId,
+  });
+
+  const { data: appointments, isLoading: loadingAppts } = useQuery<Appointment[]>({
+    queryKey: ["/api/customers", customerId, "appointments"],
+    enabled: !!customerId,
+  });
+
+  const { data: invoicesData, isLoading: loadingInvoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/customers", customerId, "invoices"],
+    enabled: !!customerId,
+  });
+
+  const isLoading = loadingServices || loadingAppts || loadingInvoices;
+
+  const getPianoLabel = (pianoId: number | null | undefined) => {
+    if (!pianoId || !pianos) return "";
+    const p = pianos.find(p => p.id === pianoId);
+    if (!p) return "";
+    return [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || "Piano";
+  };
+
+  const entries: TimelineEntry[] = [];
+
+  (services ?? []).forEach(s => {
+    entries.push({ type: "service", date: parseMDYY(s.serviceDate), raw: s, pianoLabel: getPianoLabel(s.pianoId) });
+  });
+  (appointments ?? []).forEach(a => {
+    entries.push({ type: "appointment", date: parseMDYY(a.date), raw: a, pianoLabel: getPianoLabel(a.pianoId) });
+  });
+  (invoicesData ?? []).forEach(inv => {
+    entries.push({ type: "invoice", date: parseMDYY(inv.invoiceDate), raw: inv, pianoLabel: getPianoLabel(inv.pianoId) });
+  });
+
+  entries.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  const statusColors: Record<string, string> = {
+    paid: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+    draft: "bg-muted text-muted-foreground",
+    open: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+    sent: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
+    cancelled: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400",
+    completed: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400",
+    scheduled: "bg-primary/10 text-primary",
+    "no-show": "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
+  };
+
+  return (
+    <Card className="sticky top-4" data-testid="client-timeline-panel">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold">Timeline</CardTitle>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        ) : entries.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-6">No activity yet</p>
+        ) : (
+          <div className="relative space-y-0" data-testid="timeline-list">
+            {entries.map((entry, idx) => {
+              const isLast = idx === entries.length - 1;
+              if (entry.type === "service") {
+                const s = entry.raw;
+                return (
+                  <div key={`svc-${s.id}`} className="relative flex gap-3 pb-4" data-testid={`timeline-service-${s.id}`}>
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted border border-border z-10">
+                        <Wrench className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                      {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
+                    </div>
+                    <div className="min-w-0 flex-1 pt-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-medium capitalize">{s.serviceType}</span>
+                        {s.cost && <span className="text-xs text-muted-foreground">{s.cost}</span>}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{s.serviceDate}</p>
+                      {entry.pianoLabel && <p className="text-xs text-muted-foreground">{entry.pianoLabel}</p>}
+                      {s.notes && <p className="text-xs text-muted-foreground truncate">{s.notes}</p>}
+                    </div>
+                  </div>
+                );
+              }
+              if (entry.type === "appointment") {
+                const a = entry.raw;
+                const status = a.status ?? "scheduled";
+                return (
+                  <div key={`appt-${a.id}`} className="relative flex gap-3 pb-4" data-testid={`timeline-appointment-${a.id}`}>
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted border border-border z-10">
+                        <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                      {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
+                    </div>
+                    <div className="min-w-0 flex-1 pt-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          className="text-xs font-medium hover:underline text-left"
+                          onClick={() => onOpenAppointment(a)}
+                          data-testid={`timeline-appt-open-${a.id}`}
+                        >
+                          Appointment
+                        </button>
+                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${statusColors[status] ?? "bg-muted text-muted-foreground"}`}>
+                          {status.charAt(0).toUpperCase() + status.slice(1)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{a.date}{a.time ? ` · ${a.time}` : ""}</p>
+                      {entry.pianoLabel && <p className="text-xs text-muted-foreground">{entry.pianoLabel}</p>}
+                      {a.servicesRequested && <p className="text-xs text-muted-foreground truncate">{a.servicesRequested}</p>}
+                      {a.priceEstimate && <p className="text-xs font-medium">{a.priceEstimate}</p>}
+                    </div>
+                  </div>
+                );
+              }
+              if (entry.type === "invoice") {
+                const inv = entry.raw;
+                const status = inv.status ?? "draft";
+                return (
+                  <div key={`inv-${inv.id}`} className="relative flex gap-3 pb-4" data-testid={`timeline-invoice-${inv.id}`}>
+                    <div className="flex flex-col items-center">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted border border-border z-10">
+                        <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                      </div>
+                      {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
+                    </div>
+                    <div className="min-w-0 flex-1 pt-0.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <Link href={`/invoices/${inv.id}`}>
+                          <span className="text-xs font-medium hover:underline cursor-pointer" data-testid={`timeline-invoice-link-${inv.id}`}>
+                            Invoice #{inv.invoiceNumber}
+                          </span>
+                        </Link>
+                        <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${statusColors[status] ?? "bg-muted text-muted-foreground"}`}>
+                          {status.charAt(0).toUpperCase() + status.slice(1)}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{inv.invoiceDate}</p>
+                      {entry.pianoLabel && <p className="text-xs text-muted-foreground">{entry.pianoLabel}</p>}
+                      {inv.total && <p className="text-xs font-medium">{inv.total}</p>}
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function CustomerDetail() {
   const [, params] = useRoute("/customers/:id");
   const [, navigate] = useLocation();
@@ -728,8 +907,8 @@ export default function CustomerDetail() {
   };
 
   return (
-    <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4 sm:space-y-6">
-      <div className="space-y-3">
+    <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+      <div className="space-y-3 mb-4 sm:mb-6">
         <div className="flex items-center gap-3">
           <Link href="/customers">
             <Button variant="ghost" size="icon" data-testid="button-back">
@@ -786,6 +965,9 @@ export default function CustomerDetail() {
           </Button>
         </div>
       </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 sm:gap-6">
+      <div className="space-y-4 sm:space-y-6 min-w-0">
 
       {isEditing ? (
         <Card>
@@ -1302,6 +1484,17 @@ export default function CustomerDetail() {
           </div>
         </div>
       )}
+
+      </div>
+
+      <div className="lg:block">
+        <ClientTimeline
+          customerId={customerId!}
+          pianos={customerPianos}
+          onOpenAppointment={(appt) => setDetailAppt(appt)}
+        />
+      </div>
+      </div>
 
       <AppointmentDialog
         open={showAppointmentDialog}
