@@ -57,6 +57,7 @@ import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano } from "
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServicePicker } from "@/components/service-picker";
+import { TimeStepperWidget, DurationStepperWidget, MiniCalendar } from "@/components/time-stepper";
 
 function parseMDYY(dateStr: string): Date | null {
   if (!dateStr) return null;
@@ -136,122 +137,6 @@ function formatDateLong(dateStr: string): string {
 
 const DEFAULT_TIME_MINUTES = 9 * 60;
 const DEFAULT_DURATION_MINUTES = 90;
-const MIN_DURATION = 5;
-const MAX_DURATION = 8 * 60;
-
-function TimeStepperWidget({
-  minutes,
-  onChange,
-  testIdPrefix,
-}: {
-  minutes: number;
-  onChange: (m: number) => void;
-  testIdPrefix: string;
-}) {
-  function wrap(m: number) {
-    return ((m % (24 * 60)) + 24 * 60) % (24 * 60);
-  }
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 w-full justify-between">
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes + 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-hour`}
-        >
-          +1h
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes - 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-hour`}
-        >
-          −1h
-        </button>
-      </div>
-      <span className="text-base font-bold tabular-nums min-w-[80px] text-center" data-testid={`${testIdPrefix}-display`}>
-        {formatTimeMinutes(minutes)}
-      </span>
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes + 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-five`}
-        >
-          +5m
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes - 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-five`}
-        >
-          −5m
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function DurationStepperWidget({
-  minutes,
-  onChange,
-  testIdPrefix,
-}: {
-  minutes: number;
-  onChange: (m: number) => void;
-  testIdPrefix: string;
-}) {
-  function clamp(m: number) {
-    return Math.max(MIN_DURATION, Math.min(MAX_DURATION, m));
-  }
-  return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 w-full justify-between">
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes + 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-hour`}
-        >
-          +1h
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes - 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-hour`}
-        >
-          −1h
-        </button>
-      </div>
-      <span className="text-base font-bold tabular-nums min-w-[80px] text-center" data-testid={`${testIdPrefix}-display`}>
-        {formatDurationMinutes(minutes)}
-      </span>
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes + 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-five`}
-        >
-          +5m
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes - 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-five`}
-        >
-          −5m
-        </button>
-      </div>
-    </div>
-  );
-}
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -1026,32 +911,26 @@ export default function CalendarPage() {
                     </Button>
                   </div>
 
-                  {/* Clone date input */}
+                  {/* Clone date picker */}
                   {showCloneInput && (
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       <p className="text-xs text-violet-700 dark:text-violet-300 font-medium">
                         Pick a date for the cloned appointment
                       </p>
-                      <div className="flex items-center gap-2">
-                      <Input
-                        placeholder="M/D/YY"
-                        value={cloneDate}
-                        onChange={(e) => setCloneDate(e.target.value)}
-                        className="h-8 text-xs flex-1 bg-white/70 dark:bg-violet-900/40 border-violet-300 dark:border-violet-700"
-                        data-testid="input-clone-date"
+                      <MiniCalendar
+                        value={cloneDate || undefined}
+                        onChange={setCloneDate}
+                        data-testid="mini-cal-clone-date"
                       />
                       <Button
                         size="sm"
+                        className="w-full text-xs"
                         onClick={() => {
-                          if (!cloneDate.trim()) return;
-                          if (!parseMDYY(cloneDate.trim())) {
-                            toast({ title: "Invalid date — use M/D/YY (e.g. 4/15/26)", variant: "destructive" });
-                            return;
-                          }
+                          if (!cloneDate) return;
                           cloneAppointmentMutation.mutate({
                             customerId: selectedAppt.customerId,
                             pianoId: selectedAppt.pianoId ?? undefined,
-                            date: cloneDate.trim(),
+                            date: cloneDate,
                             time: selectedAppt.time,
                             duration: selectedAppt.duration ?? undefined,
                             servicesRequested: selectedAppt.servicesRequested ?? undefined,
@@ -1061,13 +940,11 @@ export default function CalendarPage() {
                             status: "scheduled",
                           });
                         }}
-                        disabled={!cloneDate.trim() || cloneAppointmentMutation.isPending}
-                        className="h-8 text-xs shrink-0"
+                        disabled={!cloneDate || cloneAppointmentMutation.isPending}
                         data-testid="button-clone-confirm"
                       >
-                        Clone
+                        Clone to {cloneDate || "selected date"}
                       </Button>
-                    </div>
                     </div>
                   )}
                 </div>

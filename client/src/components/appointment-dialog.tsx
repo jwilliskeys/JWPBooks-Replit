@@ -26,6 +26,15 @@ import {
   type ExistingAppointment,
 } from "@/lib/scheduling";
 import { ServicePicker } from "@/components/service-picker";
+import {
+  MiniCalendar,
+  TimeStepperWidget,
+  DurationStepperWidget,
+  formatTimeMinutes,
+  formatDurationMinutes,
+  DEFAULT_TIME_MINUTES,
+  DEFAULT_DURATION_MINUTES,
+} from "@/components/time-stepper";
 
 interface PianoSection {
   sectionId: string;
@@ -69,8 +78,9 @@ export function AppointmentDialog({
   const [pickerMountKey, setPickerMountKey] = useState(0);
 
   const [selectedClientId, setSelectedClientId] = useState(customerId ?? 0);
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
+  const [date, setDate] = useState(initialDate ?? "");
+  const [timeMinutes, setTimeMinutes] = useState(DEFAULT_TIME_MINUTES);
+  const [durationMinutes, setDurationMinutes] = useState(DEFAULT_DURATION_MINUTES);
   const [notes, setNotes] = useState("");
   const [sections, setSections] = useState<PianoSection[]>([makeSection(pianoId ?? null)]);
 
@@ -78,7 +88,8 @@ export function AppointmentDialog({
     if (open) {
       setSelectedClientId(customerId ?? 0);
       setDate(initialDate ?? "");
-      setTime("");
+      setTimeMinutes(DEFAULT_TIME_MINUTES);
+      setDurationMinutes(DEFAULT_DURATION_MINUTES);
       setNotes("");
       setSections([makeSection(pianoId ?? null)]);
       setPickerMountKey((k) => k + 1);
@@ -123,7 +134,7 @@ export function AppointmentDialog({
       .filter((a) => a.date === date && a.status !== "cancelled")
       .map((a) => {
         const cust = customerMap.get(a.customerId);
-        return { time: a.time, duration: "2 hours", city: cust?.city || "" };
+        return { time: a.time, duration: a.duration ?? "2 hours", city: cust?.city || "" };
       });
   }, [date, allAppointments, customerMap]);
 
@@ -143,13 +154,16 @@ export function AppointmentDialog({
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      const timeStr = formatTimeMinutes(timeMinutes);
+      const durationStr = formatDurationMinutes(durationMinutes);
       const results = [];
       for (const sec of sections) {
         const payload = {
           customerId: effectiveCustomerId,
           pianoId: sec.pianoId ?? undefined,
           date,
-          time,
+          time: timeStr,
+          duration: durationStr,
           servicesRequested: sec.selectedNames.join(", ") || undefined,
           priceEstimate: sec.price || undefined,
           notes: notes || undefined,
@@ -175,8 +189,10 @@ export function AppointmentDialog({
   });
 
   const handleSubmit = () => {
-    if (time && date) {
-      const result = checkTimeConflict(time, "2 hours", selectedCustomerCity, existingApptsForDate);
+    if (date) {
+      const timeStr = formatTimeMinutes(timeMinutes);
+      const durationStr = formatDurationMinutes(durationMinutes);
+      const result = checkTimeConflict(timeStr, durationStr, selectedCustomerCity, existingApptsForDate);
       if (!result.valid) {
         setConflictError(result.message || "Time conflict detected.");
         return;
@@ -185,7 +201,7 @@ export function AppointmentDialog({
     createMutation.mutate();
   };
 
-  const canSubmit = !!effectiveCustomerId && !!date && !!time && sections.length > 0;
+  const canSubmit = !!effectiveCustomerId && !!date && sections.length > 0;
 
   const pianoLabel = (p: Piano) =>
     [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
@@ -231,24 +247,33 @@ export function AppointmentDialog({
             </div>
           )}
 
-          {/* Date & Time */}
-          <div className="grid gap-4 grid-cols-2">
-            <div className="space-y-2">
-              <Label>Date (M/D/YY)</Label>
-              <Input
-                value={date}
-                onChange={(e) => { setDate(e.target.value); setConflictError(""); }}
-                placeholder="3/15/26"
-                data-testid="input-appointment-date"
+          {/* Date */}
+          <div className="space-y-2">
+            <Label>Date</Label>
+            <MiniCalendar
+              key={pickerMountKey}
+              value={date || undefined}
+              onChange={(d) => { setDate(d); setConflictError(""); }}
+              data-testid="mini-cal-appointment-date"
+            />
+          </div>
+
+          {/* Time & Duration */}
+          <div className="grid gap-3 grid-cols-2">
+            <div className="space-y-1.5">
+              <Label>Time</Label>
+              <TimeStepperWidget
+                minutes={timeMinutes}
+                onChange={(m) => { setTimeMinutes(m); setConflictError(""); }}
+                testIdPrefix="dialog-time"
               />
             </div>
-            <div className="space-y-2">
-              <Label>Time</Label>
-              <Input
-                value={time}
-                onChange={(e) => { setTime(e.target.value); setConflictError(""); }}
-                placeholder="10:00 AM"
-                data-testid="input-appointment-time"
+            <div className="space-y-1.5">
+              <Label>Duration</Label>
+              <DurationStepperWidget
+                minutes={durationMinutes}
+                onChange={setDurationMinutes}
+                testIdPrefix="dialog-duration"
               />
             </div>
           </div>
