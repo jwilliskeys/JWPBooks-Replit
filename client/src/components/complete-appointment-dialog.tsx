@@ -164,7 +164,7 @@ export function CompleteAppointmentDialog({
     setPianoRecords(prev => [...prev, {
       pianoId: piano.id,
       label: [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || `Piano #${piano.id}`,
-      isTuning: false,
+      isTuning: deriveIsTuning(),
       notes: "",
       humidity: "",
       temperature: "",
