@@ -115,6 +115,7 @@ export const calendarEvents = pgTable("calendar_events", {
   isAllDay: boolean("is_all_day").default(false),
   isRepeating: boolean("is_repeating").default(false),
   repeatFrequency: text("repeat_frequency"),
+  repeatEndDate: text("repeat_end_date"),
   eventType: text("event_type").notNull().default("personal"),
   createdAt: timestamp("created_at").defaultNow(),
 });

@@ -69,6 +69,16 @@ function isSameDay(a: Date, b: Date): boolean {
     a.getDate() === b.getDate();
 }
 
+function formatTimeCondensed(timeStr: string | null | undefined): string {
+  if (!timeStr) return "";
+  const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return timeStr;
+  const h = parseInt(match[1]);
+  const m = parseInt(match[2]);
+  const ampm = match[3].toLowerCase();
+  return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2, "0")}${ampm}`;
+}
+
 function computeEndTime(startStr: string, durationStr: string): string {
   const startMins = parseTimeString(startStr);
   const durMins = parseDurationString(durationStr);
@@ -123,10 +133,11 @@ export default function CalendarPage() {
   const [evTitle, setEvTitle] = useState("");
   const [evNotes, setEvNotes] = useState("");
   const [evIsAllDay, setEvIsAllDay] = useState(false);
-  const [evStartTime, setEvStartTime] = useState("");
-  const [evEndTime, setEvEndTime] = useState("");
+  const [evStartMinutes, setEvStartMinutes] = useState(DEFAULT_TIME_MINUTES);
+  const [evEndMinutes, setEvEndMinutes] = useState(DEFAULT_TIME_MINUTES + 60);
   const [evIsRepeating, setEvIsRepeating] = useState(false);
   const [evRepeatFreq, setEvRepeatFreq] = useState("weekly");
+  const [evRepeatEndDate, setEvRepeatEndDate] = useState("");
 
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [showCloneInput, setShowCloneInput] = useState(false);
@@ -356,10 +367,11 @@ export default function CalendarPage() {
     setEvTitle("");
     setEvNotes("");
     setEvIsAllDay(false);
-    setEvStartTime("");
-    setEvEndTime("");
+    setEvStartMinutes(DEFAULT_TIME_MINUTES);
+    setEvEndMinutes(DEFAULT_TIME_MINUTES + 60);
     setEvIsRepeating(false);
     setEvRepeatFreq("weekly");
+    setEvRepeatEndDate("");
   }
 
   function closeDetailDialog() {
@@ -414,11 +426,12 @@ export default function CalendarPage() {
       date: formatMDYY(selectedDate),
       title: evTitle.trim(),
       notes: evNotes.trim() || undefined,
-      startTime: evIsAllDay ? undefined : (evStartTime || undefined),
-      endTime: evIsAllDay ? undefined : (evEndTime || undefined),
+      startTime: evIsAllDay ? undefined : formatTimeMinutes(evStartMinutes),
+      endTime: evIsAllDay ? undefined : formatTimeMinutes(evEndMinutes),
       isAllDay: evIsAllDay,
       isRepeating: evIsRepeating,
       repeatFrequency: evIsRepeating ? evRepeatFreq : undefined,
+      repeatEndDate: evIsRepeating && evRepeatEndDate ? evRepeatEndDate : undefined,
       eventType: type,
     });
   }
@@ -582,7 +595,7 @@ export default function CalendarPage() {
                               <CalendarDays className="h-3 w-3 shrink-0 text-violet-500 dark:text-violet-400" />
                             )}
                             <span className="italic text-muted-foreground truncate">
-                              {ev.startTime && !ev.isAllDay ? `${ev.startTime} ` : ""}{ev.title}
+                              {ev.startTime && !ev.isAllDay ? `${formatTimeCondensed(ev.startTime)} ` : ""}{ev.title}
                             </span>
                           </div>
                           <Button
@@ -706,7 +719,7 @@ export default function CalendarPage() {
                             }`}
                           >
                             <span className="truncate">
-                              {ev.startTime && !ev.isAllDay ? `${ev.startTime} ` : ""}{ev.title}
+                              {ev.startTime && !ev.isAllDay ? `${formatTimeCondensed(ev.startTime)} ` : ""}{ev.title}
                             </span>
                           </Badge>
                           <button
@@ -1236,19 +1249,17 @@ export default function CalendarPage() {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label>Start Time</Label>
-                      <Input
-                        type="time"
-                        value={evStartTime}
-                        onChange={(e) => setEvStartTime(e.target.value)}
+                      <TimeStepperWidget
+                        value={evStartMinutes}
+                        onChange={setEvStartMinutes}
                         data-testid="input-ev-start-time"
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label>End Time</Label>
-                      <Input
-                        type="time"
-                        value={evEndTime}
-                        onChange={(e) => setEvEndTime(e.target.value)}
+                      <TimeStepperWidget
+                        value={evEndMinutes}
+                        onChange={setEvEndMinutes}
                         data-testid="input-ev-end-time"
                       />
                     </div>
@@ -1266,18 +1277,29 @@ export default function CalendarPage() {
                 </div>
 
                 {evIsRepeating && (
-                  <div className="space-y-1.5">
-                    <Label>Repeat Frequency</Label>
-                    <Select value={evRepeatFreq} onValueChange={setEvRepeatFreq}>
-                      <SelectTrigger data-testid="select-ev-freq">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="daily">Daily</SelectItem>
-                        <SelectItem value="weekly">Weekly</SelectItem>
-                        <SelectItem value="monthly">Monthly</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label>Repeat Frequency</Label>
+                      <Select value={evRepeatFreq} onValueChange={setEvRepeatFreq}>
+                        <SelectTrigger data-testid="select-ev-freq">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="daily">Daily</SelectItem>
+                          <SelectItem value="weekly">Weekly</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Repeat Until (optional)</Label>
+                      <Input
+                        type="date"
+                        value={evRepeatEndDate}
+                        onChange={(e) => setEvRepeatEndDate(e.target.value)}
+                        data-testid="input-ev-repeat-end"
+                      />
+                    </div>
                   </div>
                 )}
               </div>
