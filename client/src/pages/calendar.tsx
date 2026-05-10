@@ -55,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano } from "@shared/schema";
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
+import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServicePicker } from "@/components/service-picker";
 
 function parseMDYY(dateStr: string): Date | null {
@@ -298,6 +299,8 @@ export default function CalendarPage() {
   const [showCloneInput, setShowCloneInput] = useState(false);
   const [cloneDate, setCloneDate] = useState("");
   const [completeDialogAppt, setCompleteDialogAppt] = useState<Appointment | null>(null);
+  const [createApptDialogOpen, setCreateApptDialogOpen] = useState(false);
+  const [createApptInitialDate, setCreateApptInitialDate] = useState("");
 
   const { data: appointments, isLoading: loadingAppts } = useQuery<Appointment[]>({
     queryKey: ["/api/appointments"],
@@ -691,6 +694,8 @@ export default function CalendarPage() {
                     <div className="space-y-1">
                       {dayAppts.map((appt) => {
                         const customer = customerMap.get(appt.customerId);
+                        const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+                        const pianoLabel = piano ? ([piano.make, piano.model].filter(Boolean).join(" ") || null) : null;
                         const isCompleted = appt.status === "completed";
                         return (
                           <div
@@ -702,6 +707,7 @@ export default function CalendarPage() {
                             <Clock className="h-3 w-3 shrink-0 text-muted-foreground" />
                             <span className={isCompleted ? "line-through" : ""}>
                               {appt.time} - {customer ? `${customer.firstName} ${customer.lastName}` : "Unknown"}
+                              {pianoLabel ? ` · ${pianoLabel}` : ""}
                             </span>
                           </div>
                         );
@@ -810,6 +816,8 @@ export default function CalendarPage() {
                     <div className="space-y-0.5 overflow-hidden">
                       {dayAppts.map((appt) => {
                         const customer = customerMap.get(appt.customerId);
+                        const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+                        const pianoMake = piano?.make || null;
                         const isCompleted = appt.status === "completed";
                         return (
                           <Badge
@@ -821,6 +829,7 @@ export default function CalendarPage() {
                           >
                             <span className={isCompleted ? "line-through" : ""}>
                               {appt.time} {customer ? customer.lastName : ""}
+                              {pianoMake ? ` · ${pianoMake}` : ""}
                             </span>
                           </Badge>
                         );
@@ -1160,7 +1169,13 @@ export default function CalendarPage() {
                 <Button
                   variant="outline"
                   className="h-16 flex-col gap-1.5 items-center justify-center"
-                  onClick={() => setDialogMode("appointment")}
+                  onClick={() => {
+                    const dateStr = selectedDate ? formatMDYY(selectedDate) : "";
+                    setCreateApptInitialDate(dateStr);
+                    setDialogMode(null);
+                    setSelectedDate(null);
+                    setCreateApptDialogOpen(true);
+                  }}
                   data-testid="button-picker-appointment"
                 >
                   <Music className="h-5 w-5 text-primary" />
@@ -1468,6 +1483,12 @@ export default function CalendarPage() {
           onComplete={() => setSelectedAppt(null)}
         />
       )}
+
+      <AppointmentDialog
+        open={createApptDialogOpen}
+        onOpenChange={setCreateApptDialogOpen}
+        initialDate={createApptInitialDate}
+      />
     </div>
   );
 }

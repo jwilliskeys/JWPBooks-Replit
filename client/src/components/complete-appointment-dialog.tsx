@@ -173,7 +173,10 @@ export function CompleteAppointmentDialog({
       isTuning: item.isTuning ?? false,
       quantity: 1,
     };
-    updatePianoRecord(index, { services: [...pianoRecords[index].services, service] });
+    updatePianoRecord(index, {
+      services: [...pianoRecords[index].services, service],
+      ...(item.isTuning ? { isTuning: true } : {}),
+    });
     setAddServiceOpenFor(null);
   }
 

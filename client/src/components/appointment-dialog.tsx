@@ -53,6 +53,7 @@ interface AppointmentDialogProps {
   customerId?: number;
   pianoId?: number;
   customerName?: string;
+  initialDate?: string;
 }
 
 export function AppointmentDialog({
@@ -61,6 +62,7 @@ export function AppointmentDialog({
   customerId,
   pianoId,
   customerName,
+  initialDate,
 }: AppointmentDialogProps) {
   const { toast } = useToast();
   const [conflictError, setConflictError] = useState("");
@@ -75,14 +77,14 @@ export function AppointmentDialog({
   useEffect(() => {
     if (open) {
       setSelectedClientId(customerId ?? 0);
-      setDate("");
+      setDate(initialDate ?? "");
       setTime("");
       setNotes("");
       setSections([makeSection(pianoId ?? null)]);
       setPickerMountKey((k) => k + 1);
       setConflictError("");
     }
-  }, [open, customerId, pianoId]);
+  }, [open, customerId, pianoId, initialDate]);
 
   const { data: customers } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
