@@ -132,6 +132,7 @@ export default function CalendarPage() {
 
   const [evTitle, setEvTitle] = useState("");
   const [evNotes, setEvNotes] = useState("");
+  const [evDate, setEvDate] = useState("");
   const [evIsAllDay, setEvIsAllDay] = useState(false);
   const [evStartMinutes, setEvStartMinutes] = useState(DEFAULT_TIME_MINUTES);
   const [evEndMinutes, setEvEndMinutes] = useState(DEFAULT_TIME_MINUTES + 60);
@@ -366,6 +367,7 @@ export default function CalendarPage() {
     setCustomerSearch("");
     setEvTitle("");
     setEvNotes("");
+    setEvDate("");
     setEvIsAllDay(false);
     setEvStartMinutes(DEFAULT_TIME_MINUTES);
     setEvEndMinutes(DEFAULT_TIME_MINUTES + 60);
@@ -421,9 +423,9 @@ export default function CalendarPage() {
   }
 
   function handleSaveEvent(type: "personal" | "memo") {
-    if (!selectedDate || !evTitle.trim()) return;
+    if (!evDate || !evTitle.trim()) return;
     createEventMutation.mutate({
-      date: formatMDYY(selectedDate),
+      date: evDate,
       title: evTitle.trim(),
       notes: evNotes.trim() || undefined,
       startTime: evIsAllDay ? undefined : formatTimeMinutes(evStartMinutes),
@@ -552,7 +554,7 @@ export default function CalendarPage() {
                           >
                             <Clock className="h-3 w-3 shrink-0 text-muted-foreground" />
                             <span className={isCompleted ? "line-through" : ""}>
-                              {appt.time} - {customer ? `${customer.firstName} ${customer.lastName}` : "Unknown"}
+                              {formatTimeCondensed(appt.time)} - {customer ? `${customer.firstName} ${customer.lastName}` : "Unknown"}
                               {pianoLabel ? ` · ${pianoLabel}` : ""}
                             </span>
                           </div>
@@ -674,7 +676,7 @@ export default function CalendarPage() {
                             data-testid={`calendar-appointment-${appt.id}`}
                           >
                             <span className={isCompleted ? "line-through" : ""}>
-                              {appt.time} {customer ? customer.lastName : ""}
+                              {formatTimeCondensed(appt.time)} {customer ? customer.lastName : ""}
                               {pianoShort ? ` · ${pianoShort}` : ""}
                             </span>
                           </Badge>
@@ -793,8 +795,8 @@ export default function CalendarPage() {
                     <div className="flex items-center gap-2">
                       <Clock className="h-3.5 w-3.5 shrink-0" />
                       <span>
-                        {selectedAppt.time}
-                        {endTime ? ` – ${endTime}` : ""}
+                        {formatTimeCondensed(selectedAppt.time)}
+                        {endTime ? ` – ${formatTimeCondensed(endTime)}` : ""}
                         {selectedAppt.duration ? ` (${selectedAppt.duration})` : ""}
                       </span>
                     </div>
@@ -1022,7 +1024,7 @@ export default function CalendarPage() {
                 <Button
                   variant="outline"
                   className="h-16 flex-col gap-1.5 items-center justify-center"
-                  onClick={() => setDialogMode("event")}
+                  onClick={() => { setEvDate(selectedDate ? formatMDYY(selectedDate) : ""); setDialogMode("event"); }}
                   data-testid="button-picker-event"
                 >
                   <CalendarDays className="h-5 w-5 text-violet-500" />
@@ -1031,7 +1033,7 @@ export default function CalendarPage() {
                 <Button
                   variant="outline"
                   className="h-16 flex-col gap-1.5 items-center justify-center"
-                  onClick={() => setDialogMode("memo")}
+                  onClick={() => { setEvDate(selectedDate ? formatMDYY(selectedDate) : ""); setDialogMode("memo"); }}
                   data-testid="button-picker-memo"
                 >
                   <FileText className="h-5 w-5 text-blue-500" />
@@ -1209,10 +1211,18 @@ export default function CalendarPage() {
                     <CalendarDays className="h-4 w-4 text-violet-500" />
                   )}
                   {dialogMode === "memo" ? "Add Memo" : "New Personal Event"}
-                  <span className="text-sm font-normal text-muted-foreground">— {selectedDateLabel}</span>
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Date <span className="text-destructive">*</span></Label>
+                  <MiniCalendar
+                    value={evDate}
+                    onChange={setEvDate}
+                    data-testid="minicalendar-ev-date"
+                  />
+                </div>
+
                 <div className="space-y-1.5">
                   <Label>Title <span className="text-destructive">*</span></Label>
                   <Input
@@ -1250,17 +1260,17 @@ export default function CalendarPage() {
                     <div className="space-y-1.5">
                       <Label>Start Time</Label>
                       <TimeStepperWidget
-                        value={evStartMinutes}
+                        minutes={evStartMinutes}
                         onChange={setEvStartMinutes}
-                        data-testid="input-ev-start-time"
+                        testIdPrefix="ev-start-time"
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label>End Time</Label>
                       <TimeStepperWidget
-                        value={evEndMinutes}
+                        minutes={evEndMinutes}
                         onChange={setEvEndMinutes}
-                        data-testid="input-ev-end-time"
+                        testIdPrefix="ev-end-time"
                       />
                     </div>
                   </div>
@@ -1309,7 +1319,7 @@ export default function CalendarPage() {
                 </Button>
                 <Button
                   onClick={() => handleSaveEvent(dialogMode === "memo" ? "memo" : "personal")}
-                  disabled={!evTitle.trim() || createEventMutation.isPending}
+                  disabled={!evTitle.trim() || !evDate || createEventMutation.isPending}
                   data-testid="button-ev-save"
                 >
                   <Plus className="h-4 w-4 mr-1" />
