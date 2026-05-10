@@ -549,6 +549,8 @@ export default function CustomerDetail() {
     model: "",
     pianoType: "",
     year: "",
+    serialNumber: "",
+    location: "",
     notes: "",
     lastTuned: "",
   });
@@ -676,7 +678,7 @@ export default function CustomerDetail() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
       setShowAddPiano(false);
-      setNewPianoForm({ make: "", model: "", pianoType: "", year: "", notes: "", lastTuned: "" });
+      setNewPianoForm({ make: "", model: "", pianoType: "", year: "", serialNumber: "", location: "", notes: "", lastTuned: "" });
       toast({ title: "Piano added" });
     },
     onError: () => {
@@ -1113,6 +1115,14 @@ export default function CustomerDetail() {
                   <div className="space-y-1">
                     <Label>Last Tuned (M/D/YY)</Label>
                     <Input value={newPianoForm.lastTuned} onChange={(e) => setNewPianoForm({ ...newPianoForm, lastTuned: e.target.value })} placeholder="1/15/25" data-testid="input-new-piano-tuned" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Serial Number</Label>
+                    <Input value={newPianoForm.serialNumber} onChange={(e) => setNewPianoForm({ ...newPianoForm, serialNumber: e.target.value })} placeholder="e.g. 123456" data-testid="input-new-piano-serial" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Location</Label>
+                    <Input value={newPianoForm.location} onChange={(e) => setNewPianoForm({ ...newPianoForm, location: e.target.value })} placeholder="e.g. Living room" data-testid="input-new-piano-location" />
                   </div>
                 </div>
                 <div className="space-y-1">
