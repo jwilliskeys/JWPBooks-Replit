@@ -57,69 +57,11 @@ import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano } from "
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServicePicker } from "@/components/service-picker";
-import { TimeStepperWidget, DurationStepperWidget, MiniCalendar } from "@/components/time-stepper";
-
-function parseMDYY(dateStr: string): Date | null {
-  if (!dateStr) return null;
-  const parts = dateStr.split("/");
-  if (parts.length !== 3) return null;
-  const month = parseInt(parts[0], 10);
-  const day = parseInt(parts[1], 10);
-  let year = parseInt(parts[2], 10);
-  if (isNaN(month) || isNaN(day) || isNaN(year)) return null;
-  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  if (year < 100) year += 2000;
-  return new Date(year, month - 1, day);
-}
-
-function formatMDYY(date: Date): string {
-  const m = date.getMonth() + 1;
-  const d = date.getDate();
-  const y = date.getFullYear() % 100;
-  return `${m}/${d}/${y}`;
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
-
-function formatTimeMinutes(totalMinutes: number): string {
-  const h = Math.floor(totalMinutes / 60) % 24;
-  const m = totalMinutes % 60;
-  const ampm = h >= 12 ? "PM" : "AM";
-  const displayH = h % 12 === 0 ? 12 : h % 12;
-  return `${displayH}:${String(m).padStart(2, "0")} ${ampm}`;
-}
-
-function formatDurationMinutes(totalMinutes: number): string {
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  if (h === 0) return `${m} min`;
-  if (m === 0) return `${h} hr`;
-  return `${h} hr ${m} min`;
-}
-
-function parseTimeString(s: string): number {
-  if (!s) return DEFAULT_TIME_MINUTES;
-  const match = s.match(/(\d+):(\d+)\s*(AM|PM)/i);
-  if (!match) return DEFAULT_TIME_MINUTES;
-  let h = parseInt(match[1]);
-  const m = parseInt(match[2]);
-  const ampm = match[3].toUpperCase();
-  if (ampm === "PM" && h !== 12) h += 12;
-  if (ampm === "AM" && h === 12) h = 0;
-  return h * 60 + m;
-}
-
-function parseDurationString(s: string): number {
-  if (!s) return DEFAULT_DURATION_MINUTES;
-  let total = 0;
-  const hrMatch = s.match(/(\d+)\s*hr/);
-  const minMatch = s.match(/(\d+)\s*min/);
-  if (hrMatch) total += parseInt(hrMatch[1]) * 60;
-  if (minMatch) total += parseInt(minMatch[1]);
-  return total || DEFAULT_DURATION_MINUTES;
-}
+import {
+  TimeStepperWidget, DurationStepperWidget, MiniCalendar,
+  parseMDYY, formatMDYY, formatTimeMinutes, formatDurationMinutes,
+  parseTimeString, parseDurationString,
+} from "@/components/time-stepper";
 
 function computeEndTime(startStr: string, durationStr: string): string {
   const startMins = parseTimeString(startStr);

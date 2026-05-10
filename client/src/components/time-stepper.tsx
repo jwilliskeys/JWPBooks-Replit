@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 export const DEFAULT_TIME_MINUTES = 9 * 60;
@@ -205,6 +205,14 @@ export function MiniCalendar({ value, onChange, "data-testid": testId }: MiniCal
     const d = value ? parseMDYY(value) : null;
     return d?.getFullYear() ?? today.getFullYear();
   });
+
+  useEffect(() => {
+    const d = value ? parseMDYY(value) : null;
+    if (d) {
+      setViewMonth(d.getMonth());
+      setViewYear(d.getFullYear());
+    }
+  }, [value]);
 
   const calendarDays = useMemo(() => {
     const firstDay = new Date(viewYear, viewMonth, 1);
