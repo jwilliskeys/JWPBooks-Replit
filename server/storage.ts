@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, desc } from "drizzle-orm";
 import {
   customers,
   pianos,
@@ -63,6 +63,7 @@ export interface IStorage {
   syncPianoLastTuned(pianoId: number): Promise<void>;
   getAppointments(userId: string): Promise<Appointment[]>;
   getAppointmentsByCustomer(customerId: number): Promise<Appointment[]>;
+  getAppointmentsByPiano(pianoId: number, userId: string): Promise<Appointment[]>;
   getAppointment(id: number): Promise<Appointment | undefined>;
   createAppointment(appointment: InsertAppointment, userId: string): Promise<Appointment>;
   updateAppointment(id: number, data: Partial<InsertAppointment>): Promise<Appointment | undefined>;
@@ -87,6 +88,7 @@ export interface IStorage {
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
   getInvoices(userId: string): Promise<Invoice[]>;
+  getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice, userId: string): Promise<Invoice>;
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
@@ -258,6 +260,12 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(appointments).where(eq(appointments.customerId, customerId)).orderBy(appointments.date);
   }
 
+  async getAppointmentsByPiano(pianoId: number, userId: string): Promise<Appointment[]> {
+    return db.select().from(appointments)
+      .where(and(eq(appointments.pianoId, pianoId), eq(appointments.userId, userId)))
+      .orderBy(desc(appointments.date));
+  }
+
   async getAppointment(id: number): Promise<Appointment | undefined> {
     const [appointment] = await db.select().from(appointments).where(eq(appointments.id, id));
     return appointment;
@@ -393,6 +401,12 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoices(userId: string): Promise<Invoice[]> {
     return db.select().from(invoices).where(eq(invoices.userId, userId)).orderBy(invoices.createdAt);
+  }
+
+  async getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]> {
+    return db.select().from(invoices)
+      .where(and(eq(invoices.pianoId, pianoId), eq(invoices.userId, userId)))
+      .orderBy(desc(invoices.createdAt));
   }
 
   async getInvoice(id: number): Promise<Invoice | undefined> {

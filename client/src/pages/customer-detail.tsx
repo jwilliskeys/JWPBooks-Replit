@@ -47,6 +47,7 @@ import {
   ExternalLink,
   Users,
   Crown,
+  ChevronRight,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
@@ -1138,18 +1139,71 @@ export default function CustomerDetail() {
             </CardContent>
           </Card>
         ) : (
-          <div className="space-y-4">
-            {customerPianos.map((piano) => (
-              <PianoCard
-                key={piano.id}
-                piano={piano}
-                customerId={customerId!}
-                onScheduleAppointment={(pianoId) => {
-                  setAppointmentPianoId(pianoId);
-                  setShowAppointmentDialog(true);
-                }}
-              />
-            ))}
+          <div className="space-y-2">
+            {customerPianos.map((piano) => {
+              const isInactive = piano.isActive === false;
+              const pianoLabel = [piano.year, piano.make, piano.model].filter(Boolean).join(" ") || "Unnamed Piano";
+              const pianoTypeLabel = piano.pianoType || "";
+              const heroPhoto = piano.photos && piano.photos.length > 0 ? piano.photos[0] : null;
+              return (
+                <Link key={piano.id} href={`/pianos/${piano.id}`}>
+                  <Card
+                    className={`cursor-pointer hover:bg-muted/30 transition-colors ${isInactive ? "opacity-60" : ""}`}
+                    data-testid={`piano-card-${piano.id}`}
+                  >
+                    <CardContent className="py-3 px-4">
+                      <div className="flex items-center gap-3">
+                        {heroPhoto ? (
+                          <img src={heroPhoto} alt="Piano" className="h-12 w-12 shrink-0 object-cover rounded-md border" />
+                        ) : (
+                          <div className="h-12 w-12 shrink-0 rounded-md bg-primary/10 flex items-center justify-center border border-primary/20">
+                            <Music className="h-5 w-5 text-primary/40" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-sm font-medium truncate" data-testid={`piano-name-${piano.id}`}>{pianoLabel}</span>
+                            {isInactive && <Badge variant="secondary" className="text-xs shrink-0">Inactive</Badge>}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                            {pianoTypeLabel && <span className="text-xs text-muted-foreground">{pianoTypeLabel}</span>}
+                            {piano.serialNumber && <span className="text-xs text-muted-foreground">S/N: {piano.serialNumber}</span>}
+                            {piano.location && <span className="text-xs text-muted-foreground flex items-center gap-0.5"><MapPin className="h-3 w-3" />{piano.location}</span>}
+                          </div>
+                          {piano.tags && piano.tags.length > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-0.5">
+                              {piano.tags.map((tag) => (
+                                <Badge key={tag} variant="secondary" className="text-xs py-0 px-1.5">{tag}</Badge>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {!isInactive && (() => {
+                            const months = (() => {
+                              if (!piano.lastTuned) return null;
+                              const parts = piano.lastTuned.split("/");
+                              if (parts.length !== 3) return null;
+                              let year = parseInt(parts[2]);
+                              if (year < 100) year += 2000;
+                              const d = new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+                              const now = new Date();
+                              return (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+                            })();
+                            if (months === null) return <Badge variant="secondary" className="text-xs">No record</Badge>;
+                            if (months >= 24) return <Badge variant="destructive" className="text-xs">Overdue</Badge>;
+                            if (months >= 12) return <Badge className="text-xs bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500">Overdue</Badge>;
+                            if (months >= 6) return <Badge variant="secondary" className="text-xs">Due soon</Badge>;
+                            return <Badge className="text-xs bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Tuned</Badge>;
+                          })()}
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>

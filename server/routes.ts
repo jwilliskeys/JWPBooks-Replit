@@ -200,6 +200,53 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/pianos/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(id);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      res.json({ piano, customer: owner });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/pianos/:id/invoices", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(id);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      const pianoInvoices = await storage.getInvoicesByPiano(id, userId);
+      res.json(pianoInvoices);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/pianos/:id/appointments", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(id);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      const pianoAppointments = await storage.getAppointmentsByPiano(id, userId);
+      res.json(pianoAppointments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.patch("/api/pianos/:id", async (req, res) => {
     try {
       const userId = getUserId(req);
