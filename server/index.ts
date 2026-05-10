@@ -62,6 +62,20 @@ app.use((req, res, next) => {
   next();
 });
 
+async function ensurePianoSchemaColumns() {
+  const { pool } = await import("./db");
+  try {
+    await pool.query(`
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "serial_number" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "location" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "tags" text[];
+    `);
+    log("Schema migration: pianos serial_number/location/tags columns ensured.", "migration");
+  } catch (err: any) {
+    log(`Schema migration error (pianos columns): ${err.message}`, "migration");
+  }
+}
+
 async function migrateExistingDataToUser() {
   const { db } = await import("./db");
   const { customers, appointments, calendarNotes, calendarEvents, trips, invoices, users } = await import("@shared/schema");
@@ -179,6 +193,7 @@ async function migrateExistingDataToUser() {
   await setupAuth(app);
 
   await seedDatabaseIfEmpty();
+  await ensurePianoSchemaColumns();
   await migrateExistingDataToUser();
   await registerRoutes(httpServer, app);
 
