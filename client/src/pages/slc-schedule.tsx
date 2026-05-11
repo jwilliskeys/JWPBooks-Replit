@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import {
   Select,
   SelectContent,
@@ -18,6 +20,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Plus,
@@ -39,13 +42,15 @@ import {
   Star,
   CalendarPlus,
   CalendarCheck,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { ServicePicker } from "@/components/service-picker";
-import type { Trip, TripAppointment, Customer, Piano } from "@shared/schema";
+import type { Trip, TripAppointment, Customer, Piano, Invoice } from "@shared/schema";
 import {
   getNearbyCities,
   areSameCity,
@@ -234,7 +239,7 @@ interface DayScheduleColumnProps {
   pianoMap: Map<number, Piano>;
   onOpenDialog: (dateStr: string) => void;
   onOpenEditDialog: (appt: TripAppointment) => void;
-  onCompleteAppointment: (id: number) => void;
+  onCompleteAppointment: (appt: TripAppointment) => void;
   onDeleteAppointment: (id: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
 }
@@ -411,7 +416,7 @@ function DayScheduleColumn({
                             variant="ghost"
                             size="icon"
                             className="h-5 w-5"
-                            onClick={() => onCompleteAppointment(appt.id)}
+                            onClick={() => onCompleteAppointment(appt)}
                             data-testid={`button-complete-trip-appt-${appt.id}`}
                           >
                             <CheckCircle className="h-3 w-3" />
@@ -479,6 +484,21 @@ function DayScheduleColumn({
   );
 }
 
+const PAYMENT_METHODS = ["Zelle", "Venmo", "CashApp", "PayPal", "Stripe", "Cash", "Check", "Other"];
+
+function invoiceStatusBadge(status: string | null | undefined) {
+  switch (status) {
+    case "paid":
+      return <Badge className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 border-0 text-xs">Paid</Badge>;
+    case "open":
+      return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 border-0 text-xs">Open</Badge>;
+    case "cancelled":
+      return <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 border-0 text-xs">Cancelled</Badge>;
+    default:
+      return <Badge variant="secondary" className="text-xs">Draft</Badge>;
+  }
+}
+
 export default function SlcSchedule() {
   const { toast } = useToast();
   const [tripName, setTripName] = useState("");
@@ -505,6 +525,11 @@ export default function SlcSchedule() {
   const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editConflictError, setEditConflictError] = useState("");
+  const [completingAppt, setCompletingAppt] = useState<TripAppointment | null>(null);
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [completePaymentMethod, setCompletePaymentMethod] = useState("");
+  const [completePaymentAmount, setCompletePaymentAmount] = useState("");
+  const [localCreatedInvoice, setLocalCreatedInvoice] = useState<Invoice | null>(null);
 
   const { data: trips, isLoading: tripsLoading } = useQuery<Trip[]>({
     queryKey: ["/api/trips"],
@@ -524,6 +549,16 @@ export default function SlcSchedule() {
   const { data: allPianos } = useQuery<Piano[]>({
     queryKey: ["/api/pianos"],
   });
+
+  const { data: allInvoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/invoices"],
+    enabled: completeDialogOpen,
+  });
+
+  const completingLinkedInvoice: Invoice | null = localCreatedInvoice
+    ?? (allInvoices && completingAppt?.linkedAppointmentId
+        ? (allInvoices.find(inv => inv.appointmentId === completingAppt.linkedAppointmentId) ?? null)
+        : null);
 
   const customerMap = useMemo(
     () => new Map(customers?.map((c) => [c.id, c]) ?? []),
@@ -592,10 +627,82 @@ export default function SlcSchedule() {
   const completeAppointmentMutation = useMutation({
     mutationFn: (id: number) =>
       apiRequest("PATCH", `/api/trip-appointments/${id}`, { status: "completed" }),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", activeTrip?.id, "appointments"] });
-      toast({ title: "Appointment completed" });
+
+      let invoiceUpdateFailed = false;
+      if (completePaymentMethod && completePaymentMethod !== "none" && completingLinkedInvoice && completingLinkedInvoice.status !== "paid") {
+        try {
+          const paidAmount = completePaymentAmount || completingLinkedInvoice.total || "$0.00";
+          const existingNotes = completingLinkedInvoice.notes ? `${completingLinkedInvoice.notes}\n` : "";
+          await apiRequest("PATCH", `/api/invoices/${completingLinkedInvoice.id}`, {
+            status: "paid",
+            paidAmount,
+            notes: `${existingNotes}Paid via ${completePaymentMethod}`,
+          });
+          queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+        } catch {
+          invoiceUpdateFailed = true;
+        }
+      }
+
+      toast({
+        title: invoiceUpdateFailed
+          ? "Appointment completed — invoice could not be updated"
+          : "Appointment completed",
+        variant: invoiceUpdateFailed ? "destructive" : "default",
+      });
+      setCompleteDialogOpen(false);
+      setCompletingAppt(null);
+      setCompletePaymentMethod("");
+      setCompletePaymentAmount("");
+      setLocalCreatedInvoice(null);
     },
+  });
+
+  const createTripInvoiceMutation = useMutation({
+    mutationFn: async () => {
+      if (!completingAppt) throw new Error("No appointment selected");
+      const cust = customerMap.get(completingAppt.customerId);
+      const today = new Date();
+      const mdyy = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear() % 100}`;
+      const invoiceDate = mdyy(today);
+      const due = new Date(today);
+      due.setDate(due.getDate() + 30);
+      const dueDate = mdyy(due);
+
+      const numRes = await fetch("/api/invoices/next-number");
+      const numData = await numRes.json();
+      const invoiceNumber = String(numData.nextNumber ?? "1");
+
+      const customerName = cust ? `${cust.firstName} ${cust.lastName}` : "";
+      const rawPrice = parseFloat(completingAppt.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
+      const priceStr = `$${rawPrice.toFixed(2)}`;
+      const lineItems = completingAppt.servicesRequested
+        ? JSON.stringify([{ description: completingAppt.servicesRequested, quantity: 1, unitPrice: rawPrice }])
+        : JSON.stringify([]);
+
+      const res = await apiRequest("POST", "/api/invoices", {
+        customerId: completingAppt.customerId,
+        appointmentId: completingAppt.linkedAppointmentId ?? null,
+        pianoId: completingAppt.pianoId ?? null,
+        invoiceDate,
+        dueDate,
+        invoiceNumber,
+        status: "draft",
+        lineItems,
+        subtotal: priceStr,
+        total: priceStr,
+        customerName,
+      });
+      return res.json();
+    },
+    onSuccess: (invoice: Invoice) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      setLocalCreatedInvoice(invoice);
+      toast({ title: `Invoice #${invoice.invoiceNumber} created` });
+    },
+    onError: () => toast({ title: "Failed to create invoice", variant: "destructive" }),
   });
 
   const deleteAppointmentMutation = useMutation({
@@ -649,6 +756,14 @@ export default function SlcSchedule() {
       toast({ title: error?.message || "Failed to confirm appointment", variant: "destructive" });
     },
   });
+
+  function handleCompleteAppointment(appt: TripAppointment) {
+    setCompletingAppt(appt);
+    setCompletePaymentMethod("");
+    setCompletePaymentAmount("");
+    setLocalCreatedInvoice(null);
+    setCompleteDialogOpen(true);
+  }
 
   function handleConfirmAppointment(appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) {
     if (appt.linkedAppointmentId) {
@@ -989,7 +1104,7 @@ export default function SlcSchedule() {
                 pianoMap={pianoMap}
                 onOpenDialog={openDialog}
                 onOpenEditDialog={openEditDialog}
-                onCompleteAppointment={(id) => completeAppointmentMutation.mutate(id)}
+                onCompleteAppointment={handleCompleteAppointment}
                 onDeleteAppointment={(id) => { if (confirm("Delete?")) deleteAppointmentMutation.mutate(id); }}
                 onConfirmAppointment={handleConfirmAppointment}
               />
@@ -1183,6 +1298,131 @@ export default function SlcSchedule() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={completeDialogOpen} onOpenChange={(open) => {
+        if (!open) {
+          setCompleteDialogOpen(false);
+          setCompletingAppt(null);
+          setCompletePaymentMethod("");
+          setCompletePaymentAmount("");
+          setLocalCreatedInvoice(null);
+        }
+      }}>
+        <DialogContent className="max-w-md w-full max-h-[85vh] flex flex-col p-0">
+          <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
+            <DialogTitle className="text-base font-semibold">Complete Appointment</DialogTitle>
+            {completingAppt && (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {(() => {
+                  const c = customerMap.get(completingAppt.customerId);
+                  return c ? `${c.firstName} ${c.lastName} · ` : "";
+                })()}{completingAppt.date} at {completingAppt.time}
+              </p>
+            )}
+          </DialogHeader>
+
+          <ScrollArea className="flex-1 px-6 py-4">
+            <div className="space-y-5">
+              <div className="space-y-3" data-testid="trip-invoice-section">
+                <h3 className="text-sm font-semibold">Invoice</h3>
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5 space-y-2">
+                  {completingLinkedInvoice ? (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="text-sm font-medium">#{completingLinkedInvoice.invoiceNumber}</span>
+                      {invoiceStatusBadge(completingLinkedInvoice.status)}
+                      <div className="flex gap-1 ml-auto">
+                        <Link href={`/invoices/${completingLinkedInvoice.id}`} onClick={() => setCompleteDialogOpen(false)}>
+                          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-open-invoice-trip-complete">
+                            Open <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        </Link>
+                        <Link href={`/invoices/${completingLinkedInvoice.id}?edit=1`} onClick={() => setCompleteDialogOpen(false)}>
+                          <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1" data-testid="link-edit-invoice-trip-complete">
+                            <Pencil className="h-3 w-3" /> Edit
+                          </Button>
+                        </Link>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => createTripInvoiceMutation.mutate()}
+                      disabled={createTripInvoiceMutation.isPending}
+                      className="w-full h-8 text-xs"
+                      data-testid="button-create-invoice-trip-complete"
+                    >
+                      <FileText className="h-3.5 w-3.5 mr-1" />
+                      {createTripInvoiceMutation.isPending ? "Creating…" : "Create Invoice"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <Separator />
+
+              <div className="space-y-3" data-testid="trip-payment-section">
+                <h3 className="text-sm font-semibold">Payment Received</h3>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Payment Method</Label>
+                    <Select value={completePaymentMethod} onValueChange={setCompletePaymentMethod}>
+                      <SelectTrigger className="h-8 text-sm" data-testid="select-trip-payment-method">
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {PAYMENT_METHODS.map(m => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Amount Paid</Label>
+                    <Input
+                      value={completePaymentAmount}
+                      onChange={e => setCompletePaymentAmount(e.target.value)}
+                      placeholder={completingLinkedInvoice?.total ?? "$0.00"}
+                      className="h-8 text-sm"
+                      data-testid="input-trip-payment-amount"
+                    />
+                  </div>
+                </div>
+                {completePaymentMethod && completePaymentMethod !== "none" && completingLinkedInvoice && completingLinkedInvoice.status !== "paid" && (
+                  <p className="text-xs text-muted-foreground">
+                    Invoice will be marked as <span className="font-medium text-green-700 dark:text-green-400">Paid</span> when you save.
+                  </p>
+                )}
+              </div>
+            </div>
+          </ScrollArea>
+
+          <DialogFooter className="px-6 py-4 border-t shrink-0">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCompleteDialogOpen(false);
+                setCompletingAppt(null);
+                setCompletePaymentMethod("");
+                setCompletePaymentAmount("");
+                setLocalCreatedInvoice(null);
+              }}
+              data-testid="button-trip-complete-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => completingAppt && completeAppointmentMutation.mutate(completingAppt.id)}
+              disabled={completeAppointmentMutation.isPending}
+              data-testid="button-trip-complete-save"
+            >
+              {completeAppointmentMutation.isPending ? "Saving…" : "Mark Complete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
