@@ -135,7 +135,14 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
   const todayAppointments = useMemo(() => {
     return appointments
       .filter((a) => a.date === todayStr)
-      .sort((a, b) => parseTimeToMinutes(a.time || "") - parseTimeToMinutes(b.time || ""));
+      .sort((a, b) => {
+        const ma = parseTimeToMinutes(a.time || "");
+        const mb = parseTimeToMinutes(b.time || "");
+        if (ma < 0 && mb < 0) return 0;
+        if (ma < 0) return 1;
+        if (mb < 0) return -1;
+        return ma - mb;
+      });
   }, [appointments, todayStr]);
 
   const addresses = useMemo(() => {
