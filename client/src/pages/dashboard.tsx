@@ -12,6 +12,9 @@ import {
   MapPin,
   Calendar,
   DollarSign,
+  Car,
+  Clock,
+  Home,
 } from "lucide-react";
 import {
   BarChart,
@@ -26,7 +29,19 @@ import {
   getServiceArea,
   getServiceRegion,
   SERVICE_REGIONS,
+  parseTimeToMinutes,
+  minutesToTimeStr,
+  parseDurationToMinutes,
 } from "@/lib/scheduling";
+import { apiRequest } from "@/lib/queryClient";
+
+const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
+
+function buildAddress(cust: Customer | undefined): string {
+  if (!cust) return HOME_ADDRESS;
+  const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean);
+  return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
+}
 
 function StatCard({
   title,
@@ -118,8 +133,36 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
   }, []);
 
   const todayAppointments = useMemo(() => {
-    return appointments.filter((a) => a.date === todayStr);
+    return appointments
+      .filter((a) => a.date === todayStr)
+      .sort((a, b) => parseTimeToMinutes(a.time || "") - parseTimeToMinutes(b.time || ""));
   }, [appointments, todayStr]);
+
+  const addresses = useMemo(() => {
+    if (todayAppointments.length === 0) return [];
+    const cust = todayAppointments.map((a) => customers?.find((c) => c.id === a.customerId));
+    return [HOME_ADDRESS, ...cust.map(buildAddress), HOME_ADDRESS];
+  }, [todayAppointments, customers]);
+
+  const { data: drivingData } = useQuery<{ durations: number[] | null; error?: string }>({
+    queryKey: ["/api/driving-times", addresses.join("|")],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/driving-times", { addresses });
+      return res.json();
+    },
+    enabled: addresses.length >= 2,
+    staleTime: 15 * 60 * 1000,
+  });
+
+  const drivingTimes = drivingData?.durations ?? null;
+
+  const leaveByTime = useMemo(() => {
+    if (!todayAppointments.length || !drivingTimes || drivingTimes[0] == null || drivingTimes[0] < 0) return null;
+    const firstMins = parseTimeToMinutes(todayAppointments[0].time || "");
+    if (firstMins < 0) return null;
+    const leaveMins = firstMins - drivingTimes[0];
+    return leaveMins > 0 ? minutesToTimeStr(leaveMins) : null;
+  }, [todayAppointments, drivingTimes]);
 
   if (todayAppointments.length === 0) {
     return (
@@ -137,43 +180,92 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
     <Card data-testid="today-itinerary-card">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Calendar className="h-4 w-4" /> Today's Appointments
+          <Calendar className="h-4 w-4" /> Today's Itinerary
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-1">
-        {todayAppointments.map((appt) => {
+      <CardContent className="space-y-0.5">
+        <div className="flex items-center gap-1.5 px-1 py-1.5">
+          <Home className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="text-xs text-muted-foreground">Start of day</span>
+            {leaveByTime && (
+              <span className="ml-2 text-xs text-blue-600 dark:text-blue-400 font-semibold">
+                Leave by {leaveByTime}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {todayAppointments.map((appt, i) => {
           const cust = customers?.find((c) => c.id === appt.customerId);
           const href = cust ? `/customers/${cust.id}` : "/appointments";
+          const driveMinutes = drivingTimes ? drivingTimes[i] : null;
+          const durationMins = parseDurationToMinutes(appt.duration || "2 hours");
+          const startMins = parseTimeToMinutes(appt.time || "");
+          const endTime = startMins >= 0 ? minutesToTimeStr(startMins + durationMins) : null;
+
           return (
-            <Link key={appt.id} href={href}>
-              <div
-                className="flex items-center justify-between gap-3 p-2 rounded-md hover:bg-accent cursor-pointer text-xs"
-                data-testid={`today-appt-${appt.id}`}
-              >
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <span className="font-medium truncate">
-                    {cust ? `${cust.firstName} ${cust.lastName}` : "Unknown Client"}
-                  </span>
-                  {appt.servicesRequested && (
-                    <span className="text-muted-foreground truncate">{appt.servicesRequested}</span>
-                  )}
+            <div key={appt.id}>
+              {driveMinutes != null && driveMinutes >= 0 && (
+                <div className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-muted-foreground">
+                  <Car className="h-3 w-3 shrink-0" />
+                  <span>Driving ({driveMinutes}m)</span>
+                  <div className="flex-1 border-t border-dashed border-muted-foreground/25" />
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {appt.time && (
-                    <span className="text-muted-foreground">{appt.time}</span>
-                  )}
-                  <Badge
-                    variant={appt.status === "completed" ? "default" : "outline"}
-                    className="text-[10px] capitalize"
-                    data-testid={`today-appt-status-${appt.id}`}
-                  >
-                    {appt.status}
-                  </Badge>
+              )}
+              <Link href={href}>
+                <div
+                  className="flex items-start justify-between gap-3 p-2 rounded-md hover:bg-accent cursor-pointer"
+                  data-testid={`today-appt-${appt.id}`}
+                >
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-sm font-medium truncate">
+                      {cust ? `${cust.firstName} ${cust.lastName}` : "Unknown Client"}
+                    </span>
+                    {cust?.city && (
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <MapPin className="h-3 w-3 shrink-0" />
+                        {cust.city}
+                      </span>
+                    )}
+                    {appt.servicesRequested && (
+                      <span className="text-xs text-muted-foreground truncate">{appt.servicesRequested}</span>
+                    )}
+                  </div>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    {appt.time && (
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {appt.time}{endTime ? ` – ${endTime}` : ""}
+                      </span>
+                    )}
+                    <Badge
+                      variant={appt.status === "completed" ? "default" : "outline"}
+                      className="text-[10px] capitalize"
+                      data-testid={`today-appt-status-${appt.id}`}
+                    >
+                      {appt.status}
+                    </Badge>
+                  </div>
                 </div>
-              </div>
-            </Link>
+              </Link>
+            </div>
           );
         })}
+
+        {drivingTimes && drivingTimes[todayAppointments.length] != null && drivingTimes[todayAppointments.length]! >= 0 && (
+          <div className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-muted-foreground">
+            <Car className="h-3 w-3 shrink-0" />
+            <span>Driving ({drivingTimes[todayAppointments.length]}m) home</span>
+            <div className="flex-1 border-t border-dashed border-muted-foreground/25" />
+          </div>
+        )}
+        {drivingTimes && (
+          <div className="flex items-center gap-1.5 px-1 py-1.5">
+            <Home className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+            <span className="text-xs text-muted-foreground">Return home</span>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -212,26 +304,26 @@ function MonthlyIncomeChart({ invoices, loading }: { invoices: Invoice[] | undef
   }, [invoices]);
 
   return (
-    <Card data-testid="monthly-income-card">
+    <Card data-testid="monthly-income-card" className="flex flex-col">
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-semibold flex items-center gap-2">
           <DollarSign className="h-4 w-4" /> Invoice Summary
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1">
         {loading ? (
-          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-40 w-full" />
         ) : (
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={155}>
             <BarChart data={monthlyData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
               <XAxis
                 dataKey="month"
-                tick={{ fontSize: 10 }}
+                tick={{ fontSize: 9 }}
                 tickLine={false}
                 axisLine={false}
               />
               <YAxis
-                tick={{ fontSize: 10 }}
+                tick={{ fontSize: 9 }}
                 tickLine={false}
                 axisLine={false}
                 tickFormatter={(v) => `$${v}`}
@@ -357,74 +449,76 @@ export default function Dashboard() {
         />
       </div>
 
-      <MonthlyIncomeChart invoices={invoices} loading={invoicesLoading} />
+      <div className="grid gap-4 grid-cols-1 md:grid-cols-2">
+        <MonthlyIncomeChart invoices={invoices} loading={invoicesLoading} />
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <MapPin className="h-4 w-4" /> Service Areas
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-8 w-full" />
-              ))}
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              {Object.entries(SERVICE_REGIONS).map(([region, subAreas]) => {
-                const regionCount = regionTotals[region] || 0;
-                const areaCounts = serviceAreaCounts[region] || {};
-                return (
-                  <div key={region} className="space-y-2" data-testid={`region-${region.toLowerCase().replace(/\s+/g, '-')}`}>
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold">{region}</h3>
-                      <span className="text-xs text-muted-foreground">{regionCount} clients</span>
-                    </div>
-                    <div className="space-y-1.5 pl-3 border-l-2 border-muted">
-                      {subAreas.map((area) => {
-                        const count = areaCounts[area] || 0;
-                        return (
-                          <Link key={area} href={`/customers?area=${encodeURIComponent(area)}`}>
-                            <div className="flex items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-accent cursor-pointer" data-testid={`area-link-${area.toLowerCase().replace(/\s+/g, '-')}`}>
-                              <span className="text-xs truncate">{area}</span>
-                              <div className="flex items-center gap-2">
-                                <div className="h-1.5 bg-primary/15 rounded-full w-12 relative">
-                                  <div
-                                    className="h-1.5 bg-primary rounded-full absolute inset-y-0 left-0"
-                                    style={{
-                                      width: `${regionCount > 0 ? Math.min(100, (count / regionCount) * 100) : 0}%`,
-                                    }}
-                                  />
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <MapPin className="h-4 w-4" /> Service Areas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <Skeleton key={i} className="h-8 w-full" />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(SERVICE_REGIONS).map(([region, subAreas]) => {
+                  const regionCount = regionTotals[region] || 0;
+                  const areaCounts = serviceAreaCounts[region] || {};
+                  return (
+                    <div key={region} className="space-y-2" data-testid={`region-${region.toLowerCase().replace(/\s+/g, '-')}`}>
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold">{region}</h3>
+                        <span className="text-xs text-muted-foreground">{regionCount} clients</span>
+                      </div>
+                      <div className="space-y-1.5 pl-3 border-l-2 border-muted">
+                        {subAreas.map((area) => {
+                          const count = areaCounts[area] || 0;
+                          return (
+                            <Link key={area} href={`/customers?area=${encodeURIComponent(area)}`}>
+                              <div className="flex items-center justify-between gap-2 rounded px-1 py-0.5 hover:bg-accent cursor-pointer" data-testid={`area-link-${area.toLowerCase().replace(/\s+/g, '-')}`}>
+                                <span className="text-xs truncate">{area}</span>
+                                <div className="flex items-center gap-2">
+                                  <div className="h-1.5 bg-primary/15 rounded-full w-12 relative">
+                                    <div
+                                      className="h-1.5 bg-primary rounded-full absolute inset-y-0 left-0"
+                                      style={{
+                                        width: `${regionCount > 0 ? Math.min(100, (count / regionCount) * 100) : 0}%`,
+                                      }}
+                                    />
+                                  </div>
+                                  <span className="text-[10px] text-muted-foreground w-4 text-right">
+                                    {count}
+                                  </span>
                                 </div>
-                                <span className="text-[10px] text-muted-foreground w-4 text-right">
-                                  {count}
-                                </span>
                               </div>
-                            </div>
-                          </Link>
-                        );
-                      })}
+                            </Link>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+                {serviceAreaCounts["Other"] && (
+                  <div className="space-y-2" data-testid="region-other">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-sm font-semibold">Other</h3>
+                      <span className="text-xs text-muted-foreground">
+                        {Object.values(serviceAreaCounts["Other"]).reduce((s, c) => s + c, 0)} clients
+                      </span>
                     </div>
                   </div>
-                );
-              })}
-              {serviceAreaCounts["Other"] && (
-                <div className="space-y-2" data-testid="region-other">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold">Other</h3>
-                    <span className="text-xs text-muted-foreground">
-                      {Object.values(serviceAreaCounts["Other"]).reduce((s, c) => s + c, 0)} clients
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader className="pb-3">
