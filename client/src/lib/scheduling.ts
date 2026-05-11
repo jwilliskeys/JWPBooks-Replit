@@ -1,7 +1,7 @@
 export const SERVICE_AREA_CLUSTERS: Record<string, string[]> = {
-  "Davis County": ["Bountiful", "Centerville", "North Salt Lake", "Kaysville", "Farmington", "Layton", "Syracuse", "Ogden", "Farr West"],
+  "Davis County": ["Bountiful", "Centerville", "North Salt Lake", "Kaysville", "Farmington", "Layton", "Syracuse", "Ogden", "Farr West", "Davis County"],
   "Salt Lake City": ["Salt Lake City", "SLC", "Midvale", "Taylorsville", "Sandy", "Cottonwood Heights", "Draper", "Highland", "West Jordan", "Kamas", "Heber City", "Midway", "Alpine"],
-  "South Jordan": ["South Jordan", "Herriman", "Bluffdale", "Riverton", "Copperton", "Lehi"],
+  "South Jordan": ["South Jordan", "Herriman", "Bluffdale", "Riverton", "Copperton", "Lehi", "Orem", "Provo"],
   "Boston": ["Somerville", "Boston", "Cambridge", "Brookline"],
 };
 
