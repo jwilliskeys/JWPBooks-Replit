@@ -638,6 +638,7 @@ export default function SlcSchedule() {
           await apiRequest("PATCH", `/api/invoices/${completingLinkedInvoice.id}`, {
             status: "paid",
             paidAmount,
+            paymentMethod: completePaymentMethod,
             notes: `${existingNotes}Paid via ${completePaymentMethod}`,
           });
           queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });

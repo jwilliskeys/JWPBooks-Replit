@@ -234,6 +234,7 @@ export function CompleteAppointmentDialog({
           await apiRequest("PATCH", `/api/invoices/${linkedInvoice.id}`, {
             status: "paid",
             paidAmount,
+            paymentMethod,
             notes: `${existingNotes}Paid via ${paymentMethod}`,
           });
           queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });

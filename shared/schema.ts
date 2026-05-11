@@ -161,6 +161,7 @@ export const invoices = pgTable("invoices", {
   subtotal: text("subtotal").default("$0.00"),
   total: text("total").default("$0.00"),
   paidAmount: text("paid_amount").default("$0.00"),
+  paymentMethod: text("payment_method"),
   notes: text("notes"),
   customerName: text("customer_name"),
   customerEmail: text("customer_email"),

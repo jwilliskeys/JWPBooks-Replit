@@ -928,6 +928,12 @@ export default function InvoiceDetailPage() {
                     <span className="tabular-nums">{displayData.paidAmount}</span>
                   )}
                 </div>
+                {!editMode && !isNew && invoice?.paymentMethod && (
+                  <div className="flex justify-between gap-8 items-center">
+                    <span className="text-muted-foreground">Via</span>
+                    <span className="text-sm font-medium" data-testid="text-payment-method">{invoice.paymentMethod}</span>
+                  </div>
+                )}
                 <div className="flex justify-between gap-8 border-t border-border pt-1.5">
                   <span className="font-semibold">Amount Due</span>
                   <span className="tabular-nums font-bold text-base">{amountDue}</span>
