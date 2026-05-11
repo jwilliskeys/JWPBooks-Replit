@@ -478,7 +478,7 @@ interface TripPanelProps {
   isExpanded: boolean;
   onToggle: () => void;
   onOpenAddDialog: (dateStr: string, tripId: number, existingAppts: ExistingAppointment[], dayArea: string) => void;
-  onOpenEditDialog: (appt: TripAppointment, tripId: number) => void;
+  onOpenEditDialog: (appt: TripAppointment, tripId: number, dayExistingAppts: ExistingAppointment[]) => void;
   onCompleteAppointment: (appt: TripAppointment, tripId: number) => void;
   onDeleteAppointment: (id: number, tripId: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) => void;
@@ -502,7 +502,6 @@ function TripPanel({
 }: TripPanelProps) {
   const { data: tripAppointments } = useQuery<TripAppointment[]>({
     queryKey: ["/api/trips", trip.id, "appointments"],
-    enabled: isExpanded,
   });
 
   const dates = useMemo(() => getDatesInRange(trip.startDate, trip.endDate), [trip.startDate, trip.endDate]);
@@ -570,19 +569,16 @@ function TripPanel({
                     <Calendar className="h-3 w-3" />
                     {trip.startDate} — {trip.endDate}
                   </span>
-                  {isExpanded && apptCount > 0 && (
+                  <span>· {dates.length} day{dates.length !== 1 ? "s" : ""}</span>
+                  {apptCount > 0 && (
                     <>
+                      <span>·</span>
+                      <span>{apptCount} appt{apptCount !== 1 ? "s" : ""}</span>
                       <span>·</span>
                       <span className="flex items-center gap-1">
                         <DollarSign className="h-3 w-3" />
                         ${totalRevenue.toFixed(0)}
                       </span>
-                      <span>· {apptCount} appt{apptCount !== 1 ? "s" : ""}</span>
-                    </>
-                  )}
-                  {!isExpanded && (
-                    <>
-                      <span>· {dates.length} day{dates.length !== 1 ? "s" : ""}</span>
                     </>
                   )}
                 </div>
@@ -625,7 +621,15 @@ function TripPanel({
                     customerMap={customerMap}
                     pianoMap={pianoMap}
                     onOpenDialog={handleOpenDialog}
-                    onOpenEditDialog={(appt) => onOpenEditDialog(appt, trip.id)}
+                    onOpenEditDialog={(appt) => {
+                      const dayAppts = appointmentsByDate.get(appt.date) ?? [];
+                      const dayExisting: ExistingAppointment[] = dayAppts.filter(a => a.id !== appt.id).map(a => ({
+                        time: a.time,
+                        duration: a.duration || "2 hours",
+                        city: customerMap.get(a.customerId)?.city || a.serviceArea || "",
+                      }));
+                      onOpenEditDialog(appt, trip.id, dayExisting);
+                    }}
                     onCompleteAppointment={(appt) => onCompleteAppointment(appt, trip.id)}
                     onDeleteAppointment={(id) => {
                       if (confirm("Delete this appointment?")) onDeleteAppointment(id, trip.id);
@@ -696,6 +700,7 @@ export default function SlcSchedule() {
   // Edit appointment dialog
   const [editingAppt, setEditingAppt] = useState<TripAppointment | null>(null);
   const [editingTripId, setEditingTripId] = useState<number | null>(null);
+  const [editDayExistingAppts, setEditDayExistingAppts] = useState<ExistingAppointment[]>([]);
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
   const [editServices, setEditServices] = useState("");
@@ -740,16 +745,14 @@ export default function SlcSchedule() {
     });
   }, [trips]);
 
-  // Auto-expand trips that contain today on first load
+  // Auto-expand trips that contain today on first load; otherwise start collapsed
   useMemo(() => {
     if (!sortedTrips.length || expandedInitialized) return;
     const active = sortedTrips.filter(isTripActive);
     if (active.length > 0) {
       setExpandedTripIds(new Set(active.map(t => t.id)));
-    } else if (sortedTrips.length > 0) {
-      // Default: expand the most recent trip
-      setExpandedTripIds(new Set([sortedTrips[sortedTrips.length - 1].id]));
     }
+    // When no trips include today: all start collapsed (no default expansion)
     setExpandedInitialized(true);
   }, [sortedTrips, expandedInitialized]);
 
@@ -778,11 +781,11 @@ export default function SlcSchedule() {
     return inactive;
   }, [allPianos]);
 
-  // Pianos for selected customer (in add dialog)
-  const selectedCustomerPianos = useMemo(() => {
-    if (!selectedCustomerId || !allPianos) return [];
-    return allPianos.filter(p => p.customerId === parseInt(selectedCustomerId) && p.isActive !== false);
-  }, [selectedCustomerId, allPianos]);
+  // Pianos for the selected customer — fetched per-customer when dialog is open
+  const { data: selectedCustomerPianos = [] } = useQuery<Piano[]>({
+    queryKey: ["/api/customers", selectedCustomerId, "pianos"],
+    enabled: !!selectedCustomerId && dialogOpen,
+  });
 
   // Invoice for completing appointment
   const completingLinkedInvoice: Invoice | null = localCreatedInvoice
@@ -1041,9 +1044,10 @@ export default function SlcSchedule() {
     });
   }
 
-  function openEditDialog(appt: TripAppointment, tripId: number) {
+  function openEditDialog(appt: TripAppointment, tripId: number, dayExistingAppts: ExistingAppointment[]) {
     setEditingAppt(appt);
     setEditingTripId(tripId);
+    setEditDayExistingAppts(dayExistingAppts);
     const timeMins = parseTimeString(appt.time || "8:00 AM");
     setEditTime(formatTimeMinutes(timeMins > 0 ? timeMins : DEFAULT_TIME_MINUTES));
     const durMins = parseDurationString(appt.duration || "2 hours");
@@ -1060,6 +1064,12 @@ export default function SlcSchedule() {
 
   function handleSaveEdit() {
     if (!editingAppt || !editingTripId) return;
+    const cust = customerMap.get(editingAppt.customerId);
+    const custCity = cust?.city || "";
+    const result = checkTimeConflict(editTime, editDuration, custCity, editDayExistingAppts);
+    if (!result.valid) {
+      setEditConflictError(result.message || "Time conflict");
+    }
     editAppointmentMutation.mutate({
       id: editingAppt.id,
       tripId: editingTripId,
