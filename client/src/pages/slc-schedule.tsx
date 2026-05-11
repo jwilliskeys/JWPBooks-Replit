@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +26,15 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import {
   Plus,
   Trash2,
@@ -49,6 +58,8 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronRight,
+  ChevronsUpDown,
+  Check,
 } from "lucide-react";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -213,7 +224,6 @@ function isTripActive(trip: Trip): boolean {
   return !isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= today && today <= end;
 }
 
-// ─── DayScheduleColumn ──────────────────────────────────────────────────────
 
 interface DayScheduleColumnProps {
   dateStr: string;
@@ -469,7 +479,6 @@ function DayScheduleColumn({
   );
 }
 
-// ─── TripPanel ───────────────────────────────────────────────────────────────
 
 interface TripPanelProps {
   trip: Trip;
@@ -570,17 +579,13 @@ function TripPanel({
                     {trip.startDate} — {trip.endDate}
                   </span>
                   <span>· {dates.length} day{dates.length !== 1 ? "s" : ""}</span>
-                  {apptCount > 0 && (
-                    <>
-                      <span>·</span>
-                      <span>{apptCount} appt{apptCount !== 1 ? "s" : ""}</span>
-                      <span>·</span>
-                      <span className="flex items-center gap-1">
-                        <DollarSign className="h-3 w-3" />
-                        ${totalRevenue.toFixed(0)}
-                      </span>
-                    </>
-                  )}
+                  <span>·</span>
+                  <span>{apptCount} appt{apptCount !== 1 ? "s" : ""}</span>
+                  <span>·</span>
+                  <span className="flex items-center gap-1">
+                    <DollarSign className="h-3 w-3" />
+                    ${totalRevenue.toFixed(0)}
+                  </span>
                 </div>
               </div>
             </div>
@@ -646,7 +651,6 @@ function TripPanel({
   );
 }
 
-// ─── Invoice helpers ──────────────────────────────────────────────────────────
 
 const PAYMENT_METHODS = ["Zelle", "Venmo", "CashApp", "PayPal", "Stripe", "Cash", "Check", "Other"];
 
@@ -663,7 +667,6 @@ function invoiceStatusBadge(status: string | null | undefined) {
   }
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function SlcSchedule() {
   const { toast } = useToast();
@@ -696,6 +699,7 @@ export default function SlcSchedule() {
   const [apptSelectedNames, setApptSelectedNames] = useState<string[]>([]);
   const [addDialogKey, setAddDialogKey] = useState(0);
   const [conflictError, setConflictError] = useState("");
+  const [pianoCbOpen, setPianoCbOpen] = useState(false);
 
   // Edit appointment dialog
   const [editingAppt, setEditingAppt] = useState<TripAppointment | null>(null);
@@ -746,13 +750,12 @@ export default function SlcSchedule() {
   }, [trips]);
 
   // Auto-expand trips that contain today on first load; otherwise start collapsed
-  useMemo(() => {
+  useEffect(() => {
     if (!sortedTrips.length || expandedInitialized) return;
     const active = sortedTrips.filter(isTripActive);
     if (active.length > 0) {
       setExpandedTripIds(new Set(active.map(t => t.id)));
     }
-    // When no trips include today: all start collapsed (no default expansion)
     setExpandedInitialized(true);
   }, [sortedTrips, expandedInitialized]);
 
@@ -793,7 +796,6 @@ export default function SlcSchedule() {
         ? (allInvoices.find(inv => inv.appointmentId === completingAppt.linkedAppointmentId) ?? null)
         : null);
 
-  // ─── Mutations ──────────────────────────────────────────────────────────────
 
   const createTripMutation = useMutation({
     mutationFn: (data: { name: string; startDate: string; endDate: string; notes?: string }) =>
@@ -974,7 +976,6 @@ export default function SlcSchedule() {
     },
   });
 
-  // ─── Handlers ───────────────────────────────────────────────────────────────
 
   function toggleTrip(tripId: number) {
     setExpandedTripIds(prev => {
@@ -1156,7 +1157,6 @@ export default function SlcSchedule() {
     return { suggested: sugg, other: rest };
   }, [customers, customerSearch, dialogDayArea, dialogNearbyCities, customersWithAllInactivePianos]);
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
 
   if (tripsLoading) {
     return (
@@ -1393,23 +1393,59 @@ export default function SlcSchedule() {
               )}
             </div>
 
-            {/* Piano selector */}
             {selectedCustomerId && selectedCustomerPianos.length > 0 && (
               <div className="space-y-2">
                 <Label>Piano</Label>
-                <Select value={selectedPianoId} onValueChange={setSelectedPianoId}>
-                  <SelectTrigger data-testid="select-appt-piano">
-                    <SelectValue placeholder="Select piano (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">No specific piano</SelectItem>
-                    {selectedCustomerPianos.map((p) => (
-                      <SelectItem key={p.id} value={String(p.id)}>
-                        {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Popover open={pianoCbOpen} onOpenChange={setPianoCbOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      className="w-full justify-between font-normal"
+                      data-testid="select-appt-piano"
+                    >
+                      <span className="truncate">
+                        {selectedPianoId !== "none"
+                          ? (() => {
+                              const p = selectedCustomerPianos.find(p => String(p.id) === selectedPianoId);
+                              return p ? [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}` : "Select piano...";
+                            })()
+                          : "No specific piano"}
+                      </span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-full p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search piano..." />
+                      <CommandList>
+                        <CommandEmpty>No piano found.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            value="none"
+                            onSelect={() => { setSelectedPianoId("none"); setPianoCbOpen(false); }}
+                          >
+                            <Check className={`mr-2 h-4 w-4 ${selectedPianoId === "none" ? "opacity-100" : "opacity-0"}`} />
+                            No specific piano
+                          </CommandItem>
+                          {selectedCustomerPianos.map((p) => {
+                            const label = [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
+                            return (
+                              <CommandItem
+                                key={p.id}
+                                value={label}
+                                onSelect={() => { setSelectedPianoId(String(p.id)); setPianoCbOpen(false); }}
+                              >
+                                <Check className={`mr-2 h-4 w-4 ${selectedPianoId === String(p.id) ? "opacity-100" : "opacity-0"}`} />
+                                {label}
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
             )}
 
