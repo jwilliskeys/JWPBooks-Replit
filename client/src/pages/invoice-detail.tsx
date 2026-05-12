@@ -64,7 +64,9 @@ function todayMDYY(): string {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear() % 100}`;
 }
 
-function parseDollar(str: string): number {
+function parseDollar(str: string | number): number {
+  if (typeof str === "number") return isNaN(str) ? 0 : str;
+  if (!str) return 0;
   const n = parseFloat(str.replace(/[^0-9.]/g, ""));
   return isNaN(n) ? 0 : n;
 }
@@ -177,6 +179,14 @@ function defaultForm(): InvoiceFormState {
 function invoiceToForm(inv: Invoice): InvoiceFormState {
   let lineItems: LineItem[] = [];
   try { lineItems = JSON.parse(inv.lineItems); } catch {}
+  // Normalize each line item — unitPrice/lineTotal may be numbers from older saves
+  lineItems = lineItems.map(li => ({
+    description: li.description ?? "",
+    quantity: Number(li.quantity) || 1,
+    unitPrice: formatDollar(parseDollar((li as any).unitPrice ?? "$0.00")),
+    taxes: li.taxes ?? "",
+    lineTotal: formatDollar(parseDollar((li as any).lineTotal ?? (li as any).unitPrice ?? "$0.00")),
+  }));
   if (lineItems.length === 0) {
     lineItems = [{ description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }];
   }
