@@ -309,6 +309,9 @@ export default function PianoDetail() {
   const { label: statusLabel, cls: statusCls } = tuningStatusClass(monthsSince);
   const nextDue = calcNextTuningDue(piano.lastTuned, piano.tuningInterval);
   const nowTs = Date.now();
+  const nextScheduledAppt = (pianoAppointments ?? [])
+    .filter((a) => a.status !== "cancelled" && parseSortTs(a.date) >= nowTs)
+    .sort((a, b) => parseSortTs(a.date) - parseSortTs(b.date))[0] ?? null;
   const timeline = buildTimeline(serviceRecords ?? [], pianoInvoices ?? [], pianoAppointments ?? []);
   const futureEntries = timeline.filter((e) => e.sortTs > nowTs);
   const pastEntries = timeline.filter((e) => e.sortTs <= nowTs);
@@ -617,9 +620,11 @@ export default function PianoDetail() {
                   {piano.location ? `Location: ${piano.location}` : ""}
                 </p>
               )}
-              {nextDue && (
-                <p className="text-xs">Next Tuning Scheduled: <span className="font-medium">{formatDateShort(nextDue)}</span></p>
-              )}
+              {nextScheduledAppt ? (
+                <p className="text-xs">Next Tuning Scheduled: <span className="font-medium">{nextScheduledAppt.date}</span></p>
+              ) : nextDue ? (
+                <p className="text-xs">Tuning Due: <span className="font-medium">{formatDateShort(nextDue)}</span></p>
+              ) : null}
             </div>
             {/* Tags */}
             <div className="flex flex-wrap justify-center gap-1 mt-2" data-testid="piano-tags">
