@@ -389,12 +389,13 @@ export default function PianoDetail() {
       </div>
     ) : null;
 
-  const BoolRow = ({ label, value }: { label: string; value?: boolean | null }) => (
-    <div className="flex justify-between py-1.5 border-b last:border-0 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={value ? "font-medium text-foreground" : "text-muted-foreground"}>{value ? "Yes" : "No"}</span>
-    </div>
-  );
+  const BoolRow = ({ label, value }: { label: string; value?: boolean | null }) =>
+    value ? (
+      <div className="flex justify-between py-1.5 border-b last:border-0 text-sm">
+        <span className="text-muted-foreground">{label}</span>
+        <span className="font-medium text-foreground">Yes</span>
+      </div>
+    ) : null;
 
   // ── timeline entry renderers ──
   let lastYearLabel = "";
