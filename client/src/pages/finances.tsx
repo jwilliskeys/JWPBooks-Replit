@@ -17,6 +17,7 @@ import {
   DollarSign, TrendingUp, Car, Receipt, Plus, Trash2, Printer, Calculator,
   CheckCircle2, Route,
 } from "lucide-react";
+import { parseTimeToMinutes } from "@/lib/scheduling";
 import type { Invoice, MileageLog, BusinessExpense, Appointment, Customer } from "@shared/schema";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -259,10 +260,21 @@ interface ItineraryDayRowProps {
 }
 
 function ItineraryDayRow({ dateStr, dayAppts, customerMap, loggedDates, onAdd, isPending }: ItineraryDayRowProps) {
+  const sortedAppts = useMemo(() => {
+    return [...dayAppts].sort((a, b) => {
+      const ma = parseTimeToMinutes(a.time || "");
+      const mb = parseTimeToMinutes(b.time || "");
+      if (ma < 0 && mb < 0) return 0;
+      if (ma < 0) return 1;
+      if (mb < 0) return -1;
+      return ma - mb;
+    });
+  }, [dayAppts]);
+
   const addresses = useMemo(() => {
-    const apptAddresses = dayAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
+    const apptAddresses = sortedAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
     return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
-  }, [dayAppts, customerMap]);
+  }, [sortedAppts, customerMap]);
 
   const { data: drivingData, isLoading } = useQuery<{ distances: number[] | null; durations: number[] | null; error?: string }>({
     queryKey: ["/api/driving-times", addresses.join("|")],
