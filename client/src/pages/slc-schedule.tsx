@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -238,6 +238,7 @@ interface DayScheduleColumnProps {
   onCompleteAppointment: (appt: TripAppointment) => void;
   onDeleteAppointment: (id: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
+  onMileageReported?: (dateStr: string, miles: number | null) => void;
 }
 
 function DayScheduleColumn({
@@ -253,6 +254,7 @@ function DayScheduleColumn({
   onCompleteAppointment,
   onDeleteAppointment,
   onConfirmAppointment,
+  onMileageReported,
 }: DayScheduleColumnProps) {
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
@@ -275,9 +277,21 @@ function DayScheduleColumn({
 
   const totalMileage = useMemo(() => {
     if (!drivingDistances || drivingDistances.length === 0) return null;
-    if (drivingDistances.some(d => d < 0)) return null;
-    return Math.round(drivingDistances.reduce((sum, d) => sum + d, 0) * 10) / 10;
+    const validDistances = drivingDistances.filter(d => d >= 0);
+    if (validDistances.length === 0) return null;
+    return Math.round(validDistances.reduce((sum, d) => sum + d, 0) * 10) / 10;
   }, [drivingDistances]);
+
+  const isMileagePartial = useMemo(() => {
+    if (!drivingDistances || drivingDistances.length === 0) return false;
+    return drivingDistances.some(d => d < 0);
+  }, [drivingDistances]);
+
+  useEffect(() => {
+    if (onMileageReported) {
+      onMileageReported(dateStr, totalMileage);
+    }
+  }, [dateStr, totalMileage, onMileageReported]);
 
   const leaveByTime = useMemo(() => {
     if (!dayAppts.length || !drivingTimes || drivingTimes[0] == null || drivingTimes[0] < 0) return null;
@@ -469,7 +483,7 @@ function DayScheduleColumn({
             )}
             {totalMileage != null && (
               <div className="flex items-center justify-center px-1 py-1 mt-1 border-t">
-                <span className="text-[10px] font-medium text-muted-foreground">{totalMileage} mi total</span>
+                <span className="text-[10px] font-medium text-muted-foreground">{isMileagePartial ? "~" : ""}{totalMileage} mi total</span>
               </div>
             )}
           </div>
@@ -569,6 +583,26 @@ function TripPanel({
 
   const apptCount = tripAppointments?.length ?? 0;
 
+  const [dayMileages, setDayMileages] = useState<Map<string, number>>(new Map());
+
+  const handleMileageReported = useCallback((dateStr: string, miles: number | null) => {
+    setDayMileages(prev => {
+      const next = new Map(prev);
+      if (miles != null) {
+        next.set(dateStr, miles);
+      } else {
+        next.delete(dateStr);
+      }
+      return next;
+    });
+  }, []);
+
+  const tripTotalMileage = useMemo(() => {
+    const values = Array.from(dayMileages.values());
+    if (values.length === 0) return null;
+    return Math.round(values.reduce((sum, m) => sum + m, 0) * 10) / 10;
+  }, [dayMileages]);
+
   return (
     <Collapsible open={isExpanded} onOpenChange={onToggle}>
       <div className="border rounded-lg bg-card overflow-hidden">
@@ -599,6 +633,15 @@ function TripPanel({
                     <DollarSign className="h-3 w-3" />
                     ${totalRevenue.toFixed(0)}
                   </span>
+                  {tripTotalMileage != null && (
+                    <>
+                      <span>·</span>
+                      <span className="flex items-center gap-1" data-testid={`text-trip-miles-${trip.id}`}>
+                        <Car className="h-3 w-3" />
+                        {tripTotalMileage} mi
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -653,6 +696,7 @@ function TripPanel({
                       if (confirm("Delete this appointment?")) onDeleteAppointment(id, trip.id);
                     }}
                     onConfirmAppointment={(appt, cust, piano) => onConfirmAppointment(appt, cust, piano, trip.id)}
+                    onMileageReported={handleMileageReported}
                   />
                 );
               })}
