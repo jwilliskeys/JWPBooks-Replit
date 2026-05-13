@@ -158,7 +158,7 @@ export function EnterPaymentDialog({
             </Button>
             <Button
               onClick={() => mutation.mutate()}
-              disabled={mutation.isPending || amountNum <= 0}
+              disabled={mutation.isPending || amountNum <= 0 || !method}
               className="gap-1.5"
               data-testid="button-record-payment"
             >

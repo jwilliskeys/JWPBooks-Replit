@@ -207,7 +207,7 @@ export default function InvoicesPage() {
                             data-testid={`button-enter-payment-${inv.id}`}
                           >
                             <DollarSign className="h-3 w-3" />
-                            Pay
+                            Enter Payment
                           </Button>
                         )}
                         {inv.customerEmail && (
