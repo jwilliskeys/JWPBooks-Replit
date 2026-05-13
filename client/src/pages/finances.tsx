@@ -527,13 +527,18 @@ function ExpensesPanel() {
                 {usedCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
               </SelectContent>
             </Select>
-            <span className="text-xs text-muted-foreground">
-              YTD: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">
+                YTD Total: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Deductible: <span className="font-semibold text-green-600 dark:text-green-400">{fmt(ytdTotal)}</span>
+              </span>
+            </div>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={handlePrintReport} data-testid="button-print-report">
-              <Printer className="h-4 w-4 mr-1" /> Print Report
+              <Printer className="h-4 w-4 mr-1" /> Download Report
             </Button>
             <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-expense">
               <Plus className="h-4 w-4 mr-1" /> Add Expense
