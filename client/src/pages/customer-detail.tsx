@@ -558,15 +558,34 @@ export default function CustomerDetail() {
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-base">Contacts</CardTitle>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs"
-                    onClick={() => { setContactForm({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false }); setShowAddContact(true); setEditingContact(null); }}
-                    data-testid="button-add-contact"
-                  >
-                    <Plus className="h-3 w-3 mr-1" /> New Contact
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {customer.address && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        asChild
+                        data-testid="button-map-address"
+                      >
+                        <a
+                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([customer.address, customer.city, customer.state, customer.zipCode].filter(Boolean).join(", "))}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <MapPin className="h-3 w-3 mr-1" /> Map
+                        </a>
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => { setContactForm({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false }); setShowAddContact(true); setEditingContact(null); }}
+                      data-testid="button-add-contact"
+                    >
+                      <Plus className="h-3 w-3 mr-1" /> New Contact
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-2 pt-0">
