@@ -976,10 +976,10 @@ export default function PianoDetail() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs">Tuning interval</Label>
-              <Select value={editForm.tuningInterval || ""} onValueChange={(v) => setEditForm({ ...editForm, tuningInterval: v || undefined })}>
+              <Select value={editForm.tuningInterval || "_none"} onValueChange={(v) => setEditForm({ ...editForm, tuningInterval: v === "_none" ? undefined : v })}>
                 <SelectTrigger data-testid="select-tuning-interval"><SelectValue placeholder="Select interval" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Not set</SelectItem>
+                  <SelectItem value="_none">Not set</SelectItem>
                   {INTERVAL_OPTIONS.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                 </SelectContent>
               </Select>
