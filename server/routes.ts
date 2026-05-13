@@ -1098,6 +1098,34 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/mileage-logs/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const log = await storage.getMileageLog(id, userId);
+      if (!log) return res.status(404).json({ message: "Not found" });
+      res.json(log);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/mileage-logs/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const parsed = insertMileageLogSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const log = await storage.updateMileageLog(id, userId, parsed.data);
+      if (!log) return res.status(404).json({ message: "Not found" });
+      res.json(log);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.delete("/api/mileage-logs/:id", async (req, res) => {
     try {
       const userId = getUserId(req);
@@ -1128,6 +1156,34 @@ export async function registerRoutes(
       if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       const expense = await storage.createBusinessExpense(parsed.data, userId);
       res.status(201).json(expense);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/business-expenses/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const expense = await storage.getBusinessExpense(id, userId);
+      if (!expense) return res.status(404).json({ message: "Not found" });
+      res.json(expense);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/business-expenses/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const parsed = insertBusinessExpenseSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const expense = await storage.updateBusinessExpense(id, userId, parsed.data);
+      if (!expense) return res.status(404).json({ message: "Not found" });
+      res.json(expense);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

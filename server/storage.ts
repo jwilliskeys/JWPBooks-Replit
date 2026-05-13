@@ -137,10 +137,14 @@ export interface IStorage {
   deleteCustomerContact(id: number): Promise<boolean>;
   setPrimaryContact(id: number, customerId: number): Promise<CustomerContact | undefined>;
   getMileageLogs(userId: string): Promise<MileageLog[]>;
+  getMileageLog(id: number, userId: string): Promise<MileageLog | undefined>;
   createMileageLog(log: InsertMileageLog, userId: string): Promise<MileageLog>;
+  updateMileageLog(id: number, userId: string, data: Partial<InsertMileageLog>): Promise<MileageLog | undefined>;
   deleteMileageLog(id: number, userId: string): Promise<boolean>;
   getBusinessExpenses(userId: string): Promise<BusinessExpense[]>;
+  getBusinessExpense(id: number, userId: string): Promise<BusinessExpense | undefined>;
   createBusinessExpense(expense: InsertBusinessExpense, userId: string): Promise<BusinessExpense>;
+  updateBusinessExpense(id: number, userId: string, data: Partial<InsertBusinessExpense>): Promise<BusinessExpense | undefined>;
   deleteBusinessExpense(id: number, userId: string): Promise<boolean>;
 }
 
@@ -746,9 +750,23 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(mileageLogs.date));
   }
 
+  async getMileageLog(id: number, userId: string): Promise<MileageLog | undefined> {
+    const [log] = await db.select().from(mileageLogs)
+      .where(and(eq(mileageLogs.id, id), eq(mileageLogs.userId, userId)));
+    return log;
+  }
+
   async createMileageLog(log: InsertMileageLog, userId: string): Promise<MileageLog> {
     const [created] = await db.insert(mileageLogs).values({ ...log, userId }).returning();
     return created;
+  }
+
+  async updateMileageLog(id: number, userId: string, data: Partial<InsertMileageLog>): Promise<MileageLog | undefined> {
+    const [updated] = await db.update(mileageLogs)
+      .set(data)
+      .where(and(eq(mileageLogs.id, id), eq(mileageLogs.userId, userId)))
+      .returning();
+    return updated;
   }
 
   async deleteMileageLog(id: number, userId: string): Promise<boolean> {
@@ -764,9 +782,23 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(businessExpenses.date));
   }
 
+  async getBusinessExpense(id: number, userId: string): Promise<BusinessExpense | undefined> {
+    const [expense] = await db.select().from(businessExpenses)
+      .where(and(eq(businessExpenses.id, id), eq(businessExpenses.userId, userId)));
+    return expense;
+  }
+
   async createBusinessExpense(expense: InsertBusinessExpense, userId: string): Promise<BusinessExpense> {
     const [created] = await db.insert(businessExpenses).values({ ...expense, userId }).returning();
     return created;
+  }
+
+  async updateBusinessExpense(id: number, userId: string, data: Partial<InsertBusinessExpense>): Promise<BusinessExpense | undefined> {
+    const [updated] = await db.update(businessExpenses)
+      .set(data)
+      .where(and(eq(businessExpenses.id, id), eq(businessExpenses.userId, userId)))
+      .returning();
+    return updated;
   }
 
   async deleteBusinessExpense(id: number, userId: string): Promise<boolean> {

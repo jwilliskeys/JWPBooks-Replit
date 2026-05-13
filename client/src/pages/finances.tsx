@@ -14,7 +14,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
 import {
-  DollarSign, TrendingUp, Car, Receipt, Plus, Trash2, Download, Calculator,
+  DollarSign, TrendingUp, Car, Receipt, Plus, Trash2, Printer, Calculator,
 } from "lucide-react";
 import type { Invoice, MileageLog, BusinessExpense } from "@shared/schema";
 
@@ -156,7 +156,7 @@ const QUARTER_DUE_DATES: Record<number, string> = {
   1: "Apr 15",
   2: "Jun 16",
   3: "Sep 15",
-  4: "Jan 15 (next year)",
+  4: "Jan 15 (next yr)",
 };
 
 function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; loading: boolean }) {
@@ -185,7 +185,7 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <Label className="text-xs text-muted-foreground whitespace-nowrap">Income tax bracket %</Label>
           <Input
             type="number"
@@ -196,7 +196,7 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
             className="w-20 h-7 text-sm"
             data-testid="input-income-tax-rate"
           />
-          <span className="text-xs text-muted-foreground">+ 15.3% SE tax = {(totalRate * 100).toFixed(1)}% total</span>
+          <span className="text-xs text-muted-foreground">+ 15.3% SE = {(totalRate * 100).toFixed(1)}% total</span>
         </div>
         <div className="space-y-2">
           {([1, 2, 3, 4] as const).map(q => {
@@ -223,7 +223,7 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
           })}
         </div>
         <p className="text-xs text-muted-foreground">
-          Estimates only. Consult a tax professional. Self-employment tax = 15.3%, federal bracket adjustable above.
+          Estimates only — consult a tax professional. SE tax = 15.3%; adjust income bracket above.
         </p>
       </CardContent>
     </Card>
@@ -254,7 +254,7 @@ function MileagePanel() {
     onError: () => toast({ title: "Failed to delete", variant: "destructive" }),
   });
 
-  const totalMiles = useMemo(() => (logs ?? []).reduce((s, l) => s + parseFloat(l.miles) || 0, 0), [logs]);
+  const totalMiles = useMemo(() => (logs ?? []).reduce((s, l) => s + (parseFloat(l.miles) || 0), 0), [logs]);
   const deduction = totalMiles * IRS_RATE;
 
   return (
@@ -376,6 +376,7 @@ function ExpensesPanel() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [yearFilter, setYearFilter] = useState(String(new Date().getFullYear()));
+  const [categoryFilter, setCategoryFilter] = useState("All");
   const [form, setForm] = useState({ date: todayStr(), description: "", category: "Equipment", amount: "" });
 
   const { data: expenses, isLoading } = useQuery<BusinessExpense[]>({ queryKey: ["/api/business-expenses"] });
@@ -407,7 +408,7 @@ function ExpensesPanel() {
     return Array.from(set).sort((a, b) => parseInt(b) - parseInt(a));
   }, [expenses]);
 
-  const filtered = useMemo(() =>
+  const forYear = useMemo(() =>
     (expenses ?? []).filter(e => {
       const d = parseDate(e.date);
       return d && String(d.getFullYear()) === yearFilter;
@@ -415,39 +416,89 @@ function ExpensesPanel() {
     [expenses, yearFilter]
   );
 
-  const ytdTotal = useMemo(() => filtered.reduce((s, e) => s + parseDollar(e.amount), 0), [filtered]);
+  const filtered = useMemo(() =>
+    categoryFilter === "All" ? forYear : forYear.filter(e => e.category === categoryFilter),
+    [forYear, categoryFilter]
+  );
+
+  const ytdTotal = useMemo(() => forYear.reduce((s, e) => s + parseDollar(e.amount), 0), [forYear]);
 
   const byCategory = useMemo(() => {
     const map: Record<string, number> = {};
-    filtered.forEach(e => {
+    forYear.forEach(e => {
       map[e.category] = (map[e.category] || 0) + parseDollar(e.amount);
     });
     return map;
-  }, [filtered]);
+  }, [forYear]);
 
-  function handleDownloadReport() {
-    const lines: string[] = [
-      `Business Expense Report — ${yearFilter}`,
-      `Generated ${new Date().toLocaleDateString()}`,
-      "",
-    ];
-    EXPENSE_CATEGORIES.forEach(cat => {
-      const items = filtered.filter(e => e.category === cat);
-      if (items.length === 0) return;
-      lines.push(`── ${cat} ──`);
-      items.forEach(e => lines.push(`  ${e.date}  ${e.description}  ${fmt(parseDollar(e.amount))}`));
-      lines.push(`  Subtotal: ${fmt(items.reduce((s, e) => s + parseDollar(e.amount), 0))}`);
-      lines.push("");
-    });
-    lines.push(`TOTAL: ${fmt(ytdTotal)}`);
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `expenses-${yearFilter}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+  function handlePrintReport() {
+    const win = window.open("", "_blank", "width=800,height=700");
+    if (!win) return;
+
+    const rows = EXPENSE_CATEGORIES
+      .filter(cat => byCategory[cat])
+      .map(cat => {
+        const items = forYear.filter(e => e.category === cat);
+        const catTotal = items.reduce((s, e) => s + parseDollar(e.amount), 0);
+        const itemRows = items.map(e =>
+          `<tr>
+            <td style="padding:4px 8px;color:#555">${e.date}</td>
+            <td style="padding:4px 8px">${e.description}</td>
+            <td style="padding:4px 8px;text-align:right">${fmt(parseDollar(e.amount))}</td>
+          </tr>`
+        ).join("");
+        return `
+          <tr><td colspan="3" style="background:#f5f5f5;font-weight:600;padding:6px 8px;border-top:2px solid #ddd">${cat}</td></tr>
+          ${itemRows}
+          <tr>
+            <td colspan="2" style="padding:4px 8px;text-align:right;font-style:italic;color:#555">Subtotal</td>
+            <td style="padding:4px 8px;text-align:right;font-weight:600">${fmt(catTotal)}</td>
+          </tr>`;
+      }).join("");
+
+    win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+  <title>Expense Report ${yearFilter}</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 13px; margin: 40px; color: #222; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    .meta { color: #666; font-size: 12px; margin-bottom: 24px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 6px 8px; border-bottom: 2px solid #333; font-size: 12px; }
+    th:last-child { text-align: right; }
+    .total-row td { border-top: 2px solid #333; font-size: 14px; font-weight: 700; padding: 8px; }
+    .total-row td:last-child { text-align: right; }
+    @media print { button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Business Expense Report — ${yearFilter}</h1>
+  <p class="meta">John Willis Piano · Generated ${new Date().toLocaleDateString()}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Description</th>
+        <th style="text-align:right">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      <tr class="total-row">
+        <td colspan="2">Total ${yearFilter} Expenses</td>
+        <td>${fmt(ytdTotal)}</td>
+      </tr>
+    </tbody>
+  </table>
+  <br/>
+  <button onclick="window.print()" style="padding:8px 20px;font-size:13px;cursor:pointer">Print / Save as PDF</button>
+</body>
+</html>`);
+    win.document.close();
   }
+
+  const usedCategories = Object.keys(byCategory);
 
   return (
     <Card>
@@ -458,8 +509,8 @@ function ExpensesPanel() {
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-3">
-            <Select value={yearFilter} onValueChange={setYearFilter}>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Select value={yearFilter} onValueChange={v => { setYearFilter(v); setCategoryFilter("All"); }}>
               <SelectTrigger className="w-24 h-8 text-sm" data-testid="select-expense-year">
                 <SelectValue />
               </SelectTrigger>
@@ -467,14 +518,22 @@ function ExpensesPanel() {
                 {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
               </SelectContent>
             </Select>
-            <div>
-              <span className="text-xs text-muted-foreground">YTD Total: </span>
-              <span className="text-sm font-bold" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
-            </div>
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="w-36 h-8 text-sm" data-testid="select-expense-category-filter">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="All">All Categories</SelectItem>
+                {usedCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <span className="text-xs text-muted-foreground">
+              YTD: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
+            </span>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleDownloadReport} data-testid="button-download-report">
-              <Download className="h-4 w-4 mr-1" /> Download Report
+            <Button variant="outline" size="sm" onClick={handlePrintReport} data-testid="button-print-report">
+              <Printer className="h-4 w-4 mr-1" /> Print Report
             </Button>
             <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-expense">
               <Plus className="h-4 w-4 mr-1" /> Add Expense
@@ -482,12 +541,21 @@ function ExpensesPanel() {
           </div>
         </div>
 
-        {Object.keys(byCategory).length > 0 && (
+        {usedCategories.length > 0 && (
           <div className="flex flex-wrap gap-2">
-            {Object.entries(byCategory).map(([cat, total]) => (
-              <Badge key={cat} variant="secondary" className="text-xs">
-                {cat}: {fmt(total)}
-              </Badge>
+            {usedCategories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setCategoryFilter(f => f === cat ? "All" : cat)}
+                data-testid={`badge-category-${cat.toLowerCase()}`}
+              >
+                <Badge
+                  variant={categoryFilter === cat ? "default" : "secondary"}
+                  className="text-xs cursor-pointer"
+                >
+                  {cat}: {fmt(byCategory[cat])}
+                </Badge>
+              </button>
             ))}
           </div>
         )}
@@ -510,7 +578,7 @@ function ExpensesPanel() {
                 {filtered.map(exp => (
                   <tr key={exp.id} className="border-b last:border-0 hover:bg-muted/20" data-testid={`expense-row-${exp.id}`}>
                     <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{exp.date}</td>
-                    <td className="px-3 py-2 text-xs truncate max-w-[160px]">{exp.description}</td>
+                    <td className="px-3 py-2 text-xs truncate max-w-[140px]">{exp.description}</td>
                     <td className="px-3 py-2">
                       <Badge variant="outline" className="text-[10px]">{exp.category}</Badge>
                     </td>
@@ -532,7 +600,9 @@ function ExpensesPanel() {
             </table>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground py-4 text-center">No expenses for {yearFilter}</p>
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            {forYear.length === 0 ? `No expenses for ${yearFilter}` : `No expenses in "${categoryFilter}" for ${yearFilter}`}
+          </p>
         )}
 
         <Dialog open={open} onOpenChange={setOpen}>
