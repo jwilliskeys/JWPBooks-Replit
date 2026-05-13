@@ -222,9 +222,35 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                 <div className="p-5 space-y-3">
                   <div className="flex items-center justify-between mb-1">
                     <h2 className="text-base font-semibold">Edit Appointment</h2>
-                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setEditMode(false)} data-testid="button-cancel-appt-edit">
-                      Cancel
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => {
+                          setForm({
+                            date: displayed.date ?? "",
+                            time: displayed.time ?? "",
+                            duration: displayed.duration ?? "",
+                            servicesRequested: displayed.servicesRequested ?? "",
+                            priceEstimate: displayed.priceEstimate ?? "",
+                            notes: displayed.notes ?? "",
+                            status: displayed.status ?? "scheduled",
+                          });
+                          setEditMode(false);
+                        }}
+                        data-testid="button-cancel-appt-edit"
+                      >
+                        Cancel
+                      </Button>
+                      <DialogPrimitive.Close
+                        className="rounded-lg p-1.5 opacity-60 hover:opacity-100 hover:bg-muted transition-opacity focus:outline-none focus:ring-2 focus:ring-ring"
+                        data-testid="button-close-appt-dialog-edit"
+                      >
+                        <X className="h-4 w-4" />
+                        <span className="sr-only">Close</span>
+                      </DialogPrimitive.Close>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1">
