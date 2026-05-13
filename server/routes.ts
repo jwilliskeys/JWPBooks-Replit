@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema, insertMileageLogSchema, insertBusinessExpenseSchema } from "@shared/schema";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
@@ -1070,6 +1070,76 @@ export async function registerRoutes(
       if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Invoice not found" });
       const deleted = await storage.deleteInvoice(id);
       if (!deleted) return res.status(404).json({ message: "Invoice not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/mileage-logs", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const logs = await storage.getMileageLogs(userId);
+      res.json(logs);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/mileage-logs", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const parsed = insertMileageLogSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const log = await storage.createMileageLog(parsed.data, userId);
+      res.status(201).json(log);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/mileage-logs/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const deleted = await storage.deleteMileageLog(id, userId);
+      if (!deleted) return res.status(404).json({ message: "Not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/business-expenses", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const expenses = await storage.getBusinessExpenses(userId);
+      res.json(expenses);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/business-expenses", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const parsed = insertBusinessExpenseSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
+      const expense = await storage.createBusinessExpense(parsed.data, userId);
+      res.status(201).json(expense);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/business-expenses/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const deleted = await storage.deleteBusinessExpense(id, userId);
+      if (!deleted) return res.status(404).json({ message: "Not found" });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });

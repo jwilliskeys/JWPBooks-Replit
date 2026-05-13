@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin, FileText, Settings } from "lucide-react";
+import { LayoutDashboard, Users, RefreshCw, Music, Calendar, MapPin, FileText, Settings, BarChart2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -27,6 +27,7 @@ const navItems = [
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Trip Planner", url: "/slc-schedule", icon: MapPin },
   { title: "Invoices", url: "/invoices", icon: FileText },
+  { title: "Finances", url: "/finances", icon: BarChart2 },
   { title: "Settings", url: "/settings", icon: Settings },
 ];
 

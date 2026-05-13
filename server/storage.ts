@@ -14,6 +14,8 @@ import {
   invoices,
   userSettings,
   customerContacts,
+  mileageLogs,
+  businessExpenses,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -39,6 +41,10 @@ import {
   type UserSettings,
   type CustomerContact,
   type InsertCustomerContact,
+  type MileageLog,
+  type InsertMileageLog,
+  type BusinessExpense,
+  type InsertBusinessExpense,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -130,6 +136,12 @@ export interface IStorage {
   updateCustomerContact(id: number, data: Partial<InsertCustomerContact>): Promise<CustomerContact | undefined>;
   deleteCustomerContact(id: number): Promise<boolean>;
   setPrimaryContact(id: number, customerId: number): Promise<CustomerContact | undefined>;
+  getMileageLogs(userId: string): Promise<MileageLog[]>;
+  createMileageLog(log: InsertMileageLog, userId: string): Promise<MileageLog>;
+  deleteMileageLog(id: number, userId: string): Promise<boolean>;
+  getBusinessExpenses(userId: string): Promise<BusinessExpense[]>;
+  createBusinessExpense(expense: InsertBusinessExpense, userId: string): Promise<BusinessExpense>;
+  deleteBusinessExpense(id: number, userId: string): Promise<boolean>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -726,6 +738,42 @@ export class DatabaseStorage implements IStorage {
         .returning();
       return updated;
     });
+  }
+
+  async getMileageLogs(userId: string): Promise<MileageLog[]> {
+    return db.select().from(mileageLogs)
+      .where(eq(mileageLogs.userId, userId))
+      .orderBy(desc(mileageLogs.date));
+  }
+
+  async createMileageLog(log: InsertMileageLog, userId: string): Promise<MileageLog> {
+    const [created] = await db.insert(mileageLogs).values({ ...log, userId }).returning();
+    return created;
+  }
+
+  async deleteMileageLog(id: number, userId: string): Promise<boolean> {
+    const result = await db.delete(mileageLogs)
+      .where(and(eq(mileageLogs.id, id), eq(mileageLogs.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async getBusinessExpenses(userId: string): Promise<BusinessExpense[]> {
+    return db.select().from(businessExpenses)
+      .where(eq(businessExpenses.userId, userId))
+      .orderBy(desc(businessExpenses.date));
+  }
+
+  async createBusinessExpense(expense: InsertBusinessExpense, userId: string): Promise<BusinessExpense> {
+    const [created] = await db.insert(businessExpenses).values({ ...expense, userId }).returning();
+    return created;
+  }
+
+  async deleteBusinessExpense(id: number, userId: string): Promise<boolean> {
+    const result = await db.delete(businessExpenses)
+      .where(and(eq(businessExpenses.id, id), eq(businessExpenses.userId, userId)))
+      .returning();
+    return result.length > 0;
   }
 
 }

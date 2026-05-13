@@ -297,6 +297,42 @@ export const insertInvoiceSchema = createInsertSchema(invoices).omit({
 export type Invoice = typeof invoices.$inferSelect;
 export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
 
+export const mileageLogs = pgTable("mileage_logs", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id"),
+  date: text("date").notNull(),
+  description: text("description"),
+  miles: text("miles").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const businessExpenses = pgTable("business_expenses", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id"),
+  date: text("date").notNull(),
+  description: text("description").notNull(),
+  category: text("category").notNull(),
+  amount: text("amount").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMileageLogSchema = createInsertSchema(mileageLogs).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
+export const insertBusinessExpenseSchema = createInsertSchema(businessExpenses).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
+export type MileageLog = typeof mileageLogs.$inferSelect;
+export type InsertMileageLog = z.infer<typeof insertMileageLogSchema>;
+export type BusinessExpense = typeof businessExpenses.$inferSelect;
+export type InsertBusinessExpense = z.infer<typeof insertBusinessExpenseSchema>;
+
 export const userSettings = pgTable("user_settings", {
   userId: text("user_id").primaryKey(),
   zelleHandle: text("zelle_handle"),
