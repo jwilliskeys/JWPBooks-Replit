@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Plus, Search, FileText, Mail } from "lucide-react";
+import { Plus, Search, FileText, Mail, DollarSign } from "lucide-react";
 import type { Invoice, Customer } from "@shared/schema";
+import { EnterPaymentDialog } from "@/components/enter-payment-dialog";
 
 function parseDollar(str: string | null | undefined): number {
   if (!str) return 0;
@@ -66,6 +67,7 @@ function formatDate(dateStr: string | null | undefined) {
 export default function InvoicesPage() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
+  const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
 
   const { data: invoices, isLoading } = useQuery<Invoice[]>({
     queryKey: ["/api/invoices"],
@@ -194,25 +196,39 @@ export default function InvoicesPage() {
                     <td className="px-4 py-3 text-right font-medium tabular-nums">{inv.total ?? "$0.00"}</td>
                     <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{inv.paidAmount ?? "$0.00"}</td>
                     <td className="px-4 py-3 text-right font-medium tabular-nums">{amountDue(inv)}</td>
-                    <td className="px-4 py-2 text-right" onClick={e => e.stopPropagation()}>
-                      {inv.customerEmail && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title={`Email invoice to ${inv.customerEmail}`}
-                          onClick={() => {
-                            const subject = encodeURIComponent(`Invoice #${inv.invoiceNumber} – John Willis Piano`);
-                            const body = encodeURIComponent(
-                              `Hi ${inv.customerName ?? getCustomerName(inv)},\n\nPlease find your invoice below:\n\nInvoice #${inv.invoiceNumber}\nDate: ${inv.invoiceDate ?? ""}\nDue: ${inv.dueDate ?? ""}\nTotal: ${inv.total ?? "$0.00"}\n\nThank you!\nJohn Willis Piano`
-                            );
-                            window.location.href = `mailto:${inv.customerEmail}?subject=${subject}&body=${body}`;
-                          }}
-                          data-testid={`button-email-invoice-${inv.id}`}
-                        >
-                          <Mail className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
+                    <td className="px-4 py-2 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center justify-end gap-1">
+                        {inv.status !== "paid" && inv.status !== "cancelled" && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs gap-1 text-green-700 hover:text-green-800 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/30"
+                            onClick={() => setPaymentInvoice(inv)}
+                            data-testid={`button-enter-payment-${inv.id}`}
+                          >
+                            <DollarSign className="h-3 w-3" />
+                            Pay
+                          </Button>
+                        )}
+                        {inv.customerEmail && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            title={`Email invoice to ${inv.customerEmail}`}
+                            onClick={() => {
+                              const subject = encodeURIComponent(`Invoice #${inv.invoiceNumber} – John Willis Piano`);
+                              const body = encodeURIComponent(
+                                `Hi ${inv.customerName ?? getCustomerName(inv)},\n\nPlease find your invoice below:\n\nInvoice #${inv.invoiceNumber}\nDate: ${inv.invoiceDate ?? ""}\nDue: ${inv.dueDate ?? ""}\nTotal: ${inv.total ?? "$0.00"}\n\nThank you!\nJohn Willis Piano`
+                              );
+                              window.location.href = `mailto:${inv.customerEmail}?subject=${subject}&body=${body}`;
+                            }}
+                            data-testid={`button-email-invoice-${inv.id}`}
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -221,6 +237,14 @@ export default function InvoicesPage() {
           </div>
         </div>
       )}
+
+      <EnterPaymentDialog
+        open={!!paymentInvoice}
+        onOpenChange={o => { if (!o) setPaymentInvoice(null); }}
+        invoiceId={paymentInvoice?.id ?? 0}
+        invoiceNumber={paymentInvoice?.invoiceNumber ?? ""}
+        invoiceTotal={paymentInvoice?.total ?? "$0.00"}
+      />
     </div>
   );
 }

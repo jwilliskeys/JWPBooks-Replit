@@ -24,7 +24,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft, Mail, Download } from "lucide-react";
+import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft, Mail, Download, DollarSign } from "lucide-react";
+import { EnterPaymentDialog } from "@/components/enter-payment-dialog";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings, CustomerContact } from "@shared/schema";
@@ -232,6 +233,7 @@ export default function InvoiceDetailPage() {
   const [printAfterSave, setPrintAfterSave] = useState(false);
   const [printAfterUpdate, setPrintAfterUpdate] = useState(false);
   const [savingPdf, setSavingPdf] = useState(false);
+  const [showPaymentDialog, setShowPaymentDialog] = useState(false);
 
   const { data: invoice, isLoading: loadingInvoice } = useQuery<Invoice>({
     queryKey: ["/api/invoices", invoiceId],
@@ -515,17 +517,29 @@ export default function InvoiceDetailPage() {
             {!isNew && !editMode && (
               <>
                 {invoice?.status !== "paid" && invoice?.status !== "cancelled" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => invoiceId && markPaidMutation.mutate(invoiceId)}
-                    disabled={markPaidMutation.isPending}
-                    className="text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-900/30"
-                    data-testid="button-mark-paid"
-                  >
-                    <CheckCircle className="h-3.5 w-3.5 mr-1" />
-                    Mark Paid
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowPaymentDialog(true)}
+                      className="text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-900/30"
+                      data-testid="button-enter-payment"
+                    >
+                      <DollarSign className="h-3.5 w-3.5 mr-1" />
+                      Enter Payment
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => invoiceId && markPaidMutation.mutate(invoiceId)}
+                      disabled={markPaidMutation.isPending}
+                      className="text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-700 dark:hover:bg-green-900/30"
+                      data-testid="button-mark-paid"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                      Mark Paid
+                    </Button>
+                  </>
                 )}
                 {displayData.customerEmail && (
                   <Button
@@ -1002,6 +1016,16 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
       </div>
+
+      {invoiceId && (
+        <EnterPaymentDialog
+          open={showPaymentDialog}
+          onOpenChange={setShowPaymentDialog}
+          invoiceId={invoiceId}
+          invoiceNumber={displayData.invoiceNumber}
+          invoiceTotal={displayData.total}
+        />
+      )}
     </>
   );
 }
