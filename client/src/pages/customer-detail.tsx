@@ -16,6 +16,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -23,11 +29,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  ArrowLeft,
   Phone,
   Mail,
   MapPin,
-  CalendarDays,
   Piano as PianoIcon,
   Edit,
   Trash2,
@@ -38,7 +42,6 @@ import {
   X,
   Music,
   Calendar,
-  Clock,
   CheckCircle,
   EyeOff,
   Eye,
@@ -49,6 +52,7 @@ import {
   Crown,
   ChevronRight,
   Wrench,
+  MoreHorizontal,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
@@ -71,467 +75,6 @@ function getMonthsSince(dateStr: string | null | undefined): number | null {
   return (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
 }
 
-function getStatusBadge(dateStr: string | null | undefined) {
-  const months = getMonthsSince(dateStr);
-  if (months === null) return <Badge variant="secondary">No record</Badge>;
-  if (months >= 24) return <Badge variant="destructive">Overdue</Badge>;
-  if (months >= 12) return <Badge className="bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500">Overdue</Badge>;
-  if (months >= 6) return <Badge variant="secondary">Due soon</Badge>;
-  return <Badge className="bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Recently Tuned</Badge>;
-}
-
-function PianoCard({ piano, customerId, onScheduleAppointment }: { piano: Piano; customerId: string; onScheduleAppointment?: (pianoId: number) => void }) {
-  const { toast } = useToast();
-  const [isEditing, setIsEditing] = useState(false);
-  const [showServiceDialog, setShowServiceDialog] = useState(false);
-  const [editingServiceId, setEditingServiceId] = useState<number | null>(null);
-  const [editForm, setEditForm] = useState<Partial<Piano>>({});
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [serviceForm, setServiceForm] = useState({
-    serviceDate: new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }),
-    serviceType: "tuning",
-    notes: "",
-    cost: "",
-  });
-
-  const { data: serviceRecords } = useQuery<ServiceRecord[]>({
-    queryKey: ["/api/pianos", piano.id, "services"],
-  });
-
-  const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ["/api/pianos", piano.id, "services"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/pianos"] });
-  };
-
-  const updatePianoMutation = useMutation({
-    mutationFn: (data: Partial<Piano>) =>
-      apiRequest("PATCH", `/api/pianos/${piano.id}`, data),
-    onSuccess: () => {
-      invalidateAll();
-      setIsEditing(false);
-      toast({ title: "Piano updated" });
-    },
-    onError: () => {
-      toast({ title: "Failed to update piano", variant: "destructive" });
-    },
-  });
-
-  const toggleActiveMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("PATCH", `/api/pianos/${piano.id}`, { isActive: !piano.isActive }),
-    onSuccess: () => {
-      invalidateAll();
-      toast({ title: piano.isActive ? "Piano marked inactive" : "Piano marked active" });
-    },
-    onError: () => {
-      toast({ title: "Failed to update piano", variant: "destructive" });
-    },
-  });
-
-  const deletePianoMutation = useMutation({
-    mutationFn: () => apiRequest("DELETE", `/api/pianos/${piano.id}`),
-    onSuccess: () => {
-      invalidateAll();
-      toast({ title: "Piano removed" });
-    },
-    onError: () => {
-      toast({ title: "Failed to remove piano", variant: "destructive" });
-    },
-  });
-
-  const addServiceMutation = useMutation({
-    mutationFn: (data: any) =>
-      apiRequest("POST", `/api/pianos/${piano.id}/services`, data),
-    onSuccess: () => {
-      invalidateAll();
-      setShowServiceDialog(false);
-      setServiceForm({ serviceDate: "", serviceType: "tuning", notes: "", cost: "" });
-      toast({ title: "Service record added" });
-    },
-    onError: () => {
-      toast({ title: "Failed to add service record", variant: "destructive" });
-    },
-  });
-
-  const updateServiceMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) =>
-      apiRequest("PATCH", `/api/services/${id}`, data),
-    onSuccess: () => {
-      invalidateAll();
-      setEditingServiceId(null);
-      setShowServiceDialog(false);
-      toast({ title: "Service record updated" });
-    },
-    onError: () => {
-      toast({ title: "Failed to update service record", variant: "destructive" });
-    },
-  });
-
-  const deleteServiceMutation = useMutation({
-    mutationFn: (id: number) =>
-      apiRequest("DELETE", `/api/services/${id}`),
-    onSuccess: () => {
-      invalidateAll();
-      toast({ title: "Service record deleted" });
-    },
-    onError: () => {
-      toast({ title: "Failed to delete service record", variant: "destructive" });
-    },
-  });
-
-  const uploadPhotosMutation = useMutation({
-    mutationFn: async (files: FileList) => {
-      const formData = new FormData();
-      Array.from(files).forEach((file) => formData.append("photos", file));
-      const res = await fetch(`/api/pianos/${piano.id}/photos`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Upload failed");
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
-      toast({ title: "Photos uploaded" });
-    },
-    onError: () => {
-      toast({ title: "Failed to upload photos", variant: "destructive" });
-    },
-  });
-
-  const deletePhotoMutation = useMutation({
-    mutationFn: (photoUrl: string) =>
-      apiRequest("DELETE", `/api/pianos/${piano.id}/photos`, { photoUrl }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
-      toast({ title: "Photo removed" });
-    },
-  });
-
-  const startEditing = () => {
-    setEditForm({
-      make: piano.make,
-      model: piano.model,
-      pianoType: piano.pianoType,
-      year: piano.year,
-      notes: piano.notes,
-      lastTuned: piano.lastTuned,
-    });
-    setIsEditing(true);
-  };
-
-  const startEditingService = (record: ServiceRecord) => {
-    setServiceForm({
-      serviceDate: record.serviceDate,
-      serviceType: record.serviceType,
-      notes: record.notes || "",
-      cost: record.cost || "",
-    });
-    setEditingServiceId(record.id);
-    setShowServiceDialog(true);
-  };
-
-  const openAddService = () => {
-    setServiceForm({
-      serviceDate: new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }),
-      serviceType: "tuning",
-      notes: "",
-      cost: "",
-    });
-    setEditingServiceId(null);
-    setShowServiceDialog(true);
-  };
-
-  const handleServiceSubmit = () => {
-    if (editingServiceId) {
-      updateServiceMutation.mutate({ id: editingServiceId, data: serviceForm });
-    } else {
-      addServiceMutation.mutate(serviceForm);
-    }
-  };
-
-  const isInactive = piano.isActive === false;
-  const pianoLabel = [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || "Unnamed Piano";
-
-  return (
-    <Card data-testid={`piano-card-${piano.id}`} className={isInactive ? "opacity-60" : ""}>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-            <Music className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-base truncate" data-testid={`piano-name-${piano.id}`}>{pianoLabel}</CardTitle>
-              {isInactive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
-            </div>
-            {piano.year && <p className="text-xs text-muted-foreground">Year: {piano.year}</p>}
-          </div>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {!isInactive && getStatusBadge(piano.lastTuned)}
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={startEditing} data-testid={`button-edit-piano-${piano.id}`}>
-            <Edit className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => toggleActiveMutation.mutate()}
-            disabled={toggleActiveMutation.isPending}
-            title={isInactive ? "Mark Active" : "Mark Inactive"}
-            data-testid={`button-toggle-active-${piano.id}`}
-          >
-            {isInactive ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-destructive"
-            onClick={() => {
-              if (confirm("Remove this piano and its service history?")) {
-                deletePianoMutation.mutate();
-              }
-            }}
-            data-testid={`button-delete-piano-${piano.id}`}
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {isEditing ? (
-          <div className="space-y-3 p-3 bg-muted/50 rounded-md">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-1">
-                <Label className="text-xs">Make</Label>
-                <Input value={editForm.make || ""} onChange={(e) => setEditForm({ ...editForm, make: e.target.value })} placeholder="Steinway" data-testid={`input-piano-make-${piano.id}`} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Model</Label>
-                <Input value={editForm.model || ""} onChange={(e) => setEditForm({ ...editForm, model: e.target.value })} placeholder="Model B" data-testid={`input-piano-model-${piano.id}`} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Type</Label>
-                <Input value={editForm.pianoType || ""} onChange={(e) => setEditForm({ ...editForm, pianoType: e.target.value })} placeholder="Grand" data-testid={`input-piano-type-${piano.id}`} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Year</Label>
-                <Input value={editForm.year || ""} onChange={(e) => setEditForm({ ...editForm, year: e.target.value })} placeholder="1985" data-testid={`input-piano-year-${piano.id}`} />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs">Last Tuned (M/D/YY)</Label>
-                <Input value={editForm.lastTuned || ""} onChange={(e) => setEditForm({ ...editForm, lastTuned: e.target.value })} placeholder="1/15/25" data-testid={`input-piano-tuned-${piano.id}`} />
-              </div>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Notes</Label>
-              <Textarea value={editForm.notes || ""} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} className="min-h-[60px]" data-testid={`input-piano-notes-${piano.id}`} />
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button variant="secondary" size="sm" onClick={() => setIsEditing(false)}>Cancel</Button>
-              <Button size="sm" onClick={() => updatePianoMutation.mutate(editForm)} disabled={updatePianoMutation.isPending} data-testid={`button-save-piano-${piano.id}`}>
-                {updatePianoMutation.isPending ? "Saving..." : "Save"}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="grid gap-2 sm:grid-cols-2 text-sm">
-              {piano.make && (
-                <div><span className="text-muted-foreground text-xs">Make:</span> <span className="font-medium">{piano.make}</span></div>
-              )}
-              {piano.model && (
-                <div><span className="text-muted-foreground text-xs">Model:</span> <span className="font-medium">{piano.model}</span></div>
-              )}
-              {piano.pianoType && (
-                <div><span className="text-muted-foreground text-xs">Type:</span> <span className="font-medium">{piano.pianoType}</span></div>
-              )}
-              {piano.year && (
-                <div><span className="text-muted-foreground text-xs">Year:</span> <span className="font-medium">{piano.year}</span></div>
-              )}
-              <div>
-                <span className="text-muted-foreground text-xs">Last Tuned:</span>{" "}
-                <span className="font-medium">{piano.lastTuned || "No record"}</span>
-              </div>
-            </div>
-            {piano.notes && (
-              <div className="text-sm">
-                <span className="text-muted-foreground text-xs">Notes:</span>
-                <p className="whitespace-pre-wrap mt-0.5">{piano.notes}</p>
-              </div>
-            )}
-          </>
-        )}
-
-        {(piano.photos && piano.photos.length > 0) && (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground font-medium">Photos</p>
-            <div className="flex flex-wrap gap-2">
-              {piano.photos.map((photo, idx) => (
-                <div key={idx} className="relative group">
-                  <img src={photo} alt={`Piano photo ${idx + 1}`} className="h-20 w-20 object-cover rounded-md border" data-testid={`piano-photo-${piano.id}-${idx}`} />
-                  <button
-                    onClick={() => deletePhotoMutation.mutate(photo)}
-                    className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-5 w-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                    data-testid={`button-remove-photo-${piano.id}-${idx}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files && e.target.files.length > 0) {
-                uploadPhotosMutation.mutate(e.target.files);
-                e.target.value = "";
-              }
-            }}
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-xs"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadPhotosMutation.isPending}
-            data-testid={`button-upload-photo-${piano.id}`}
-          >
-            <ImagePlus className="h-3 w-3 mr-1" />
-            {uploadPhotosMutation.isPending ? "Uploading..." : "Add Photos"}
-          </Button>
-          {onScheduleAppointment && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs"
-              onClick={() => onScheduleAppointment(piano.id)}
-              data-testid={`button-schedule-piano-${piano.id}`}
-            >
-              <Calendar className="h-3 w-3 mr-1" />
-              Schedule
-            </Button>
-          )}
-        </div>
-
-        <div className="border-t pt-3">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-medium">Service History</p>
-            <Button size="sm" variant="outline" className="text-xs h-7" onClick={openAddService} data-testid={`button-add-service-${piano.id}`}>
-              <Plus className="h-3 w-3 mr-1" /> Add Record
-            </Button>
-          </div>
-          {!serviceRecords || serviceRecords.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-3">No service records yet</p>
-          ) : (
-            <div className="space-y-1.5">
-              {serviceRecords.map((record) => (
-                <div key={record.id} className="flex items-start justify-between gap-2 p-2 rounded bg-muted/40 text-sm" data-testid={`service-record-${record.id}`}>
-                  <div className="min-w-0 flex-1">
-                    <span className="font-medium">{record.serviceType.charAt(0).toUpperCase() + record.serviceType.slice(1)}</span>
-                    <span className="text-muted-foreground ml-2 text-xs">{record.serviceDate}</span>
-                    {record.cost && <span className="text-xs font-medium ml-2">{record.cost}</span>}
-                    {record.notes && <p className="text-xs text-muted-foreground mt-0.5">{record.notes}</p>}
-                  </div>
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={() => startEditingService(record)}
-                      data-testid={`button-edit-service-${record.id}`}
-                    >
-                      <Edit className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-destructive"
-                      onClick={() => {
-                        if (confirm("Delete this service record?")) {
-                          deleteServiceMutation.mutate(record.id);
-                        }
-                      }}
-                      data-testid={`button-delete-service-${record.id}`}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <Dialog open={showServiceDialog} onOpenChange={(open) => {
-          setShowServiceDialog(open);
-          if (!open) setEditingServiceId(null);
-        }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{editingServiceId ? "Edit Service Record" : "Add Service Record"}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 mt-2">
-              <div className="space-y-2">
-                <Label>Service Date (M/D/YY)</Label>
-                <Input
-                  value={serviceForm.serviceDate}
-                  onChange={(e) => setServiceForm({ ...serviceForm, serviceDate: e.target.value })}
-                  placeholder="1/15/25"
-                  data-testid="input-service-date"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Service Type</Label>
-                <Select value={serviceForm.serviceType} onValueChange={(v) => setServiceForm({ ...serviceForm, serviceType: v })}>
-                  <SelectTrigger data-testid="select-service-type"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="tuning">Tuning</SelectItem>
-                    <SelectItem value="repair">Repair</SelectItem>
-                    <SelectItem value="regulation">Regulation</SelectItem>
-                    <SelectItem value="voicing">Voicing</SelectItem>
-                    <SelectItem value="inspection">Inspection</SelectItem>
-                    <SelectItem value="other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Cost</Label>
-                <Input value={serviceForm.cost} onChange={(e) => setServiceForm({ ...serviceForm, cost: e.target.value })} placeholder="$150" data-testid="input-service-cost" />
-              </div>
-              <div className="space-y-2">
-                <Label>Notes</Label>
-                <Textarea value={serviceForm.notes} onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })} placeholder="Service details..." data-testid="input-service-notes" />
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => { setShowServiceDialog(false); setEditingServiceId(null); }}>Cancel</Button>
-                <Button
-                  onClick={handleServiceSubmit}
-                  disabled={addServiceMutation.isPending || updateServiceMutation.isPending}
-                  data-testid="button-save-service"
-                >
-                  {(addServiceMutation.isPending || updateServiceMutation.isPending) ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </CardContent>
-    </Card>
-  );
-}
-
 function parseMDYY(dateStr: string | null | undefined): Date {
   if (!dateStr) return new Date(0);
   const parts = dateStr.split("/");
@@ -539,6 +82,18 @@ function parseMDYY(dateStr: string | null | undefined): Date {
   let year = parseInt(parts[2]);
   if (year < 100) year += 2000;
   return new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+}
+
+function getNextTuningDue(lastTuned: string | null | undefined, intervalMonths?: number | null): string {
+  if (!lastTuned) return "Unknown";
+  const parts = lastTuned.split("/");
+  if (parts.length !== 3) return "Unknown";
+  let year = parseInt(parts[2]);
+  if (year < 100) year += 2000;
+  const d = new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
+  const interval = intervalMonths ?? 12;
+  d.setMonth(d.getMonth() + interval);
+  return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
 type TimelineEntry =
@@ -576,7 +131,6 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
   };
 
   const entries: TimelineEntry[] = [];
-
   (services ?? []).forEach(s => {
     entries.push({ type: "service", date: parseMDYY(s.serviceDate), raw: s, pianoLabel: getPianoLabel(s.pianoId) });
   });
@@ -586,7 +140,6 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
   (invoicesData ?? []).forEach(inv => {
     entries.push({ type: "invoice", date: parseMDYY(inv.invoiceDate), raw: inv, pianoLabel: getPianoLabel(inv.pianoId) });
   });
-
   entries.sort((a, b) => b.date.getTime() - a.date.getTime());
 
   const statusColors: Record<string, string> = {
@@ -605,7 +158,7 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold">Timeline</CardTitle>
       </CardHeader>
-      <CardContent className="pt-0">
+      <CardContent className="pt-0 overflow-hidden">
         {isLoading ? (
           <div className="space-y-3">
             <Skeleton className="h-14 w-full" />
@@ -628,13 +181,13 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
                       </div>
                       {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
                     </div>
-                    <div className="min-w-0 flex-1 pt-0.5">
+                    <div className="min-w-0 flex-1 pt-0.5 overflow-hidden">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="text-xs font-medium capitalize">{s.serviceType}</span>
                         {s.cost && <span className="text-xs text-muted-foreground">{s.cost}</span>}
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">{s.serviceDate}</p>
-                      {entry.pianoLabel && <p className="text-xs text-muted-foreground">{entry.pianoLabel}</p>}
+                      {entry.pianoLabel && <p className="text-xs text-muted-foreground truncate">{entry.pianoLabel}</p>}
                       {s.notes && <p className="text-xs text-muted-foreground truncate">{s.notes}</p>}
                     </div>
                   </div>
@@ -651,7 +204,7 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
                       </div>
                       {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
                     </div>
-                    <div className="min-w-0 flex-1 pt-0.5">
+                    <div className="min-w-0 flex-1 pt-0.5 overflow-hidden">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <button
                           className="text-xs font-medium hover:underline text-left"
@@ -664,8 +217,8 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
                           {status.charAt(0).toUpperCase() + status.slice(1)}
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">{a.date}{a.time ? ` · ${a.time}` : ""}</p>
-                      {entry.pianoLabel && <p className="text-xs text-muted-foreground">{entry.pianoLabel}</p>}
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{a.date}{a.time ? ` · ${a.time}` : ""}</p>
+                      {entry.pianoLabel && <p className="text-xs text-muted-foreground truncate">{entry.pianoLabel}</p>}
                       {a.servicesRequested && <p className="text-xs text-muted-foreground truncate">{a.servicesRequested}</p>}
                       {a.priceEstimate && <p className="text-xs font-medium">{a.priceEstimate}</p>}
                     </div>
@@ -683,7 +236,7 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
                       </div>
                       {!isLast && <div className="w-px flex-1 bg-border mt-1" />}
                     </div>
-                    <div className="min-w-0 flex-1 pt-0.5">
+                    <div className="min-w-0 flex-1 pt-0.5 overflow-hidden">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <Link href={`/invoices/${inv.id}`}>
                           <span className="text-xs font-medium hover:underline cursor-pointer" data-testid={`timeline-invoice-link-${inv.id}`}>
@@ -695,7 +248,7 @@ function ClientTimeline({ customerId, pianos, onOpenAppointment }: {
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">{inv.invoiceDate}</p>
-                      {entry.pianoLabel && <p className="text-xs text-muted-foreground">{entry.pianoLabel}</p>}
+                      {entry.pianoLabel && <p className="text-xs text-muted-foreground truncate">{entry.pianoLabel}</p>}
                       {inv.total && <p className="text-xs font-medium">{inv.total}</p>}
                     </div>
                   </div>
@@ -724,14 +277,7 @@ export default function CustomerDetail() {
   const [editingContact, setEditingContact] = useState<CustomerContact | null>(null);
   const [contactForm, setContactForm] = useState({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false });
   const [newPianoForm, setNewPianoForm] = useState({
-    make: "",
-    model: "",
-    pianoType: "",
-    year: "",
-    serialNumber: "",
-    location: "",
-    notes: "",
-    lastTuned: "",
+    make: "", model: "", pianoType: "", year: "", serialNumber: "", location: "", notes: "", lastTuned: "",
   });
 
   const customerId = params?.id;
@@ -743,11 +289,6 @@ export default function CustomerDetail() {
 
   const { data: customerPianos } = useQuery<Piano[]>({
     queryKey: ["/api/customers", customerId, "pianos"],
-    enabled: !!customerId,
-  });
-
-  const { data: customerAppointments } = useQuery<Appointment[]>({
-    queryKey: ["/api/customers", customerId, "appointments"],
     enabled: !!customerId,
   });
 
@@ -782,61 +323,33 @@ export default function CustomerDetail() {
     onError: () => toast({ title: "Failed to update primary contact", variant: "destructive" }),
   });
 
-  const completeAppointmentMutation = useMutation({
-    mutationFn: (id: number) =>
-      apiRequest("PATCH", `/api/appointments/${id}`, { status: "completed" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "appointments"] });
-      toast({ title: "Appointment completed" });
-    },
-  });
-
-  const deleteAppointmentMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("DELETE", `/api/appointments/${id}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "appointments"] });
-      toast({ title: "Appointment deleted" });
-    },
-  });
-
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<Customer>) =>
-      apiRequest("PATCH", `/api/customers/${customerId}`, data),
+    mutationFn: (data: Partial<Customer>) => apiRequest("PATCH", `/api/customers/${customerId}`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       setIsEditing(false);
       toast({ title: "Client updated successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to update client", variant: "destructive" });
-    },
+    onError: () => toast({ title: "Failed to update client", variant: "destructive" }),
   });
 
   const markContactedMutation = useMutation({
-    mutationFn: (date: string) =>
-      apiRequest("PATCH", `/api/customers/${customerId}`, { lastContacted: date }),
+    mutationFn: (date: string) => apiRequest("PATCH", `/api/customers/${customerId}`, { lastContacted: date }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       toast({ title: "Last contacted date updated" });
     },
-    onError: () => {
-      toast({ title: "Failed to update", variant: "destructive" });
-    },
+    onError: () => toast({ title: "Failed to update", variant: "destructive" }),
   });
 
   const toggleStarMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("PATCH", `/api/customers/${customerId}`, { isStarred: !customer?.isStarred }),
+    mutationFn: () => apiRequest("PATCH", `/api/customers/${customerId}`, { isStarred: !customer?.isStarred }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId] });
       toast({ title: customer?.isStarred ? "Removed from starred" : "Added to starred" });
     },
-    onError: () => {
-      toast({ title: "Failed to update", variant: "destructive" });
-    },
+    onError: () => toast({ title: "Failed to update", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -846,32 +359,31 @@ export default function CustomerDetail() {
       navigate("/customers");
       toast({ title: "Client deleted" });
     },
-    onError: () => {
-      toast({ title: "Failed to delete client", variant: "destructive" });
-    },
+    onError: () => toast({ title: "Failed to delete client", variant: "destructive" }),
   });
 
   const addPianoMutation = useMutation({
-    mutationFn: (data: any) =>
-      apiRequest("POST", `/api/customers/${customerId}/pianos`, data),
+    mutationFn: (data: any) => apiRequest("POST", `/api/customers/${customerId}/pianos`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/customers", customerId, "pianos"] });
       setShowAddPiano(false);
       setNewPianoForm({ make: "", model: "", pianoType: "", year: "", serialNumber: "", location: "", notes: "", lastTuned: "" });
       toast({ title: "Piano added" });
     },
-    onError: () => {
-      toast({ title: "Failed to add piano", variant: "destructive" });
-    },
+    onError: () => toast({ title: "Failed to add piano", variant: "destructive" }),
   });
 
   if (isLoading) {
     return (
-      <div className="p-4 sm:p-6 max-w-4xl mx-auto space-y-4 sm:space-y-6">
-        <Skeleton className="h-8 w-48" />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Skeleton className="h-48" />
-          <Skeleton className="h-48" />
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-4">
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-10 w-56" />
+        <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+          <div className="space-y-4">
+            <Skeleton className="h-48" />
+            <Skeleton className="h-36" />
+          </div>
+          <Skeleton className="h-64" />
         </div>
       </div>
     );
@@ -883,7 +395,7 @@ export default function CustomerDetail() {
         <h2 className="text-lg font-semibold">Client not found</h2>
         <Link href="/customers">
           <Button variant="ghost" className="mt-4" data-testid="link-back-to-clients">
-            <ArrowLeft className="h-4 w-4 mr-2" /> Back to Clients
+            <ChevronRight className="h-4 w-4 mr-2 rotate-180" /> Back to Clients
           </Button>
         </Link>
       </div>
@@ -906,44 +418,45 @@ export default function CustomerDetail() {
     setIsEditing(true);
   };
 
+  const cityLine = [customer.city, customer.state, customer.zipCode].filter(Boolean).join(", ");
+
   return (
     <div className="p-4 sm:p-6 max-w-6xl mx-auto">
-      <div className="space-y-3 mb-4 sm:mb-6">
-        <div className="flex items-center gap-3">
-          <Link href="/customers">
-            <Button variant="ghost" size="icon" data-testid="button-back">
-              <ArrowLeft className="h-4 w-4" />
+
+      {/* Breadcrumb */}
+      <nav className="flex items-center gap-1 text-sm text-muted-foreground mb-4" aria-label="breadcrumb">
+        <Link href="/customers">
+          <span className="hover:text-foreground transition-colors cursor-pointer" data-testid="link-back-to-clients">Clients</span>
+        </Link>
+        <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+        <span className="text-foreground font-medium truncate">{customer.firstName} {customer.lastName}</span>
+      </nav>
+
+      {/* Name + actions */}
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight" data-testid="text-customer-name">
+              {customer.firstName} {customer.lastName}
+            </h1>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => toggleStarMutation.mutate()}
+              disabled={toggleStarMutation.isPending}
+              data-testid="button-toggle-star"
+            >
+              <Star className={`h-4 w-4 ${customer.isStarred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
             </Button>
-          </Link>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight truncate" data-testid="text-customer-name">
-                {customer.firstName} {customer.lastName}
-              </h1>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => toggleStarMutation.mutate()}
-                disabled={toggleStarMutation.isPending}
-                data-testid="button-toggle-star"
-              >
-                <Star
-                  className={`h-5 w-5 ${customer.isStarred ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`}
-                />
-              </Button>
-            </div>
-            {customer.companyName && (
-              <p className="text-muted-foreground text-sm mt-0.5 truncate">{customer.companyName}</p>
-            )}
           </div>
+          {cityLine && <p className="text-sm text-muted-foreground mt-0.5" data-testid="text-city-line">{cityLine}</p>}
+          {customer.companyName && <p className="text-sm text-muted-foreground" data-testid="text-company">{customer.companyName}</p>}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             size="sm"
-            onClick={() => {
-              setAppointmentPianoId(undefined);
-              setShowAppointmentDialog(true);
-            }}
+            onClick={() => { setAppointmentPianoId(undefined); setShowAppointmentDialog(true); }}
             data-testid="button-schedule-appointment"
           >
             <Calendar className="h-3 w-3 mr-1.5" /> Schedule
@@ -951,549 +464,449 @@ export default function CustomerDetail() {
           <Button variant="secondary" size="sm" onClick={startEditing} data-testid="button-edit">
             <Edit className="h-3 w-3 mr-1.5" /> Edit
           </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => {
-              if (confirm("Are you sure you want to delete this client and all their pianos?")) {
-                deleteMutation.mutate();
-              }
-            }}
-            data-testid="button-delete"
-          >
-            <Trash2 className="h-3 w-3 mr-1.5" /> Delete
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8" data-testid="button-more">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => {
+                  if (confirm("Are you sure you want to delete this client and all their pianos?")) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                data-testid="button-delete"
+              >
+                <Trash2 className="h-4 w-4 mr-2" /> Delete Client
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
+      {/* Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 sm:gap-6">
-      <div className="space-y-4 sm:space-y-6 min-w-0">
+        <div className="space-y-4 min-w-0">
 
-      {isEditing ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Edit Client</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>First Name</Label>
-                <Input value={editForm.firstName || ""} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} data-testid="input-edit-first-name" />
-              </div>
-              <div className="space-y-2">
-                <Label>Last Name</Label>
-                <Input value={editForm.lastName || ""} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} data-testid="input-edit-last-name" />
-              </div>
-              <div className="space-y-2">
-                <Label>Company</Label>
-                <Input value={editForm.companyName || ""} onChange={(e) => setEditForm({ ...editForm, companyName: e.target.value })} data-testid="input-edit-company" />
-              </div>
-              <div className="space-y-2">
-                <Label>Email</Label>
-                <Input value={editForm.email || ""} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} data-testid="input-edit-email" />
-              </div>
-              <div className="space-y-2">
-                <Label>Phone</Label>
-                <Input value={editForm.phone || ""} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} data-testid="input-edit-phone" />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <Label>Address</Label>
-                <Input value={editForm.address || ""} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} data-testid="input-edit-address" />
-              </div>
-              <div className="space-y-2">
-                <Label>City</Label>
-                <Input value={editForm.city || ""} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} data-testid="input-edit-city" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+          {/* ── Edit form ── */}
+          {isEditing && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Edit Client</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>First Name</Label>
+                    <Input value={editForm.firstName || ""} onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} data-testid="input-edit-first-name" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Last Name</Label>
+                    <Input value={editForm.lastName || ""} onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} data-testid="input-edit-last-name" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Company</Label>
+                    <Input value={editForm.companyName || ""} onChange={(e) => setEditForm({ ...editForm, companyName: e.target.value })} data-testid="input-edit-company" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email</Label>
+                    <Input value={editForm.email || ""} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} data-testid="input-edit-email" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input value={editForm.phone || ""} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} data-testid="input-edit-phone" />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Address</Label>
+                    <Input value={editForm.address || ""} onChange={(e) => setEditForm({ ...editForm, address: e.target.value })} data-testid="input-edit-address" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>City</Label>
+                    <Input value={editForm.city || ""} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} data-testid="input-edit-city" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>State</Label>
+                      <Input value={editForm.state || ""} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} data-testid="input-edit-state" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Zip Code</Label>
+                      <Input value={editForm.zipCode || ""} onChange={(e) => setEditForm({ ...editForm, zipCode: e.target.value })} data-testid="input-edit-zip" />
+                    </div>
+                  </div>
+                </div>
                 <div className="space-y-2">
-                  <Label>State</Label>
-                  <Input value={editForm.state || ""} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} data-testid="input-edit-state" />
+                  <Label>Personal Notes</Label>
+                  <Textarea value={editForm.personalNotes || ""} onChange={(e) => setEditForm({ ...editForm, personalNotes: e.target.value })} className="min-h-[100px]" data-testid="input-edit-notes" />
                 </div>
-                <div className="space-y-2">
-                  <Label>Zip Code</Label>
-                  <Input value={editForm.zipCode || ""} onChange={(e) => setEditForm({ ...editForm, zipCode: e.target.value })} data-testid="input-edit-zip" />
+                <div className="flex gap-2 justify-end flex-wrap">
+                  <Button variant="secondary" onClick={() => setIsEditing(false)} data-testid="button-cancel-edit">Cancel</Button>
+                  <Button onClick={() => updateMutation.mutate(editForm)} disabled={updateMutation.isPending} data-testid="button-save-edit">
+                    {updateMutation.isPending ? "Saving..." : "Save Changes"}
+                  </Button>
                 </div>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Personal Notes</Label>
-              <Textarea value={editForm.personalNotes || ""} onChange={(e) => setEditForm({ ...editForm, personalNotes: e.target.value })} className="min-h-[100px]" data-testid="input-edit-notes" />
-            </div>
-            <div className="flex gap-2 justify-end flex-wrap">
-              <Button variant="secondary" onClick={() => setIsEditing(false)} data-testid="button-cancel-edit">Cancel</Button>
-              <Button onClick={() => updateMutation.mutate(editForm)} disabled={updateMutation.isPending} data-testid="button-save-edit">
-                {updateMutation.isPending ? "Saving..." : "Save Changes"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Contact Information</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
-              {customer.phone && (
-                <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
-                    <Phone className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Phone</p>
-                    <a href={`tel:${customer.phone}`} className="text-sm font-medium" data-testid="text-phone">{formatPhone(customer.phone)}</a>
-                  </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── Contacts ── */}
+          {!isEditing && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Contacts</CardTitle>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => { setContactForm({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false }); setShowAddContact(true); setEditingContact(null); }}
+                    data-testid="button-add-contact"
+                  >
+                    <Plus className="h-3 w-3 mr-1" /> New Contact
+                  </Button>
                 </div>
-              )}
-              {customer.email && (
-                <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
-                    <Mail className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Email</p>
-                    <a href={`mailto:${customer.email}`} className="text-sm font-medium" data-testid="text-email">{customer.email}</a>
-                  </div>
-                </div>
-              )}
-              {customer.address && (
-                <div className="flex items-center gap-3 sm:col-span-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
-                    <MapPin className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Address</p>
-                    <p className="text-sm font-medium" data-testid="text-address">
-                      {customer.address}
-                      {customer.city && <>, {customer.city}</>}
-                      {customer.state && <>, {customer.state}</>}
-                      {customer.zipCode && <> {customer.zipCode}</>}
-                    </p>
-                  </div>
-                </div>
-              )}
-              {customer.companyName && (
-                <div className="flex items-center gap-3">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
-                    <Building className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Company</p>
-                    <p className="text-sm font-medium" data-testid="text-company">{customer.companyName}</p>
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-3 pt-2 border-t">
-              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted shrink-0">
-                <PhoneCall className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-muted-foreground">Last Contacted</p>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <p className="text-sm font-medium" data-testid="text-last-contacted">
-                    {customer.lastContacted || customer.lastTuned || "Never"}
-                  </p>
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-6 text-xs px-2"
-                      onClick={() => {
-                        const now = new Date();
-                        const dateStr = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear().toString().slice(-2)}`;
-                        markContactedMutation.mutate(dateStr);
-                      }}
-                      disabled={markContactedMutation.isPending}
-                      data-testid="button-mark-contacted-today"
-                    >
-                      Today
-                    </Button>
-                    <Input
-                      type="text"
-                      placeholder="M/D/YY"
-                      className="h-6 text-xs w-20 px-1.5"
-                      data-testid="input-last-contacted-date"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const val = (e.target as HTMLInputElement).value.trim();
-                          if (val) {
-                            markContactedMutation.mutate(val);
-                            (e.target as HTMLInputElement).value = "";
-                          }
+              </CardHeader>
+              <CardContent className="space-y-2 pt-0">
+                {/* Primary — the account holder */}
+                <div className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/20" data-testid="contact-row-client">
+                  <div className="flex gap-3 min-w-0 flex-1">
+                    <div className="h-8 w-8 shrink-0 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                      <Users className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-medium" data-testid="text-contact-name-client">{customer.firstName} {customer.lastName}</span>
+                        {contacts && contacts.some(c => c.isPrimary)
+                          ? <Badge variant="secondary" className="text-xs">Client</Badge>
+                          : <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600 dark:border-amber-500"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>
                         }
-                      }}
-                    />
+                      </div>
+                      {customer.address && (
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate" data-testid="text-address">
+                          {customer.address}{customer.city ? `, ${customer.city}` : ""}{customer.state ? `, ${customer.state}` : ""}{customer.zipCode ? ` ${customer.zipCode}` : ""}
+                        </p>
+                      )}
+                      {customer.phone && (
+                        <a href={`tel:${customer.phone}`} className="text-xs text-muted-foreground block mt-0.5 hover:text-foreground" data-testid="text-phone">
+                          {formatPhone(customer.phone)}
+                        </a>
+                      )}
+                      {customer.email && (
+                        <a href={`mailto:${customer.email}`} className="text-xs text-muted-foreground block truncate hover:text-foreground" data-testid="text-email">
+                          {customer.email}
+                        </a>
+                      )}
+                      {customer.companyName && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <Building className="h-3 w-3" />{customer.companyName}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-            {customer.personalNotes && (
-              <div className="flex items-start gap-3 pt-2 border-t">
-                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted shrink-0">
-                  <FileText className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Notes</p>
-                  <p className="text-sm whitespace-pre-wrap" data-testid="text-notes">{customer.personalNotes}</p>
-                </div>
-              </div>
-            )}
-            {!customer.phone && !customer.email && !customer.address && (
-              <p className="text-sm text-muted-foreground text-center py-4">No contact information available</p>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
-      {/* Additional Contacts */}
-      {!isEditing && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Users className="h-4 w-4" /> Additional Contacts
-              </CardTitle>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 text-xs"
-                onClick={() => { setContactForm({ firstName: "", lastName: "", phone: "", email: "", role: "", isPrimary: false }); setShowAddContact(true); setEditingContact(null); }}
-                data-testid="button-add-contact"
-              >
-                <Plus className="h-3 w-3 mr-1" /> Add Contact
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {/* Main customer as implicit primary row */}
-            {customer && (
-              <div className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/20" data-testid="contact-row-client">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium" data-testid="text-contact-name-client">{customer.firstName} {customer.lastName}</span>
-                    {contacts && contacts.some(c => c.isPrimary)
-                      ? <Badge variant="secondary" className="text-xs">Client</Badge>
-                      : <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>
-                    }
+                {/* Additional contacts */}
+                {contacts && contacts.map(contact => (
+                  <div key={contact.id} className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/20" data-testid={`contact-row-${contact.id}`}>
+                    {editingContact?.id === contact.id ? (
+                      <div className="flex-1 space-y-2">
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Input placeholder="First Name *" value={contactForm.firstName} onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-first" />
+                          <Input placeholder="Last Name" value={contactForm.lastName} onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-last" />
+                          <Input placeholder="Phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-phone" />
+                          <Input placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-email" />
+                          <Input placeholder="Role (e.g. Wife, Music Director)" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} className="h-7 text-sm sm:col-span-2" data-testid="input-edit-contact-role" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                            <input type="checkbox" checked={contactForm.isPrimary} onChange={e => setContactForm(f => ({ ...f, isPrimary: e.target.checked }))} data-testid="checkbox-edit-contact-primary" />
+                            Set as Primary Contact
+                          </label>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" className="h-7 text-xs" onClick={() => updateContactMutation.mutate({ id: contact.id, data: contactForm })} disabled={updateContactMutation.isPending || !contactForm.firstName} data-testid="button-save-contact-edit">Save</Button>
+                          <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingContact(null)}>Cancel</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex gap-3 min-w-0 flex-1">
+                          <div className="h-8 w-8 shrink-0 rounded-full bg-muted flex items-center justify-center">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium" data-testid={`text-contact-name-${contact.id}`}>{contact.firstName}{contact.lastName ? ` ${contact.lastName}` : ""}</span>
+                              {contact.role && <Badge variant="secondary" className="text-xs">{contact.role}</Badge>}
+                              {contact.isPrimary && <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600 dark:border-amber-500"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>}
+                            </div>
+                            {contact.phone && <a href={`tel:${contact.phone}`} className="text-xs text-muted-foreground block mt-0.5 hover:text-foreground" data-testid={`text-contact-phone-${contact.id}`}>{formatPhone(contact.phone)}</a>}
+                            {contact.email && <a href={`mailto:${contact.email}`} className="text-xs text-muted-foreground block truncate hover:text-foreground" data-testid={`text-contact-email-${contact.id}`}>{contact.email}</a>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          {!contact.isPrimary && (
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Set as Primary" onClick={() => setPrimaryContactMutation.mutate(contact.id)} disabled={setPrimaryContactMutation.isPending} data-testid={`button-set-primary-${contact.id}`}>
+                              <Crown className="h-3 w-3" />
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setContactForm({ firstName: contact.firstName, lastName: contact.lastName ?? "", phone: contact.phone ?? "", email: contact.email ?? "", role: contact.role ?? "", isPrimary: contact.isPrimary ?? false }); setEditingContact(contact); setShowAddContact(false); }} data-testid={`button-edit-contact-${contact.id}`}>
+                            <Edit className="h-3 w-3" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => { if (confirm("Remove this contact?")) deleteContactMutation.mutate(contact.id); }} disabled={deleteContactMutation.isPending} data-testid={`button-delete-contact-${contact.id}`}>
+                            <Trash2 className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  {customer.phone && <a href={`tel:${customer.phone}`} className="text-xs text-muted-foreground block mt-0.5">{formatPhone(customer.phone)}</a>}
-                  {customer.email && <a href={`mailto:${customer.email}`} className="text-xs text-muted-foreground block">{customer.email}</a>}
-                </div>
-              </div>
-            )}
-            {(!contacts || contacts.length === 0) && !showAddContact && !customer && (
-              <p className="text-sm text-muted-foreground text-center py-2">No additional contacts yet</p>
-            )}
-            {contacts && contacts.map(contact => (
-              <div key={contact.id} className="flex items-start justify-between gap-2 p-3 rounded-lg border bg-muted/30" data-testid={`contact-row-${contact.id}`}>
-                {editingContact?.id === contact.id ? (
-                  <div className="flex-1 space-y-2">
+                ))}
+
+                {/* New contact inline form */}
+                {showAddContact && (
+                  <div className="p-3 rounded-lg border bg-muted/20 space-y-2">
                     <div className="grid gap-2 sm:grid-cols-2">
-                      <Input placeholder="First Name *" value={contactForm.firstName} onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-first" />
-                      <Input placeholder="Last Name" value={contactForm.lastName} onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-last" />
-                      <Input placeholder="Phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-phone" />
-                      <Input placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} className="h-7 text-sm" data-testid="input-edit-contact-email" />
-                      <Input placeholder="Role (e.g. Wife, Music Director)" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} className="h-7 text-sm sm:col-span-2" data-testid="input-edit-contact-role" />
+                      <Input placeholder="First Name *" value={contactForm.firstName} onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-first" />
+                      <Input placeholder="Last Name" value={contactForm.lastName} onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-last" />
+                      <Input placeholder="Phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-phone" />
+                      <Input placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-email" />
+                      <Input placeholder="Role (e.g. Wife, Music Director)" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} className="h-7 text-sm sm:col-span-2" data-testid="input-new-contact-role" />
                     </div>
                     <div className="flex items-center gap-2">
                       <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                        <input type="checkbox" checked={contactForm.isPrimary} onChange={e => setContactForm(f => ({ ...f, isPrimary: e.target.checked }))} data-testid="checkbox-edit-contact-primary" />
+                        <input type="checkbox" checked={contactForm.isPrimary} onChange={e => setContactForm(f => ({ ...f, isPrimary: e.target.checked }))} data-testid="checkbox-new-contact-primary" />
                         Set as Primary Contact
                       </label>
                     </div>
                     <div className="flex gap-2">
-                      <Button size="sm" className="h-7 text-xs" onClick={() => updateContactMutation.mutate({ id: contact.id, data: contactForm })} disabled={updateContactMutation.isPending || !contactForm.firstName} data-testid="button-save-contact-edit">Save</Button>
-                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditingContact(null)}>Cancel</Button>
+                      <Button size="sm" className="h-7 text-xs" onClick={() => createContactMutation.mutate(contactForm)} disabled={createContactMutation.isPending || !contactForm.firstName} data-testid="button-save-new-contact">Add</Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddContact(false)}>Cancel</Button>
                     </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ── Pianos ── */}
+          {!isEditing && (
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base flex items-center gap-2">
+                    Pianos
+                    {customerPianos && customerPianos.length > 0 && (
+                      <Badge variant="secondary" className="text-xs">{customerPianos.length}</Badge>
+                    )}
+                  </CardTitle>
+                  <Dialog open={showAddPiano} onOpenChange={setShowAddPiano}>
+                    <DialogTrigger asChild>
+                      <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-add-piano">
+                        <Plus className="h-3 w-3 mr-1" /> New Piano
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Add Piano</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4 mt-2">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label>Make</Label>
+                            <Input value={newPianoForm.make} onChange={(e) => setNewPianoForm({ ...newPianoForm, make: e.target.value })} placeholder="Steinway" data-testid="input-new-piano-make" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Model</Label>
+                            <Input value={newPianoForm.model} onChange={(e) => setNewPianoForm({ ...newPianoForm, model: e.target.value })} placeholder="Model B" data-testid="input-new-piano-model" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Type</Label>
+                            <Input value={newPianoForm.pianoType} onChange={(e) => setNewPianoForm({ ...newPianoForm, pianoType: e.target.value })} placeholder="Grand" data-testid="input-new-piano-type" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Year</Label>
+                            <Input value={newPianoForm.year} onChange={(e) => setNewPianoForm({ ...newPianoForm, year: e.target.value })} placeholder="1985" data-testid="input-new-piano-year" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Last Tuned (M/D/YY)</Label>
+                            <Input value={newPianoForm.lastTuned} onChange={(e) => setNewPianoForm({ ...newPianoForm, lastTuned: e.target.value })} placeholder="1/15/25" data-testid="input-new-piano-tuned" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Serial Number</Label>
+                            <Input value={newPianoForm.serialNumber} onChange={(e) => setNewPianoForm({ ...newPianoForm, serialNumber: e.target.value })} placeholder="e.g. 123456" data-testid="input-new-piano-serial" />
+                          </div>
+                          <div className="space-y-1">
+                            <Label>Location</Label>
+                            <Input value={newPianoForm.location} onChange={(e) => setNewPianoForm({ ...newPianoForm, location: e.target.value })} placeholder="e.g. Living room" data-testid="input-new-piano-location" />
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label>Notes</Label>
+                          <Textarea value={newPianoForm.notes} onChange={(e) => setNewPianoForm({ ...newPianoForm, notes: e.target.value })} placeholder="Piano details..." data-testid="input-new-piano-notes" />
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <Button variant="secondary" onClick={() => setShowAddPiano(false)}>Cancel</Button>
+                          <Button onClick={() => addPianoMutation.mutate(newPianoForm)} disabled={addPianoMutation.isPending} data-testid="button-save-new-piano">
+                            {addPianoMutation.isPending ? "Adding..." : "Add Piano"}
+                          </Button>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0 space-y-2">
+                {!customerPianos || customerPianos.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <PianoIcon className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                    <p className="text-sm text-muted-foreground">No pianos registered yet</p>
                   </div>
                 ) : (
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium" data-testid={`text-contact-name-${contact.id}`}>{contact.firstName}{contact.lastName ? ` ${contact.lastName}` : ""}</span>
-                      {contact.role && <Badge variant="secondary" className="text-xs">{contact.role}</Badge>}
-                      {contact.isPrimary && <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>}
-                    </div>
-                    {contact.phone && <a href={`tel:${contact.phone}`} className="text-xs text-muted-foreground block mt-0.5" data-testid={`text-contact-phone-${contact.id}`}>{formatPhone(contact.phone)}</a>}
-                    {contact.email && <a href={`mailto:${contact.email}`} className="text-xs text-muted-foreground block" data-testid={`text-contact-email-${contact.id}`}>{contact.email}</a>}
-                  </div>
-                )}
-                {editingContact?.id !== contact.id && (
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    {!contact.isPrimary && (
-                      <Button variant="ghost" size="icon" className="h-6 w-6" title="Set as Primary" onClick={() => setPrimaryContactMutation.mutate(contact.id)} disabled={setPrimaryContactMutation.isPending} data-testid={`button-set-primary-${contact.id}`}>
-                        <Crown className="h-3 w-3" />
-                      </Button>
-                    )}
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setContactForm({ firstName: contact.firstName, lastName: contact.lastName ?? "", phone: contact.phone ?? "", email: contact.email ?? "", role: contact.role ?? "", isPrimary: contact.isPrimary ?? false }); setEditingContact(contact); setShowAddContact(false); }} data-testid={`button-edit-contact-${contact.id}`}>
-                      <Edit className="h-3 w-3" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => { if (confirm("Remove this contact?")) deleteContactMutation.mutate(contact.id); }} disabled={deleteContactMutation.isPending} data-testid={`button-delete-contact-${contact.id}`}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ))}
-            {showAddContact && (
-              <div className="p-3 rounded-lg border bg-muted/20 space-y-2">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <Input placeholder="First Name *" value={contactForm.firstName} onChange={e => setContactForm(f => ({ ...f, firstName: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-first" />
-                  <Input placeholder="Last Name" value={contactForm.lastName} onChange={e => setContactForm(f => ({ ...f, lastName: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-last" />
-                  <Input placeholder="Phone" value={contactForm.phone} onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-phone" />
-                  <Input placeholder="Email" value={contactForm.email} onChange={e => setContactForm(f => ({ ...f, email: e.target.value }))} className="h-7 text-sm" data-testid="input-new-contact-email" />
-                  <Input placeholder="Role (e.g. Wife, Music Director)" value={contactForm.role} onChange={e => setContactForm(f => ({ ...f, role: e.target.value }))} className="h-7 text-sm sm:col-span-2" data-testid="input-new-contact-role" />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                    <input type="checkbox" checked={contactForm.isPrimary} onChange={e => setContactForm(f => ({ ...f, isPrimary: e.target.checked }))} data-testid="checkbox-new-contact-primary" />
-                    Set as Primary Contact
-                  </label>
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" className="h-7 text-xs" onClick={() => createContactMutation.mutate(contactForm)} disabled={createContactMutation.isPending || !contactForm.firstName} data-testid="button-save-new-contact">Add</Button>
-                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowAddContact(false)}>Cancel</Button>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                  customerPianos.map((piano) => {
+                    const isInactive = piano.isActive === false;
+                    const pianoLabel = [piano.year, piano.make, piano.model].filter(Boolean).join(" ") || "Unnamed Piano";
+                    const nextDue = getNextTuningDue(piano.lastTuned, (piano as any).tuningInterval);
+                    const months = getMonthsSince(piano.lastTuned);
+                    const heroPhoto = piano.photos && piano.photos.length > 0 ? piano.photos[0] : null;
 
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <PianoIcon className="h-5 w-5" /> Pianos
-            {customerPianos && <Badge variant="secondary">{customerPianos.length}</Badge>}
-          </h2>
-          <Dialog open={showAddPiano} onOpenChange={setShowAddPiano}>
-            <DialogTrigger asChild>
-              <Button size="sm" data-testid="button-add-piano">
-                <Plus className="h-3 w-3 mr-1.5" /> Add Piano
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add Piano</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4 mt-2">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label>Make</Label>
-                    <Input value={newPianoForm.make} onChange={(e) => setNewPianoForm({ ...newPianoForm, make: e.target.value })} placeholder="Steinway" data-testid="input-new-piano-make" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Model</Label>
-                    <Input value={newPianoForm.model} onChange={(e) => setNewPianoForm({ ...newPianoForm, model: e.target.value })} placeholder="Model B" data-testid="input-new-piano-model" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Type</Label>
-                    <Input value={newPianoForm.pianoType} onChange={(e) => setNewPianoForm({ ...newPianoForm, pianoType: e.target.value })} placeholder="Grand" data-testid="input-new-piano-type" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Year</Label>
-                    <Input value={newPianoForm.year} onChange={(e) => setNewPianoForm({ ...newPianoForm, year: e.target.value })} placeholder="1985" data-testid="input-new-piano-year" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Last Tuned (M/D/YY)</Label>
-                    <Input value={newPianoForm.lastTuned} onChange={(e) => setNewPianoForm({ ...newPianoForm, lastTuned: e.target.value })} placeholder="1/15/25" data-testid="input-new-piano-tuned" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Serial Number</Label>
-                    <Input value={newPianoForm.serialNumber} onChange={(e) => setNewPianoForm({ ...newPianoForm, serialNumber: e.target.value })} placeholder="e.g. 123456" data-testid="input-new-piano-serial" />
-                  </div>
-                  <div className="space-y-1">
-                    <Label>Location</Label>
-                    <Input value={newPianoForm.location} onChange={(e) => setNewPianoForm({ ...newPianoForm, location: e.target.value })} placeholder="e.g. Living room" data-testid="input-new-piano-location" />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>Notes</Label>
-                  <Textarea value={newPianoForm.notes} onChange={(e) => setNewPianoForm({ ...newPianoForm, notes: e.target.value })} placeholder="Piano details..." data-testid="input-new-piano-notes" />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="secondary" onClick={() => setShowAddPiano(false)}>Cancel</Button>
-                  <Button onClick={() => addPianoMutation.mutate(newPianoForm)} disabled={addPianoMutation.isPending} data-testid="button-save-new-piano">
-                    {addPianoMutation.isPending ? "Adding..." : "Add Piano"}
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
-
-        {!customerPianos || customerPianos.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-12">
-              <PianoIcon className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <h3 className="font-medium text-sm">No pianos registered</h3>
-              <p className="text-sm text-muted-foreground mt-1">Add a piano to start tracking service history</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-2">
-            {customerPianos.map((piano) => {
-              const isInactive = piano.isActive === false;
-              const pianoLabel = [piano.year, piano.make, piano.model].filter(Boolean).join(" ") || "Unnamed Piano";
-              const pianoTypeLabel = piano.pianoType || "";
-              const heroPhoto = piano.photos && piano.photos.length > 0 ? piano.photos[0] : null;
-              return (
-                <Link key={piano.id} href={`/pianos/${piano.id}`}>
-                  <Card
-                    className={`cursor-pointer hover:bg-muted/30 transition-colors ${isInactive ? "opacity-60" : ""}`}
-                    data-testid={`piano-card-${piano.id}`}
-                  >
-                    <CardContent className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        {heroPhoto ? (
-                          <img src={heroPhoto} alt="Piano" className="h-12 w-12 shrink-0 object-cover rounded-md border" />
-                        ) : (
-                          <div className="h-12 w-12 shrink-0 rounded-md bg-primary/10 flex items-center justify-center border border-primary/20">
-                            <Music className="h-5 w-5 text-primary/40" />
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-medium truncate" data-testid={`piano-name-${piano.id}`}>{pianoLabel}</span>
-                            {isInactive && <Badge variant="secondary" className="text-xs shrink-0">Inactive</Badge>}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                            {pianoTypeLabel && <span className="text-xs text-muted-foreground">{pianoTypeLabel}</span>}
-                            {piano.serialNumber && <span className="text-xs text-muted-foreground">S/N: {piano.serialNumber}</span>}
-                            {piano.location && <span className="text-xs text-muted-foreground flex items-center gap-0.5"><MapPin className="h-3 w-3" />{piano.location}</span>}
-                          </div>
-                          {piano.tags && piano.tags.length > 0 && (
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {piano.tags.map((tag) => (
-                                <Badge key={tag} variant="secondary" className="text-xs py-0 px-1.5">{tag}</Badge>
-                              ))}
+                    return (
+                      <Link key={piano.id} href={`/pianos/${piano.id}`}>
+                        <div
+                          className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/30 transition-colors ${isInactive ? "opacity-60" : ""}`}
+                          data-testid={`piano-card-${piano.id}`}
+                        >
+                          {heroPhoto ? (
+                            <img src={heroPhoto} alt="Piano" className="h-11 w-11 shrink-0 object-cover rounded-md border" />
+                          ) : (
+                            <div className="h-11 w-11 shrink-0 rounded-md bg-primary/10 flex items-center justify-center border border-primary/20">
+                              <Music className="h-5 w-5 text-primary/40" />
                             </div>
                           )}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium truncate" data-testid={`piano-name-${piano.id}`}>{pianoLabel}</span>
+                              {isInactive && <Badge variant="secondary" className="text-xs shrink-0">Inactive</Badge>}
+                            </div>
+                            {piano.serialNumber && (
+                              <p className="text-xs text-muted-foreground">{piano.serialNumber}</p>
+                            )}
+                            <p className="text-xs text-muted-foreground">
+                              Next tuning due: {piano.lastTuned ? nextDue : "Unknown"}
+                            </p>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">
+                                Last tuned: {piano.lastTuned || "Never"}
+                              </Badge>
+                              {(piano as any).tuningInterval && (
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">
+                                  Every {(piano as any).tuningInterval} months
+                                </Badge>
+                              )}
+                              {isInactive && (
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200 dark:border-red-800">
+                                  Inactive
+                                </Badge>
+                              )}
+                              {!isInactive && months !== null && months >= 12 && (
+                                <Badge className="text-[10px] px-1.5 py-0 uppercase tracking-wide bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-200 dark:border-orange-800">
+                                  Overdue
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {!isInactive && (() => {
-                            const months = (() => {
-                              if (!piano.lastTuned) return null;
-                              const parts = piano.lastTuned.split("/");
-                              if (parts.length !== 3) return null;
-                              let year = parseInt(parts[2]);
-                              if (year < 100) year += 2000;
-                              const d = new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
-                              const now = new Date();
-                              return (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
-                            })();
-                            if (months === null) return <Badge variant="secondary" className="text-xs">No record</Badge>;
-                            if (months >= 24) return <Badge variant="destructive" className="text-xs">Overdue</Badge>;
-                            if (months >= 12) return <Badge className="text-xs bg-orange-500 dark:bg-orange-600 text-white border-orange-600 dark:border-orange-500">Overdue</Badge>;
-                            if (months >= 6) return <Badge variant="secondary" className="text-xs">Due soon</Badge>;
-                            return <Badge className="text-xs bg-emerald-600 dark:bg-emerald-700 text-white border-emerald-700 dark:border-emerald-600">Tuned</Badge>;
-                          })()}
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                      </Link>
+                    );
+                  })
+                )}
+              </CardContent>
+            </Card>
+          )}
 
-      {customerAppointments && customerAppointments.length > 0 && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Calendar className="h-5 w-5" /> Appointments
-            <Badge variant="secondary">{customerAppointments.length}</Badge>
-          </h2>
-          <div className="space-y-2">
-            {customerAppointments.map((appt) => {
-              const isCompleted = appt.status === "completed";
-              const piano = customerPianos?.find((p) => p.id === appt.pianoId);
-              const pianoLabel = piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : null;
-              return (
-                <Card key={appt.id} className={isCompleted ? "opacity-60" : ""} data-testid={`client-appointment-${appt.id}`}>
-                  <CardContent className="py-3 px-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <span className="text-sm font-medium">{appt.date} at {appt.time}</span>
-                          {appt.isTuning && (
-                            <Badge variant="secondary" className="text-xs">
-                              <Music className="h-3 w-3 mr-1" />Tuning
-                            </Badge>
-                          )}
-                          <Badge variant={isCompleted ? "secondary" : "default"} className="text-xs">
-                            {isCompleted ? "Completed" : "Scheduled"}
-                          </Badge>
-                        </div>
-                        {pianoLabel && (
-                          <p className="text-xs text-muted-foreground">Piano: {pianoLabel}</p>
-                        )}
-                        {appt.servicesRequested && (
-                          <p className="text-sm mt-0.5">{appt.servicesRequested}</p>
-                        )}
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1">
-                          {appt.priceEstimate && <span className="font-medium text-foreground">{appt.priceEstimate}</span>}
-                          {appt.notes && <span>{appt.notes}</span>}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          onClick={() => setDetailAppt(appt)}
-                          data-testid={`button-open-appt-${appt.id}`}
-                          title="Open appointment"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                        </Button>
-                        {!isCompleted && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="text-xs h-7"
-                            onClick={() => completeAppointmentMutation.mutate(appt.id)}
-                            disabled={completeAppointmentMutation.isPending}
-                            data-testid={`button-complete-appt-${appt.id}`}
-                          >
-                            <CheckCircle className="h-3 w-3 mr-1" />
-                            Complete
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive"
-                          onClick={() => {
-                            if (confirm("Delete this appointment?")) {
-                              deleteAppointmentMutation.mutate(appt.id);
+          {/* ── Notes ── */}
+          {!isEditing && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Notes</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {/* Personal notes */}
+                <div className="flex items-start gap-3 p-3 rounded-lg border bg-muted/20">
+                  <div className="h-8 w-8 shrink-0 rounded-md bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                    <FileText className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-0.5">Personal notes</p>
+                    <p className="text-sm whitespace-pre-wrap" data-testid="text-notes">
+                      {customer.personalNotes || <span className="text-muted-foreground italic">None</span>}
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={startEditing} data-testid="button-edit-notes" title="Edit notes">
+                    <Edit className="h-3 w-3" />
+                  </Button>
+                </div>
+
+                {/* Last contacted */}
+                <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/20">
+                  <div className="h-8 w-8 shrink-0 rounded-md bg-muted flex items-center justify-center">
+                    <PhoneCall className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-0.5">Last contacted</p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium" data-testid="text-last-contacted">
+                        {customer.lastContacted || customer.lastTuned || "Never"}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-xs px-2"
+                        onClick={() => {
+                          const now = new Date();
+                          const dateStr = `${now.getMonth() + 1}/${now.getDate()}/${now.getFullYear().toString().slice(-2)}`;
+                          markContactedMutation.mutate(dateStr);
+                        }}
+                        disabled={markContactedMutation.isPending}
+                        data-testid="button-mark-contacted-today"
+                      >
+                        Today
+                      </Button>
+                      <Input
+                        type="text"
+                        placeholder="M/D/YY"
+                        className="h-6 text-xs w-20 px-1.5"
+                        data-testid="input-last-contacted-date"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            const val = (e.target as HTMLInputElement).value.trim();
+                            if (val) {
+                              markContactedMutation.mutate(val);
+                              (e.target as HTMLInputElement).value = "";
                             }
-                          }}
-                          data-testid={`button-delete-appt-${appt.id}`}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
+                          }
+                        }}
+                      />
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
         </div>
-      )}
 
-      </div>
-
-      <div className="lg:block">
-        <ClientTimeline
-          customerId={customerId!}
-          pianos={customerPianos}
-          onOpenAppointment={(appt) => setDetailAppt(appt)}
-        />
-      </div>
+        {/* ── Timeline ── */}
+        <div className="min-w-0">
+          <ClientTimeline
+            customerId={customerId!}
+            pianos={customerPianos}
+            onOpenAppointment={(appt) => setDetailAppt(appt)}
+          />
+        </div>
       </div>
 
       <AppointmentDialog
