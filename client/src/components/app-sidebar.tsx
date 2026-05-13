@@ -23,6 +23,7 @@ import { getServiceArea } from "@/lib/scheduling";
 const navItems = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Clients", url: "/customers", icon: Users },
+  { title: "Pianos", url: "/pianos", icon: Music },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Trip Planner", url: "/slc-schedule", icon: MapPin },
   { title: "Invoices", url: "/invoices", icon: FileText },

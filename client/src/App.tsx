@@ -25,6 +25,7 @@ import InvoicesPage from "@/pages/invoices";
 import InvoiceDetailPage from "@/pages/invoice-detail";
 import SettingsPage from "@/pages/settings";
 import PianoDetail from "@/pages/piano-detail";
+import PianosPage from "@/pages/pianos";
 
 function Router() {
   return (
@@ -34,6 +35,7 @@ function Router() {
       <Route path="/customers/new" component={CustomerForm} />
       <Route path="/customers/:id" component={CustomerDetail} />
       <Route path="/pianos/:id" component={PianoDetail} />
+      <Route path="/pianos" component={PianosPage} />
       <Route path="/appointments" component={AppointmentsPage} />
       <Route path="/calendar" component={CalendarPage} />
       <Route path="/slc-schedule" component={SlcSchedule} />
