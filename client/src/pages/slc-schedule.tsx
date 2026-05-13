@@ -260,7 +260,7 @@ function DayScheduleColumn({
     return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
   }, [dayAppts, customerMap]);
 
-  const { data: drivingData } = useQuery<{ durations: number[] | null; error?: string }>({
+  const { data: drivingData } = useQuery<{ durations: number[] | null; distances: number[] | null; error?: string }>({
     queryKey: ["/api/driving-times", addresses.join("|")],
     queryFn: async () => {
       const res = await apiRequest("POST", "/api/driving-times", { addresses });
@@ -271,6 +271,13 @@ function DayScheduleColumn({
   });
 
   const drivingTimes = drivingData?.durations ?? null;
+  const drivingDistances = drivingData?.distances ?? null;
+
+  const totalMileage = useMemo(() => {
+    if (!drivingDistances || drivingDistances.length === 0) return null;
+    if (drivingDistances.some(d => d < 0)) return null;
+    return Math.round(drivingDistances.reduce((sum, d) => sum + d, 0) * 10) / 10;
+  }, [drivingDistances]);
 
   const leaveByTime = useMemo(() => {
     if (!dayAppts.length || !drivingTimes || drivingTimes[0] == null || drivingTimes[0] < 0) return null;
@@ -332,13 +339,14 @@ function DayScheduleColumn({
                 ? !checkTimeConflict(appt.time, appt.duration || "2 hours", "", otherAppts).valid
                 : false;
               const driveMinutes = drivingTimes ? drivingTimes[i] : null;
+              const driveMiles = drivingDistances ? drivingDistances[i] : null;
 
               return (
                 <div key={appt.id}>
                   {driveMinutes != null && driveMinutes >= 0 && (
                     <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground">
                       <Car className="h-2.5 w-2.5 shrink-0" />
-                      <span>Driving ({driveMinutes}m)</span>
+                      <span>Driving ({driveMinutes}m{driveMiles != null && driveMiles >= 0 ? `, ${driveMiles}mi` : ""})</span>
                       <div className="flex-1 border-t border-dashed border-muted-foreground/25 ml-0.5" />
                     </div>
                   )}
@@ -449,7 +457,7 @@ function DayScheduleColumn({
             {drivingTimes && drivingTimes[dayAppts.length] != null && drivingTimes[dayAppts.length] >= 0 && (
               <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground">
                 <Car className="h-2.5 w-2.5 shrink-0" />
-                <span>Driving ({drivingTimes[dayAppts.length]}m) home</span>
+                <span>Driving ({drivingTimes[dayAppts.length]}m{drivingDistances && drivingDistances[dayAppts.length] != null && drivingDistances[dayAppts.length] >= 0 ? `, ${drivingDistances[dayAppts.length]}mi` : ""}) home</span>
                 <div className="flex-1 border-t border-dashed border-muted-foreground/25 ml-0.5" />
               </div>
             )}
@@ -457,6 +465,11 @@ function DayScheduleColumn({
               <div className="flex items-center gap-1.5 px-1 py-0.5">
                 <Home className="h-3 w-3 text-muted-foreground shrink-0" />
                 <span className="text-[10px] text-muted-foreground">Return home</span>
+              </div>
+            )}
+            {totalMileage != null && (
+              <div className="flex items-center justify-center px-1 py-1 mt-1 border-t">
+                <span className="text-[10px] font-medium text-muted-foreground">{totalMileage} mi total</span>
               </div>
             )}
           </div>

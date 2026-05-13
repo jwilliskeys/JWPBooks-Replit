@@ -1164,11 +1164,11 @@ export async function registerRoutes(
   app.post("/api/driving-times", async (req, res) => {
     const { addresses } = req.body as { addresses: string[] };
     if (!addresses || addresses.length < 2) {
-      return res.json({ durations: [] });
+      return res.json({ durations: [], distances: [] });
     }
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
-      return res.json({ durations: null, error: "Google Maps API key not configured" });
+      return res.json({ durations: null, distances: null, error: "Google Maps API key not configured" });
     }
     try {
       const origins = addresses.slice(0, -1);
@@ -1181,14 +1181,17 @@ export async function registerRoutes(
       const response = await fetch(url.toString());
       const data = (await response.json()) as any;
       if (data.status !== "OK") {
-        return res.json({ durations: null, error: `Maps API error: ${data.status}` });
+        return res.json({ durations: null, distances: null, error: `Maps API error: ${data.status}` });
       }
       const durations: number[] = [];
+      const distances: number[] = [];
       for (let i = 0; i < origins.length; i++) {
         const element = data.rows[i]?.elements[i];
-        durations.push(element?.status === "OK" ? Math.ceil(element.duration.value / 60) : -1);
+        const ok = element?.status === "OK";
+        durations.push(ok ? Math.ceil(element.duration.value / 60) : -1);
+        distances.push(ok && element.distance?.value != null ? Math.round((element.distance.value / 1609.344) * 10) / 10 : -1);
       }
-      res.json({ durations });
+      res.json({ durations, distances });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
