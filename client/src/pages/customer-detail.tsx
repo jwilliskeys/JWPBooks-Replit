@@ -590,7 +590,7 @@ export default function CustomerDetail() {
                         </p>
                       )}
                       {customer.phone && (
-                        <a href={`tel:${customer.phone}`} className="text-xs text-muted-foreground block mt-0.5 hover:text-foreground" data-testid="text-phone">
+                        <a href={`tel:${customer.phone}`} className="text-xs text-muted-foreground block mt-0.5 hover:text-foreground truncate" data-testid="text-phone">
                           {formatPhone(customer.phone)}
                         </a>
                       )}
@@ -643,7 +643,7 @@ export default function CustomerDetail() {
                               {contact.role && <Badge variant="secondary" className="text-xs">{contact.role}</Badge>}
                               {contact.isPrimary && <Badge className="text-xs bg-amber-500 dark:bg-amber-600 text-white border-amber-600 dark:border-amber-500"><Crown className="h-2.5 w-2.5 mr-0.5" />Primary</Badge>}
                             </div>
-                            {contact.phone && <a href={`tel:${contact.phone}`} className="text-xs text-muted-foreground block mt-0.5 hover:text-foreground" data-testid={`text-contact-phone-${contact.id}`}>{formatPhone(contact.phone)}</a>}
+                            {contact.phone && <a href={`tel:${contact.phone}`} className="text-xs text-muted-foreground block mt-0.5 hover:text-foreground truncate" data-testid={`text-contact-phone-${contact.id}`}>{formatPhone(contact.phone)}</a>}
                             {contact.email && <a href={`mailto:${contact.email}`} className="text-xs text-muted-foreground block truncate hover:text-foreground" data-testid={`text-contact-email-${contact.id}`}>{contact.email}</a>}
                           </div>
                         </div>
@@ -768,7 +768,8 @@ export default function CustomerDetail() {
                   customerPianos.map((piano) => {
                     const isInactive = piano.isActive === false;
                     const pianoLabel = [piano.year, piano.make, piano.model].filter(Boolean).join(" ") || "Unnamed Piano";
-                    const nextDue = getNextTuningDue(piano.lastTuned, (piano as any).tuningInterval);
+                    const intervalMonths = piano.tuningInterval ? parseInt(piano.tuningInterval) : null;
+                    const nextDue = getNextTuningDue(piano.lastTuned, intervalMonths);
                     const months = getMonthsSince(piano.lastTuned);
                     const heroPhoto = piano.photos && piano.photos.length > 0 ? piano.photos[0] : null;
 
@@ -800,9 +801,9 @@ export default function CustomerDetail() {
                               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">
                                 Last tuned: {piano.lastTuned || "Never"}
                               </Badge>
-                              {(piano as any).tuningInterval && (
+                              {piano.tuningInterval && (
                                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 uppercase tracking-wide">
-                                  Every {(piano as any).tuningInterval} months
+                                  Every {piano.tuningInterval} months
                                 </Badge>
                               )}
                               {isInactive && (
