@@ -15,13 +15,21 @@ import {
 } from "recharts";
 import {
   DollarSign, TrendingUp, Car, Receipt, Plus, Trash2, Printer, Calculator,
+  CheckCircle2, Route,
 } from "lucide-react";
-import type { Invoice, MileageLog, BusinessExpense } from "@shared/schema";
+import type { Invoice, MileageLog, BusinessExpense, Appointment, Customer } from "@shared/schema";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const IRS_RATE = 0.70;
 const SE_TAX_RATE = 0.153;
 const EXPENSE_CATEGORIES = ["Equipment", "Vehicle", "Marketing", "Office", "Software", "Meals", "Other"];
+const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
+
+function buildCustomerAddress(cust: Customer | undefined): string {
+  if (!cust) return HOME_ADDRESS;
+  const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean) as string[];
+  return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
+}
 
 function parseDollar(v: string | null | undefined): number {
   if (!v) return 0;
@@ -57,6 +65,17 @@ function fmt(n: number): string {
 function todayStr(): string {
   const d = new Date();
   return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+}
+
+function dateToSortKey(dateStr: string): number {
+  const d = parseDate(dateStr);
+  return d ? d.getTime() : 0;
+}
+
+function friendlyDate(dateStr: string): string {
+  const d = parseDate(dateStr);
+  if (!d) return dateStr;
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 interface MonthlyData {
@@ -230,15 +249,105 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
   );
 }
 
-function MileagePanel() {
+interface ItineraryDayRowProps {
+  dateStr: string;
+  dayAppts: Appointment[];
+  customerMap: Map<number, Customer>;
+  loggedDates: Set<string>;
+  onAdd: (dateStr: string, miles: number, description: string) => void;
+  isPending: boolean;
+}
+
+function ItineraryDayRow({ dateStr, dayAppts, customerMap, loggedDates, onAdd, isPending }: ItineraryDayRowProps) {
+  const addresses = useMemo(() => {
+    const apptAddresses = dayAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
+    return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
+  }, [dayAppts, customerMap]);
+
+  const { data: drivingData, isLoading } = useQuery<{ distances: number[] | null; durations: number[] | null; error?: string }>({
+    queryKey: ["/api/driving-times", addresses.join("|")],
+    queryFn: async () => {
+      const res = await apiRequest("POST", "/api/driving-times", { addresses });
+      return res.json();
+    },
+    enabled: addresses.length >= 2,
+    staleTime: 30 * 60 * 1000,
+  });
+
+  const totalMiles = useMemo(() => {
+    const dists = drivingData?.distances;
+    if (!dists || dists.length === 0) return null;
+    const valid = dists.filter(d => d >= 0);
+    if (valid.length === 0) return null;
+    return Math.round(valid.reduce((s, d) => s + d, 0) * 10) / 10;
+  }, [drivingData]);
+
+  const isLogged = loggedDates.has(dateStr);
+  const unavailable = !drivingData?.distances && !isLoading;
+  const apiError = drivingData?.error;
+
+  if (apiError || (unavailable && !isLoading)) return null;
+
+  const cities = [...new Set(dayAppts.map(a => customerMap.get(a.customerId)?.city).filter(Boolean))].join(", ");
+  const description = `Service calls${cities ? ` — ${cities}` : ""} (${friendlyDate(dateStr)})`;
+  const count = dayAppts.length;
+
+  return (
+    <div className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 ${isLogged ? "opacity-50" : ""}`} data-testid={`itinerary-row-${dateStr}`}>
+      <div className="flex items-center gap-2.5 min-w-0">
+        <Route className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium leading-none">{friendlyDate(dateStr)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{count} appointment{count !== 1 ? "s" : ""}{cities ? ` · ${cities}` : ""}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {isLoading ? (
+          <Skeleton className="h-4 w-16" />
+        ) : totalMiles != null ? (
+          <span className="text-sm font-semibold tabular-nums">{totalMiles} mi</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">unavailable</span>
+        )}
+        {isLogged ? (
+          <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+            <CheckCircle2 className="h-3.5 w-3.5" /> Logged
+          </span>
+        ) : (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            disabled={totalMiles == null || isPending}
+            onClick={() => totalMiles != null && onAdd(dateStr, totalMiles, description)}
+            data-testid={`button-log-itinerary-${dateStr}`}
+          >
+            Add to Log
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MileageTab() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ date: todayStr(), description: "", miles: "" });
 
-  const { data: logs, isLoading } = useQuery<MileageLog[]>({ queryKey: ["/api/mileage-logs"] });
+  const { data: logs, isLoading: logsLoading } = useQuery<MileageLog[]>({ queryKey: ["/api/mileage-logs"] });
+  const { data: appointments } = useQuery<Appointment[]>({ queryKey: ["/api/appointments"] });
+  const { data: customers } = useQuery<Customer[]>({ queryKey: ["/api/customers"] });
+
+  const customerMap = useMemo(() => {
+    const m = new Map<number, Customer>();
+    customers?.forEach(c => m.set(c.id, c));
+    return m;
+  }, [customers]);
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof form) => apiRequest("POST", "/api/mileage-logs", data),
+    mutationFn: (data: { date: string; description: string; miles: string }) =>
+      apiRequest("POST", "/api/mileage-logs", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/mileage-logs"] });
       setOpen(false);
@@ -257,31 +366,77 @@ function MileagePanel() {
   const totalMiles = useMemo(() => (logs ?? []).reduce((s, l) => s + (parseFloat(l.miles) || 0), 0), [logs]);
   const deduction = totalMiles * IRS_RATE;
 
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Car className="h-4 w-4" /> Mileage Log
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex gap-4">
-            <div>
-              <p className="text-xs text-muted-foreground">Total Miles</p>
-              <p className="text-sm font-bold" data-testid="finances-total-miles">{totalMiles.toLocaleString()}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">IRS Deduction (${IRS_RATE}/mi)</p>
-              <p className="text-sm font-bold text-green-600 dark:text-green-400">{fmt(deduction)}</p>
-            </div>
-          </div>
-          <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-miles">
-            <Plus className="h-4 w-4 mr-1" /> Add Miles
-          </Button>
-        </div>
+  const loggedDates = useMemo(() => new Set((logs ?? []).map(l => l.date)), [logs]);
 
-        {isLoading ? (
+  const itineraryDays = useMemo(() => {
+    if (!appointments) return [];
+    const now = new Date();
+    const past = new Date(now); past.setDate(past.getDate() - 60);
+    const future = new Date(now); future.setDate(future.getDate() + 30);
+
+    const byDate = new Map<string, Appointment[]>();
+    appointments.forEach(a => {
+      const d = parseDate(a.date);
+      if (!d || d < past || d > future) return;
+      if (!byDate.has(a.date)) byDate.set(a.date, []);
+      byDate.get(a.date)!.push(a);
+    });
+
+    return Array.from(byDate.entries())
+      .sort((a, b) => dateToSortKey(b[0]) - dateToSortKey(a[0]));
+  }, [appointments]);
+
+  function handleAddFromItinerary(dateStr: string, miles: number, description: string) {
+    createMutation.mutate({ date: dateStr, description, miles: String(miles) });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex gap-5">
+          <div>
+            <p className="text-xs text-muted-foreground">Total Miles</p>
+            <p className="text-sm font-bold" data-testid="finances-total-miles">{totalMiles.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">IRS Deduction (${IRS_RATE}/mi)</p>
+            <p className="text-sm font-bold text-green-600 dark:text-green-400">{fmt(deduction)}</p>
+          </div>
+        </div>
+        <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-miles">
+          <Plus className="h-4 w-4 mr-1" /> Add Miles
+        </Button>
+      </div>
+
+      {itineraryDays.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">From Itinerary</p>
+            <div className="flex-1 border-t" />
+          </div>
+          <p className="text-xs text-muted-foreground -mt-1">Auto-calculated from your appointment schedule. Click "Add to Log" to record the miles.</p>
+          <div className="space-y-1.5">
+            {itineraryDays.map(([dateStr, appts]) => (
+              <ItineraryDayRow
+                key={dateStr}
+                dateStr={dateStr}
+                dayAppts={appts}
+                customerMap={customerMap}
+                loggedDates={loggedDates}
+                onAdd={handleAddFromItinerary}
+                isPending={createMutation.isPending}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Log History</p>
+          <div className="flex-1 border-t" />
+        </div>
+        {logsLoading ? (
           <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
         ) : logs && logs.length > 0 ? (
           <div className="rounded-md border overflow-hidden">
@@ -295,10 +450,10 @@ function MileagePanel() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map(log => (
+                {[...logs].sort((a, b) => dateToSortKey(b.date) - dateToSortKey(a.date)).map(log => (
                   <tr key={log.id} className="border-b last:border-0 hover:bg-muted/20" data-testid={`mileage-row-${log.id}`}>
                     <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{log.date}</td>
-                    <td className="px-3 py-2 text-xs truncate max-w-[160px]">{log.description || "—"}</td>
+                    <td className="px-3 py-2 text-xs truncate max-w-[180px]">{log.description || "—"}</td>
                     <td className="px-3 py-2 text-xs text-right font-medium">{parseFloat(log.miles).toLocaleString()}</td>
                     <td className="px-2 py-2">
                       <Button
@@ -319,60 +474,60 @@ function MileagePanel() {
         ) : (
           <p className="text-sm text-muted-foreground py-4 text-center">No mileage entries yet</p>
         )}
+      </div>
 
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader><DialogTitle>Add Mileage</DialogTitle></DialogHeader>
-            <div className="space-y-3">
-              <div>
-                <Label className="text-xs">Date</Label>
-                <Input
-                  value={form.date}
-                  onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                  placeholder="M/D/YY"
-                  data-testid="input-mileage-date"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Purpose / Description</Label>
-                <Input
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="e.g. Client visits — Davis County"
-                  data-testid="input-mileage-description"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Miles Driven</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={form.miles}
-                  onChange={e => setForm(f => ({ ...f, miles: e.target.value }))}
-                  placeholder="0"
-                  data-testid="input-mileage-miles"
-                />
-              </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Add Mileage</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Date</Label>
+              <Input
+                value={form.date}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                placeholder="M/D/YY"
+                data-testid="input-mileage-date"
+              />
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button
-                onClick={() => createMutation.mutate(form)}
-                disabled={!form.date || !form.miles || createMutation.isPending}
-                data-testid="button-save-mileage"
-              >
-                Save
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </CardContent>
-    </Card>
+            <div>
+              <Label className="text-xs">Purpose / Description</Label>
+              <Input
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="e.g. Client visits — Davis County"
+                data-testid="input-mileage-description"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Miles Driven</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.1"
+                value={form.miles}
+                onChange={e => setForm(f => ({ ...f, miles: e.target.value }))}
+                placeholder="0"
+                data-testid="input-mileage-miles"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createMutation.mutate(form)}
+              disabled={!form.date || !form.miles || createMutation.isPending}
+              data-testid="button-save-mileage"
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
-function ExpensesPanel() {
+function ExpensesTab() {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [yearFilter, setYearFilter] = useState(String(new Date().getFullYear()));
@@ -501,173 +656,201 @@ function ExpensesPanel() {
   const usedCategories = Object.keys(byCategory);
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Receipt className="h-4 w-4" /> Business Expenses
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Select value={yearFilter} onValueChange={v => { setYearFilter(v); setCategoryFilter("All"); }}>
-              <SelectTrigger className="w-24 h-8 text-sm" data-testid="select-expense-year">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="w-36 h-8 text-sm" data-testid="select-expense-category-filter">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="All">All Categories</SelectItem>
-                {usedCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground">
-                YTD Total: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
-              </span>
-              <span className="text-xs text-muted-foreground">
-                Deductible: <span className="font-semibold text-green-600 dark:text-green-400">{fmt(ytdTotal)}</span>
-              </span>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handlePrintReport} data-testid="button-print-report">
-              <Printer className="h-4 w-4 mr-1" /> Download Report
-            </Button>
-            <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-expense">
-              <Plus className="h-4 w-4 mr-1" /> Add Expense
-            </Button>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={yearFilter} onValueChange={v => { setYearFilter(v); setCategoryFilter("All"); }}>
+            <SelectTrigger className="w-24 h-8 text-sm" data-testid="select-expense-year">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-36 h-8 text-sm" data-testid="select-expense-category-filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">All Categories</SelectItem>
+              {usedCategories.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              YTD: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              Deductible: <span className="font-semibold text-green-600 dark:text-green-400">{fmt(ytdTotal)}</span>
+            </span>
           </div>
         </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={handlePrintReport} data-testid="button-print-report">
+            <Printer className="h-4 w-4 mr-1" /> Download Report
+          </Button>
+          <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-expense">
+            <Plus className="h-4 w-4 mr-1" /> Add Expense
+          </Button>
+        </div>
+      </div>
 
-        {usedCategories.length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {usedCategories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setCategoryFilter(f => f === cat ? "All" : cat)}
-                data-testid={`badge-category-${cat.toLowerCase()}`}
+      {usedCategories.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {usedCategories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setCategoryFilter(f => f === cat ? "All" : cat)}
+              data-testid={`badge-category-${cat.toLowerCase()}`}
+            >
+              <Badge
+                variant={categoryFilter === cat ? "default" : "secondary"}
+                className="text-xs cursor-pointer"
               >
-                <Badge
-                  variant={categoryFilter === cat ? "default" : "secondary"}
-                  className="text-xs cursor-pointer"
-                >
-                  {cat}: {fmt(byCategory[cat])}
-                </Badge>
-              </button>
-            ))}
-          </div>
-        )}
+                {cat}: {fmt(byCategory[cat])}
+              </Badge>
+            </button>
+          ))}
+        </div>
+      )}
 
-        {isLoading ? (
-          <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-        ) : filtered.length > 0 ? (
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/40">
-                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Date</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Description</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Category</th>
-                  <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Amount</th>
-                  <th className="w-8" />
+      {isLoading ? (
+        <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+      ) : filtered.length > 0 ? (
+        <div className="rounded-md border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Date</th>
+                <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Description</th>
+                <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Category</th>
+                <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Amount</th>
+                <th className="w-8" />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(exp => (
+                <tr key={exp.id} className="border-b last:border-0 hover:bg-muted/20" data-testid={`expense-row-${exp.id}`}>
+                  <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{exp.date}</td>
+                  <td className="px-3 py-2 text-xs truncate max-w-[140px]">{exp.description}</td>
+                  <td className="px-3 py-2">
+                    <Badge variant="outline" className="text-[10px]">{exp.category}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-right font-medium">{fmt(parseDollar(exp.amount))}</td>
+                  <td className="px-2 py-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                      onClick={() => deleteMutation.mutate(exp.id)}
+                      data-testid={`button-delete-expense-${exp.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filtered.map(exp => (
-                  <tr key={exp.id} className="border-b last:border-0 hover:bg-muted/20" data-testid={`expense-row-${exp.id}`}>
-                    <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{exp.date}</td>
-                    <td className="px-3 py-2 text-xs truncate max-w-[140px]">{exp.description}</td>
-                    <td className="px-3 py-2">
-                      <Badge variant="outline" className="text-[10px]">{exp.category}</Badge>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-right font-medium">{fmt(parseDollar(exp.amount))}</td>
-                    <td className="px-2 py-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                        onClick={() => deleteMutation.mutate(exp.id)}
-                        data-testid={`button-delete-expense-${exp.id}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground py-4 text-center">
-            {forYear.length === 0 ? `No expenses for ${yearFilter}` : `No expenses in "${categoryFilter}" for ${yearFilter}`}
-          </p>
-        )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground py-4 text-center">
+          {forYear.length === 0 ? `No expenses for ${yearFilter}` : `No expenses in "${categoryFilter}" for ${yearFilter}`}
+        </p>
+      )}
 
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader><DialogTitle>Add Expense</DialogTitle></DialogHeader>
-            <div className="space-y-3">
-              <div>
-                <Label className="text-xs">Date</Label>
-                <Input
-                  value={form.date}
-                  onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                  placeholder="M/D/YY"
-                  data-testid="input-expense-date"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Description</Label>
-                <Input
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="e.g. Tuning hammer replacement"
-                  data-testid="input-expense-description"
-                />
-              </div>
-              <div>
-                <Label className="text-xs">Category</Label>
-                <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
-                  <SelectTrigger data-testid="select-expense-category">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="text-xs">Amount</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={form.amount}
-                  onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
-                  placeholder="0.00"
-                  data-testid="input-expense-amount"
-                />
-              </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Add Expense</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Date</Label>
+              <Input
+                value={form.date}
+                onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+                placeholder="M/D/YY"
+                data-testid="input-expense-date"
+              />
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button
-                onClick={() => createMutation.mutate(form)}
-                disabled={!form.date || !form.description || !form.amount || createMutation.isPending}
-                data-testid="button-save-expense"
-              >
-                Save
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+            <div>
+              <Label className="text-xs">Description</Label>
+              <Input
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="e.g. Tuning hammer replacement"
+                data-testid="input-expense-description"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Category</Label>
+              <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
+                <SelectTrigger data-testid="select-expense-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Amount</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.amount}
+                onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                placeholder="0.00"
+                data-testid="input-expense-amount"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createMutation.mutate(form)}
+              disabled={!form.date || !form.description || !form.amount || createMutation.isPending}
+              data-testid="button-save-expense"
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function DeductiblesPanel() {
+  const [tab, setTab] = useState<"mileage" | "expenses">("mileage");
+
+  return (
+    <Card>
+      <CardHeader className="pb-0">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <TrendingUp className="h-4 w-4" /> Deductibles
+          </CardTitle>
+          <div className="flex rounded-md border overflow-hidden">
+            <button
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${tab === "mileage" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+              onClick={() => setTab("mileage")}
+              data-testid="tab-mileage"
+            >
+              <Car className="h-3.5 w-3.5" /> Mileage
+            </button>
+            <button
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l ${tab === "expenses" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+              onClick={() => setTab("expenses")}
+              data-testid="tab-expenses"
+            >
+              <Receipt className="h-3.5 w-3.5" /> Expenses
+            </button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        {tab === "mileage" ? <MileageTab /> : <ExpensesTab />}
       </CardContent>
     </Card>
   );
@@ -694,8 +877,7 @@ export default function FinancesPage() {
         <TaxPanel invoices={invoices} loading={invoicesLoading} />
       </div>
 
-      <MileagePanel />
-      <ExpensesPanel />
+      <DeductiblesPanel />
     </div>
   );
 }
