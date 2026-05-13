@@ -69,6 +69,18 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "serial_number" text;
       ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "location" text;
       ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "tags" text[];
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "tuning_interval" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "case_color" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "case_finish" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "size" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "use_type" text;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "on_consignment" boolean DEFAULT false;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "has_ivory" boolean DEFAULT false;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "needs_repair" boolean DEFAULT false;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "total_loss" boolean DEFAULT false;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "player_installed" boolean DEFAULT false;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "piano_life_saver" boolean DEFAULT false;
+      ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "rental_piano" boolean DEFAULT false;
       ALTER TABLE "calendar_events" ADD COLUMN IF NOT EXISTS "repeat_end_date" text;
       ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "payment_method" text;
     `);
