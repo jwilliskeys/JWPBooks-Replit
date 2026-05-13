@@ -309,8 +309,9 @@ export default function PianoDetail() {
   const { label: statusLabel, cls: statusCls } = tuningStatusClass(monthsSince);
   const nextDue = calcNextTuningDue(piano.lastTuned, piano.tuningInterval);
   const nowTs = Date.now();
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const nextScheduledAppt = (pianoAppointments ?? [])
-    .filter((a) => a.status !== "cancelled" && parseSortTs(a.date) >= nowTs)
+    .filter((a) => a.status !== "cancelled" && parseSortTs(a.date) >= startOfToday.getTime())
     .sort((a, b) => parseSortTs(a.date) - parseSortTs(b.date))[0] ?? null;
   const timeline = buildTimeline(serviceRecords ?? [], pianoInvoices ?? [], pianoAppointments ?? []);
   const futureEntries = timeline.filter((e) => e.sortTs > nowTs);
