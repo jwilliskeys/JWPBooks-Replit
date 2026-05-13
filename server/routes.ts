@@ -13,9 +13,29 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
+const expenseUploadDir = path.join(process.cwd(), "uploads", "expenses");
+if (!fs.existsSync(expenseUploadDir)) {
+  fs.mkdirSync(expenseUploadDir, { recursive: true });
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req: any, _file: any, cb: any) => cb(null, uploadDir),
+    filename: (_req: any, file: any, cb: any) => {
+      const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
+      cb(null, uniqueName);
+    },
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req: any, file: any, cb: any) => {
+    const allowed = /\.(jpg|jpeg|png|gif|webp)$/i;
+    cb(null, allowed.test(path.extname(file.originalname)));
+  },
+});
+
+const expenseUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req: any, _file: any, cb: any) => cb(null, expenseUploadDir),
     filename: (_req: any, file: any, cb: any) => {
       const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
       cb(null, uniqueName);
@@ -1197,6 +1217,23 @@ export async function registerRoutes(
       const deleted = await storage.deleteBusinessExpense(id, userId);
       if (!deleted) return res.status(404).json({ message: "Not found" });
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/business-expenses/:id/receipt", expenseUpload.single("receipt"), async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const expense = await storage.getBusinessExpense(id, userId);
+      if (!expense) return res.status(404).json({ message: "Expense not found" });
+      const file = req.file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ message: "No file uploaded" });
+      const receiptUrl = `/uploads/expenses/${file.filename}`;
+      const updated = await storage.updateBusinessExpense(id, userId, { receiptUrl });
+      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

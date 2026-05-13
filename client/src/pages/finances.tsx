@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import {
 } from "recharts";
 import {
   DollarSign, TrendingUp, Car, Receipt, Plus, Trash2, Printer, Calculator,
-  CheckCircle2, Route,
+  CheckCircle2, Route, Paperclip, X,
 } from "lucide-react";
 import { parseTimeToMinutes } from "@/lib/scheduling";
 import type { Invoice, MileageLog, BusinessExpense, Appointment, Customer } from "@shared/schema";
@@ -545,16 +545,53 @@ function ExpensesTab() {
   const [yearFilter, setYearFilter] = useState(String(new Date().getFullYear()));
   const [categoryFilter, setCategoryFilter] = useState("All");
   const [form, setForm] = useState({ date: todayStr(), description: "", category: "Equipment", amount: "" });
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: expenses, isLoading } = useQuery<BusinessExpense[]>({ queryKey: ["/api/business-expenses"] });
 
+  function handleReceiptChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setReceiptFile(file);
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setReceiptPreview(url);
+    } else {
+      setReceiptPreview(null);
+    }
+  }
+
+  function resetForm() {
+    setForm({ date: todayStr(), description: "", category: "Equipment", amount: "" });
+    setReceiptFile(null);
+    setReceiptPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   const createMutation = useMutation({
-    mutationFn: (data: typeof form) => apiRequest("POST", "/api/business-expenses", data),
-    onSuccess: () => {
+    mutationFn: async (data: typeof form) => {
+      const res = await apiRequest("POST", "/api/business-expenses", data);
+      const created: BusinessExpense = await res.json();
+      let receiptFailed = false;
+      if (receiptFile) {
+        const fd = new FormData();
+        fd.append("receipt", receiptFile);
+        const uploadRes = await fetch(`/api/business-expenses/${created.id}/receipt`, { method: "POST", body: fd });
+        if (!uploadRes.ok) receiptFailed = true;
+      }
+      return { created, receiptFailed };
+    },
+    onSuccess: ({ receiptFailed }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/business-expenses"] });
       setOpen(false);
-      setForm({ date: todayStr(), description: "", category: "Equipment", amount: "" });
-      toast({ title: "Expense saved" });
+      resetForm();
+      if (receiptFailed) {
+        toast({ title: "Expense saved", description: "Receipt upload failed — you can retry by editing the expense.", variant: "destructive" });
+      } else {
+        toast({ title: "Expense saved" });
+      }
     },
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),
   });
@@ -738,6 +775,7 @@ function ExpensesTab() {
                 <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Category</th>
                 <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Amount</th>
                 <th className="w-8" />
+                <th className="w-8" />
               </tr>
             </thead>
             <tbody>
@@ -749,6 +787,22 @@ function ExpensesTab() {
                     <Badge variant="outline" className="text-[10px]">{exp.category}</Badge>
                   </td>
                   <td className="px-3 py-2 text-xs text-right font-medium">{fmt(parseDollar(exp.amount))}</td>
+                  <td className="px-2 py-2">
+                    {exp.receiptUrl ? (
+                      <button
+                        onClick={() => setLightboxUrl(exp.receiptUrl!)}
+                        className="block w-7 h-7 rounded overflow-hidden border border-border hover:opacity-80 transition-opacity"
+                        title="View receipt"
+                        data-testid={`button-receipt-${exp.id}`}
+                      >
+                        <img src={exp.receiptUrl} alt="Receipt" className="w-full h-full object-cover" />
+                      </button>
+                    ) : (
+                      <span className="flex items-center justify-center w-7 h-7 text-muted-foreground/30">
+                        <Paperclip className="h-3.5 w-3.5" />
+                      </span>
+                    )}
+                  </td>
                   <td className="px-2 py-2">
                     <Button
                       variant="ghost"
@@ -771,7 +825,7 @@ function ExpensesTab() {
         </p>
       )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={v => { setOpen(v); if (!v) resetForm(); }}>
         <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Add Expense</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -816,53 +870,88 @@ function ExpensesTab() {
                 data-testid="input-expense-amount"
               />
             </div>
+            <div>
+              <Label className="text-xs">Receipt Photo (optional)</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1.5"
+                  onClick={() => fileInputRef.current?.click()}
+                  data-testid="button-attach-receipt"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  {receiptFile ? "Change photo" : "Attach photo"}
+                </Button>
+                {receiptFile && (
+                  <span className="text-xs text-muted-foreground truncate max-w-[120px]">{receiptFile.name}</span>
+                )}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleReceiptChange}
+                  data-testid="input-receipt-file"
+                />
+              </div>
+              {receiptPreview && (
+                <div className="mt-2 relative inline-block">
+                  <img
+                    src={receiptPreview}
+                    alt="Receipt preview"
+                    className="h-24 w-auto rounded border border-border object-contain"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setReceiptFile(null); setReceiptPreview(null); if (fileInputRef.current) fileInputRef.current.value = ""; }}
+                    className="absolute -top-1.5 -right-1.5 bg-background border border-border rounded-full p-0.5 hover:bg-muted"
+                    data-testid="button-remove-receipt-preview"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setOpen(false); resetForm(); }}>Cancel</Button>
             <Button
               onClick={() => createMutation.mutate(form)}
               disabled={!form.date || !form.description || !form.amount || createMutation.isPending}
               data-testid="button-save-expense"
             >
-              Save
+              {createMutation.isPending ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
 
-function DeductiblesPanel() {
-  const [tab, setTab] = useState<"mileage" | "expenses">("mileage");
-
-  return (
-    <Card>
-      <CardHeader className="pb-0">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <TrendingUp className="h-4 w-4" /> Deductibles
-          </CardTitle>
-          <div className="flex rounded-md border overflow-hidden">
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={() => setLightboxUrl(null)}
+          data-testid="lightbox-overlay"
+        >
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <img
+              src={lightboxUrl}
+              alt="Receipt"
+              className="max-w-full max-h-[85vh] rounded-lg object-contain"
+              data-testid="lightbox-image"
+            />
             <button
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${tab === "mileage" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
-              onClick={() => setTab("mileage")}
-              data-testid="tab-mileage"
+              onClick={() => setLightboxUrl(null)}
+              className="absolute -top-3 -right-3 bg-background border border-border rounded-full p-1 hover:bg-muted shadow"
+              data-testid="button-close-lightbox"
             >
-              <Car className="h-3.5 w-3.5" /> Mileage
-            </button>
-            <button
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l ${tab === "expenses" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
-              onClick={() => setTab("expenses")}
-              data-testid="tab-expenses"
-            >
-              <Receipt className="h-3.5 w-3.5" /> Expenses
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
-      </CardHeader>
-      <CardContent className="pt-4">
-        {tab === "mileage" ? <MileageTab /> : <ExpensesTab />}
+      )}
+
       </CardContent>
     </Card>
   );

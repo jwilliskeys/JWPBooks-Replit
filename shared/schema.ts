@@ -313,6 +313,7 @@ export const businessExpenses = pgTable("business_expenses", {
   description: text("description").notNull(),
   category: text("category").notNull(),
   amount: text("amount").notNull(),
+  receiptUrl: text("receipt_url"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

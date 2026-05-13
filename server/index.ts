@@ -83,8 +83,9 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "rental_piano" boolean DEFAULT false;
       ALTER TABLE "calendar_events" ADD COLUMN IF NOT EXISTS "repeat_end_date" text;
       ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "payment_method" text;
+      ALTER TABLE "business_expenses" ADD COLUMN IF NOT EXISTS "receipt_url" text;
     `);
-    log("Schema migration: pianos, calendar_events, and invoices columns ensured.", "migration");
+    log("Schema migration: pianos, calendar_events, invoices, and business_expenses columns ensured.", "migration");
   } catch (err: any) {
     log(`Schema migration error: ${err.message}`, "migration");
   }
