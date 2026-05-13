@@ -151,7 +151,7 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
     return [HOME_ADDRESS, ...cust.map(buildAddress), HOME_ADDRESS];
   }, [todayAppointments, customers]);
 
-  const { data: drivingData } = useQuery<{ durations: number[] | null; error?: string }>({
+  const { data: drivingData } = useQuery<{ durations: number[] | null; distances: number[] | null; error?: string }>({
     queryKey: ["/api/driving-times", addresses.join("|")],
     queryFn: async () => {
       const res = await apiRequest("POST", "/api/driving-times", { addresses });
@@ -162,6 +162,7 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
   });
 
   const drivingTimes = drivingData?.durations ?? null;
+  const drivingDistances = drivingData?.distances ?? null;
 
   const leaveByTime = useMemo(() => {
     if (!todayAppointments.length || !drivingTimes || drivingTimes[0] == null || drivingTimes[0] < 0) return null;
@@ -207,6 +208,7 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
           const cust = customers?.find((c) => c.id === appt.customerId);
           const href = cust ? `/customers/${cust.id}` : "/appointments";
           const driveMinutes = drivingTimes ? drivingTimes[i] : null;
+          const driveMiles = drivingDistances ? drivingDistances[i] : null;
           const durationMins = parseDurationToMinutes(appt.duration || "2 hours");
           const startMins = parseTimeToMinutes(appt.time || "");
           const endTime = startMins >= 0 ? minutesToTimeStr(startMins + durationMins) : null;
@@ -216,7 +218,7 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
               {driveMinutes != null && driveMinutes >= 0 && (
                 <div className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-muted-foreground">
                   <Car className="h-3 w-3 shrink-0" />
-                  <span>Driving ({driveMinutes}m)</span>
+                  <span>Driving ({driveMinutes}m{driveMiles != null && driveMiles >= 0 ? ` · ${driveMiles.toFixed(1)} mi` : ""})</span>
                   <div className="flex-1 border-t border-dashed border-muted-foreground/25" />
                 </div>
               )}
@@ -263,7 +265,12 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
         {drivingTimes && drivingTimes[todayAppointments.length] != null && drivingTimes[todayAppointments.length]! >= 0 && (
           <div className="flex items-center gap-1.5 px-1 py-0.5 text-[11px] text-muted-foreground">
             <Car className="h-3 w-3 shrink-0" />
-            <span>Driving ({drivingTimes[todayAppointments.length]}m) home</span>
+            <span>
+              Driving ({drivingTimes[todayAppointments.length]}m
+              {drivingDistances && drivingDistances[todayAppointments.length] != null && drivingDistances[todayAppointments.length]! >= 0
+                ? ` · ${drivingDistances[todayAppointments.length]!.toFixed(1)} mi`
+                : ""}) home
+            </span>
             <div className="flex-1 border-t border-dashed border-muted-foreground/25" />
           </div>
         )}
@@ -271,6 +278,11 @@ function TodayItinerary({ appointments, customers }: { appointments: Appointment
           <div className="flex items-center gap-1.5 px-1 py-1.5">
             <Home className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-xs text-muted-foreground">Return home</span>
+            {drivingDistances && drivingDistances.length > 0 && (
+              <span className="ml-auto text-[11px] text-muted-foreground">
+                {drivingDistances.filter((d) => d != null && d >= 0).reduce((sum, d) => sum + d, 0).toFixed(1)} mi total
+              </span>
+            )}
           </div>
         )}
       </CardContent>

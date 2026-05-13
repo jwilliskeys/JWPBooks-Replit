@@ -952,8 +952,7 @@ function ExpensesTab() {
         </div>
       )}
 
-      </CardContent>
-    </Card>
+      </div>
   );
 }
 
