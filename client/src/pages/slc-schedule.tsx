@@ -597,6 +597,17 @@ function TripPanel({
     });
   }, []);
 
+  useEffect(() => {
+    const dateSet = new Set(dates);
+    setDayMileages(prev => {
+      const stale = Array.from(prev.keys()).filter(k => !dateSet.has(k));
+      if (stale.length === 0) return prev;
+      const next = new Map(prev);
+      stale.forEach(k => next.delete(k));
+      return next;
+    });
+  }, [dates]);
+
   const tripTotalMileage = useMemo(() => {
     const values = Array.from(dayMileages.values());
     if (values.length === 0) return null;
@@ -633,7 +644,7 @@ function TripPanel({
                     <DollarSign className="h-3 w-3" />
                     ${totalRevenue.toFixed(0)}
                   </span>
-                  {tripTotalMileage != null && (
+                  {tripTotalMileage != null && tripTotalMileage > 0 && (
                     <>
                       <span>·</span>
                       <span className="flex items-center gap-1" data-testid={`text-trip-miles-${trip.id}`}>
