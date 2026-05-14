@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -953,6 +954,32 @@ function ExpensesTab() {
       )}
 
       </div>
+  );
+}
+
+function DeductiblesPanel() {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-semibold flex items-center gap-2">
+          <Receipt className="h-4 w-4" /> Deductibles
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="mileage">
+          <TabsList className="mb-4">
+            <TabsTrigger value="mileage" data-testid="tab-mileage"><Car className="h-3.5 w-3.5 mr-1.5" />Mileage</TabsTrigger>
+            <TabsTrigger value="expenses" data-testid="tab-expenses"><Receipt className="h-3.5 w-3.5 mr-1.5" />Expenses</TabsTrigger>
+          </TabsList>
+          <TabsContent value="mileage">
+            <MileageTab />
+          </TabsContent>
+          <TabsContent value="expenses">
+            <ExpensesTab />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
   );
 }
 
