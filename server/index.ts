@@ -3,6 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabaseIfEmpty } from "./seed";
+import { seedOutreachIfEmpty } from "./seedOutreach";
 import { setupAuth } from "./simpleAuth";
 import { storage } from "./storage";
 
@@ -82,10 +83,49 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "piano_life_saver" boolean DEFAULT false;
       ALTER TABLE "pianos" ADD COLUMN IF NOT EXISTS "rental_piano" boolean DEFAULT false;
       ALTER TABLE "calendar_events" ADD COLUMN IF NOT EXISTS "repeat_end_date" text;
+      ALTER TABLE "calendar_events" ADD COLUMN IF NOT EXISTS "end_date" text;
       ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "payment_method" text;
       ALTER TABLE "business_expenses" ADD COLUMN IF NOT EXISTS "receipt_url" text;
+      CREATE TABLE IF NOT EXISTS "inspections" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "user_id" text,
+        "customer_id" integer NOT NULL,
+        "piano_id" integer,
+        "type" text NOT NULL DEFAULT 'inspection',
+        "inspection_date" text NOT NULL,
+        "status" text NOT NULL DEFAULT 'pending',
+        "overall_condition" text,
+        "checklist_items" text DEFAULT '[]',
+        "findings" text,
+        "recommended_services" text DEFAULT '[]',
+        "estimated_total" text,
+        "invoice_id" integer,
+        "summary" text,
+        "photos" text[],
+        "internal_notes" text,
+        "created_at" timestamp DEFAULT now()
+      );
     `);
-    log("Schema migration: pianos, calendar_events, invoices, and business_expenses columns ensured.", "migration");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "booking_requests" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "user_id" text,
+        "first_name" text NOT NULL,
+        "last_name" text NOT NULL,
+        "email" text NOT NULL,
+        "phone" text,
+        "city_neighborhood" text,
+        "piano_type" text,
+        "last_tuned" text,
+        "preferred_times" text,
+        "status" text NOT NULL DEFAULT 'pending',
+        "admin_notes" text,
+        "converted_customer_id" integer,
+        "converted_appointment_id" integer,
+        "created_at" timestamp DEFAULT now()
+      );
+    `);
+    log("Schema migration: pianos, calendar_events, invoices, business_expenses, inspections, and booking_requests ensured.", "migration");
   } catch (err: any) {
     log(`Schema migration error: ${err.message}`, "migration");
   }
@@ -210,6 +250,7 @@ async function migrateExistingDataToUser() {
   await seedDatabaseIfEmpty();
   await ensurePianoSchemaColumns();
   await migrateExistingDataToUser();
+  await seedOutreachIfEmpty();
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
@@ -235,19 +276,16 @@ async function migrateExistingDataToUser() {
     await setupVite(httpServer, app);
   }
 
-  // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
-  const port = parseInt(process.env.PORT || "5000", 10);
+  // Listen on all interfaces so the app is reachable from other devices
+  // on the local network (e.g. iPhone, iPad). Default port 3000.
+  const port = parseInt(process.env.PORT || "3000", 10);
   httpServer.listen(
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on http://localhost:${port}`);
     },
   );
 })();

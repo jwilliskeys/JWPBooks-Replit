@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, asc, desc } from "drizzle-orm";
+import { eq, and, asc, desc, ne } from "drizzle-orm";
 import {
   customers,
   pianos,
@@ -16,6 +16,12 @@ import {
   customerContacts,
   mileageLogs,
   businessExpenses,
+  inspections,
+  bankAccounts,
+  bankTransactions,
+  bookingRequests,
+  schedulerSettings,
+  outreachLeads,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -45,6 +51,17 @@ import {
   type InsertMileageLog,
   type BusinessExpense,
   type InsertBusinessExpense,
+  type Inspection,
+  type InsertInspection,
+  type BankAccount,
+  type InsertBankAccount,
+  type BankTransaction,
+  type InsertBankTransaction,
+  type BookingRequest,
+  type InsertBookingRequest,
+  type SchedulerSettings,
+  type OutreachLead,
+  type InsertOutreachLead,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -82,6 +99,7 @@ export interface IStorage {
   getCalendarEvents(userId: string): Promise<CalendarEvent[]>;
   getCalendarEvent(id: number): Promise<CalendarEvent | undefined>;
   createCalendarEvent(event: InsertCalendarEvent, userId: string): Promise<CalendarEvent>;
+  updateCalendarEvent(id: number, data: Partial<InsertCalendarEvent>): Promise<CalendarEvent | undefined>;
   deleteCalendarEvent(id: number): Promise<boolean>;
   getTrips(userId: string): Promise<Trip[]>;
   getTrip(id: number): Promise<Trip | undefined>;
@@ -97,6 +115,7 @@ export interface IStorage {
   getInvoicesByCustomer(customerId: number, userId: string): Promise<Invoice[]>;
   getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]>;
   getInvoice(id: number): Promise<Invoice | undefined>;
+  getInvoiceByAppointmentId(appointmentId: number): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice, userId: string): Promise<Invoice>;
   updateInvoice(id: number, data: Partial<InsertInvoice>): Promise<Invoice | undefined>;
   deleteInvoice(id: number): Promise<boolean>;
@@ -146,6 +165,17 @@ export interface IStorage {
   createBusinessExpense(expense: InsertBusinessExpense, userId: string): Promise<BusinessExpense>;
   updateBusinessExpense(id: number, userId: string, data: Partial<InsertBusinessExpense>): Promise<BusinessExpense | undefined>;
   deleteBusinessExpense(id: number, userId: string): Promise<boolean>;
+  getOutreachLeads(userId: string): Promise<OutreachLead[]>;
+  getOutreachLead(id: number, userId: string): Promise<OutreachLead | undefined>;
+  createOutreachLead(lead: InsertOutreachLead, userId: string): Promise<OutreachLead>;
+  updateOutreachLead(id: number, userId: string, data: Partial<InsertOutreachLead>): Promise<OutreachLead | undefined>;
+  deleteOutreachLead(id: number, userId: string): Promise<boolean>;
+  getBookingRequests(userId: string): Promise<BookingRequest[]>;
+  createBookingRequest(data: InsertBookingRequest, userId: string): Promise<BookingRequest>;
+  updateBookingRequest(id: number, data: Partial<BookingRequest>): Promise<BookingRequest | undefined>;
+  deleteBookingRequest(id: number): Promise<boolean>;
+  getSchedulerSettings(userId: string): Promise<SchedulerSettings | undefined>;
+  upsertSchedulerSettings(userId: string, data: Partial<Omit<SchedulerSettings, "userId" | "updatedAt">>): Promise<SchedulerSettings>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -362,6 +392,11 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async updateCalendarEvent(id: number, data: Partial<InsertCalendarEvent>): Promise<CalendarEvent | undefined> {
+    const [updated] = await db.update(calendarEvents).set(data).where(eq(calendarEvents.id, id)).returning();
+    return updated;
+  }
+
   async deleteCalendarEvent(id: number): Promise<boolean> {
     const result = await db.delete(calendarEvents).where(eq(calendarEvents.id, id)).returning();
     return result.length > 0;
@@ -434,6 +469,11 @@ export class DatabaseStorage implements IStorage {
 
   async getInvoice(id: number): Promise<Invoice | undefined> {
     const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+    return invoice;
+  }
+
+  async getInvoiceByAppointmentId(appointmentId: number): Promise<Invoice | undefined> {
+    const [invoice] = await db.select().from(invoices).where(eq(invoices.appointmentId, appointmentId));
     return invoice;
   }
 
@@ -693,15 +733,26 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getCustomerContacts(customerId: number): Promise<CustomerContact[]> {
-    return db.select().from(customerContacts)
+    const rows = await db.select().from(customerContacts)
       .where(eq(customerContacts.customerId, customerId))
-      .orderBy(customerContacts.createdAt);
+      .orderBy(customerContacts.id);
+    // Sort: primary first, billing second, then by id ascending.
+    return rows.sort((a, b) => {
+      if (!!a.isPrimary !== !!b.isPrimary) return a.isPrimary ? -1 : 1;
+      if (!!a.isBilling !== !!b.isBilling) return a.isBilling ? -1 : 1;
+      return a.id - b.id;
+    });
   }
 
   async createCustomerContact(contact: InsertCustomerContact, userId: string): Promise<CustomerContact> {
     if (contact.isPrimary) {
       await db.update(customerContacts)
         .set({ isPrimary: false })
+        .where(eq(customerContacts.customerId, contact.customerId));
+    }
+    if (contact.isBilling) {
+      await db.update(customerContacts)
+        .set({ isBilling: false })
         .where(eq(customerContacts.customerId, contact.customerId));
     }
     const [created] = await db.insert(customerContacts).values({ ...contact, userId }).returning();
@@ -714,12 +765,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateCustomerContact(id: number, data: Partial<InsertCustomerContact>): Promise<CustomerContact | undefined> {
-    if (data.isPrimary) {
+    if (data.isPrimary || data.isBilling) {
       const [existing] = await db.select().from(customerContacts).where(eq(customerContacts.id, id));
       if (existing) {
-        await db.update(customerContacts)
-          .set({ isPrimary: false })
-          .where(eq(customerContacts.customerId, existing.customerId));
+        if (data.isPrimary) {
+          await db.update(customerContacts)
+            .set({ isPrimary: false })
+            .where(and(
+              eq(customerContacts.customerId, existing.customerId),
+              ne(customerContacts.id, id),
+            ));
+        }
+        if (data.isBilling) {
+          await db.update(customerContacts)
+            .set({ isBilling: false })
+            .where(and(
+              eq(customerContacts.customerId, existing.customerId),
+              ne(customerContacts.id, id),
+            ));
+        }
       }
     }
     const [updated] = await db.update(customerContacts).set(data).where(eq(customerContacts.id, id)).returning();
@@ -806,6 +870,205 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(businessExpenses.id, id), eq(businessExpenses.userId, userId)))
       .returning();
     return result.length > 0;
+  }
+
+  // ── Outreach Leads ─────────────────────────────────────────────────────────
+
+  async getOutreachLeads(userId: string): Promise<OutreachLead[]> {
+    return db.select().from(outreachLeads)
+      .where(eq(outreachLeads.userId, userId))
+      .orderBy(asc(outreachLeads.city), asc(outreachLeads.name));
+  }
+
+  async getOutreachLead(id: number, userId: string): Promise<OutreachLead | undefined> {
+    const [lead] = await db.select().from(outreachLeads)
+      .where(and(eq(outreachLeads.id, id), eq(outreachLeads.userId, userId)));
+    return lead;
+  }
+
+  async createOutreachLead(lead: InsertOutreachLead, userId: string): Promise<OutreachLead> {
+    const [created] = await db.insert(outreachLeads).values({ ...lead, userId }).returning();
+    return created;
+  }
+
+  async updateOutreachLead(id: number, userId: string, data: Partial<InsertOutreachLead>): Promise<OutreachLead | undefined> {
+    const [updated] = await db.update(outreachLeads)
+      .set(data)
+      .where(and(eq(outreachLeads.id, id), eq(outreachLeads.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async deleteOutreachLead(id: number, userId: string): Promise<boolean> {
+    const result = await db.delete(outreachLeads)
+      .where(and(eq(outreachLeads.id, id), eq(outreachLeads.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  // ── Inspections / Estimates ────────────────────────────────────────────────
+
+  async getInspections(userId: string): Promise<Inspection[]> {
+    return db.select().from(inspections)
+      .where(eq(inspections.userId, userId))
+      .orderBy(desc(inspections.inspectionDate));
+  }
+
+  async getInspectionsByCustomer(customerId: number, userId: string): Promise<Inspection[]> {
+    return db.select().from(inspections)
+      .where(and(eq(inspections.customerId, customerId), eq(inspections.userId, userId)))
+      .orderBy(desc(inspections.inspectionDate));
+  }
+
+  async getInspection(id: number, userId: string): Promise<Inspection | undefined> {
+    const [inspection] = await db.select().from(inspections)
+      .where(and(eq(inspections.id, id), eq(inspections.userId, userId)));
+    return inspection;
+  }
+
+  async createInspection(data: InsertInspection, userId: string): Promise<Inspection> {
+    const [created] = await db.insert(inspections).values({ ...data, userId }).returning();
+    return created;
+  }
+
+  async updateInspection(id: number, userId: string, data: Partial<InsertInspection>): Promise<Inspection | undefined> {
+    const [updated] = await db.update(inspections)
+      .set(data)
+      .where(and(eq(inspections.id, id), eq(inspections.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async deleteInspection(id: number, userId: string): Promise<boolean> {
+    const result = await db.delete(inspections)
+      .where(and(eq(inspections.id, id), eq(inspections.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  // ── Plaid Bank Feed ────────────────────────────────────────────────────────
+
+  async getBankAccounts(userId: string): Promise<BankAccount[]> {
+    return db.select().from(bankAccounts)
+      .where(and(eq(bankAccounts.userId, userId), eq(bankAccounts.isActive, true)))
+      .orderBy(desc(bankAccounts.createdAt));
+  }
+
+  async getBankAccount(id: number, userId: string): Promise<BankAccount | undefined> {
+    const [account] = await db.select().from(bankAccounts)
+      .where(and(eq(bankAccounts.id, id), eq(bankAccounts.userId, userId)));
+    return account;
+  }
+
+  async createBankAccount(data: InsertBankAccount): Promise<BankAccount> {
+    const [created] = await db.insert(bankAccounts).values(data).returning();
+    return created;
+  }
+
+  async updateBankAccount(id: number, userId: string, data: Partial<InsertBankAccount>): Promise<BankAccount | undefined> {
+    const [updated] = await db.update(bankAccounts)
+      .set(data)
+      .where(and(eq(bankAccounts.id, id), eq(bankAccounts.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async deleteBankAccount(id: number, userId: string): Promise<boolean> {
+    const result = await db.update(bankAccounts)
+      .set({ isActive: false })
+      .where(and(eq(bankAccounts.id, id), eq(bankAccounts.userId, userId)))
+      .returning();
+    return result.length > 0;
+  }
+
+  async getBankTransactions(userId: string, limit = 200): Promise<BankTransaction[]> {
+    return db.select().from(bankTransactions)
+      .where(eq(bankTransactions.userId, userId))
+      .orderBy(desc(bankTransactions.date))
+      .limit(limit);
+  }
+
+  async getBankTransactionsByAccount(accountId: number, userId: string): Promise<BankTransaction[]> {
+    return db.select().from(bankTransactions)
+      .where(and(eq(bankTransactions.bankAccountId, accountId), eq(bankTransactions.userId, userId)))
+      .orderBy(desc(bankTransactions.date));
+  }
+
+  async upsertBankTransactions(txns: InsertBankTransaction[]): Promise<void> {
+    if (txns.length === 0) return;
+    for (const txn of txns) {
+      await db.insert(bankTransactions)
+        .values(txn)
+        .onConflictDoNothing();
+    }
+  }
+
+  async updateBankTransaction(id: number, userId: string, data: Partial<InsertBankTransaction>): Promise<BankTransaction | undefined> {
+    const [updated] = await db.update(bankTransactions)
+      .set(data)
+      .where(and(eq(bankTransactions.id, id), eq(bankTransactions.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  // ── Booking Requests ────────────────────────────────────────────────────────
+
+  async getBookingRequests(userId: string): Promise<BookingRequest[]> {
+    return db
+      .select()
+      .from(bookingRequests)
+      .where(eq(bookingRequests.userId, userId))
+      .orderBy(desc(bookingRequests.createdAt));
+  }
+
+  async createBookingRequest(data: InsertBookingRequest, userId: string): Promise<BookingRequest> {
+    const [created] = await db
+      .insert(bookingRequests)
+      .values({ ...data, userId, status: "pending" })
+      .returning();
+    return created;
+  }
+
+  async updateBookingRequest(id: number, data: Partial<BookingRequest>): Promise<BookingRequest | undefined> {
+    const [updated] = await db
+      .update(bookingRequests)
+      .set(data)
+      .where(eq(bookingRequests.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteBookingRequest(id: number): Promise<boolean> {
+    const result = await db
+      .delete(bookingRequests)
+      .where(eq(bookingRequests.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  // ── Scheduler Settings ──────────────────────────────────────────────────────
+
+  async getSchedulerSettings(userId: string): Promise<SchedulerSettings | undefined> {
+    const [row] = await db
+      .select()
+      .from(schedulerSettings)
+      .where(eq(schedulerSettings.userId, userId));
+    return row;
+  }
+
+  async upsertSchedulerSettings(
+    userId: string,
+    data: Partial<Omit<SchedulerSettings, "userId" | "updatedAt">>
+  ): Promise<SchedulerSettings> {
+    const [row] = await db
+      .insert(schedulerSettings)
+      .values({ userId, ...data })
+      .onConflictDoUpdate({
+        target: schedulerSettings.userId,
+        set: { ...data, updatedAt: new Date() },
+      })
+      .returning();
+    return row;
   }
 
 }
