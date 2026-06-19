@@ -1,0 +1,96 @@
+# JWP Books — session memory
+
+## What this is
+
+John Willis Piano's piano-technician client manager. **Vite + React + TypeScript** frontend in `client/`, **Express + Drizzle ORM** backend in `server/`, **Tailwind + shadcn/ui** for styles. Dev server runs on `http://localhost:3000`. **Launch with `bash start.sh`** (it sources `.env`, then runs `tsx server/index.ts`); plain `npm run dev` will fail with `DATABASE_URL must be set` because nothing else loads `.env`. The project originated on Replit (hence the `.replit` config and `.git` history), but it now lives as a standalone local app. The old unrelated Next.js scaffold and the `*-Replit` parent folder have been deleted — this folder is the single source of truth.
+
+User: Willis Krammer · piano tuner based in Centerville, UT · `HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014"` is hard-coded in the codebase.
+
+## File map (high-traffic pages)
+
+- `client/src/pages/slc-schedule.tsx` — **Trip Planner** (route `/slc-schedule`, sidebar label "Trip Planner"). Big file (~2300 lines). Handles trips, day itineraries, drag-to-reorder appointments, driving-time calculation, mileage tracking, and the Trip Budget module.
+- `client/src/pages/finances.tsx` — **Finances** tab with Deductibles panel, Schedule C export (CSV + print), and the Plaid bank-feed connection UI (see "Plaid" below).
+- `client/src/pages/outreach.tsx` — **Outreach** page: lead pipeline with status, notes, and a `followUpDate` field (date picker) for scheduling when to circle back with a lead.
+- `client/src/pages/inventory.tsx` — **Inventory** page (`/inventory`). Four tabs: Hammers, Renner Parts Kit, Other Parts, and an Action Geometry Calculator (blow ratio, key leverage ratio, jack travel, let-off %, efficiency assessment). Data persisted as `data/inventory.json` on disk via `GET`/`PUT /api/inventory` in `server/routes.ts` (no DB migration needed for this one).
+- `client/src/pages/inspections.tsx`, `client/src/pages/book.tsx` — newer pages added alongside the above; not yet given a "Recent changes" writeup of their own — check git log / read the files directly if you need their behavior, since this doc hasn't caught up to them in detail.
+- `client/src/lib/schedule-c.ts` — **Shared** Schedule C constants (`SCHEDULE_C_CATEGORIES`, `IRS_MILEAGE_RATE = 0.70`, `SE_TAX_RATE = 0.153`, `getCatInfo`, `TRIP_DEFAULT_CATEGORIES`). Both `slc-schedule.tsx` and `finances.tsx` import from here — keep them in sync.
+- `client/src/components/app-sidebar.tsx` — nav.
+- `shared/schema.ts` — Drizzle schema (`trips`, `tripAppointments`, `businessExpenses` with `schedCCategory`, `outreachLeads` with `followUpDate`, etc.).
+- `scripts/cfo-snapshot.mjs` — standalone script that queries the live Neon DB directly (plain JS, not run through the app) and prints a JSON snapshot: overdue clients by region, unpaid/draft invoice totals, this month's revenue/expenses, upcoming appointments, outreach follow-ups due. Built so the `jwp` scheduled task (see "Scheduled tasks" below) can ground its CFO commentary in real numbers instead of guessing. Deliberately **not** a `.ts` file — see "Environment / tool quirks."
+
+## Recent changes (June 19, 2026)
+
+1. **Outreach gets a follow-up date.** Added `followUpDate` to the `outreachLeads` table in `shared/schema.ts`, plus a date-picker field in `outreach.tsx` so leads can be scheduled for a callback instead of just sitting in a status column. **Requires `npm run db:push`** run by Willis on his own Mac before the column actually exists in the live database — see "Environment / tool quirks."
+2. **Auto-invoice on appointment completion.** `POST /api/appointments/:id/complete` now calls a new `autoCreateInvoiceForAppointment` helper in `server/routes.ts`. It builds invoice line items from the **itemized services actually picked** in the Complete Appointment dialog (`pianoRecords[].services` + `miscServices`, each a JSON array of `{name, price, quantity}`) — the same data that populates `serviceRecords`. Falls back to splitting the appointment's free-text `servicesRequested` against the service catalog, then to `priceEstimate`, only if nothing was itemized. No-ops if an invoice is already linked to the appointment, so re-completing never duplicates. Both `complete-appointment-dialog.tsx` and `appointment-detail-dialog.tsx` now unconditionally invalidate `["/api/invoices"]` on completion so the new draft invoice shows up without a manual refresh.
+3. **Dashboard overdue-client digest.** Dashboard now surfaces customers overdue for a 6-month tuning, split by region (Boston-area vs. SLC-area), using the same `classifyCustomer` logic (state-code first, then city-substring fallback) used elsewhere.
+4. **CFO scheduled task (`jwp`) now reads live data.** It runs `scripts/cfo-snapshot.mjs` at the start of every run and grounds its commentary in real numbers — named overdue clients, actual unpaid-invoice dollar totals, named outreach follow-ups due — instead of operating blind. Still keeps its original voice/asks (Quicken upload + "damage report," Boston-market job scouting vs. the Falcetti/BU gig). A true in-app "mini-LLM assistant" embedded in the React app itself was discussed but is a separate, larger feature (chat UI + API key wired into the backend) — not something achievable as a scheduled-task tweak.
+5. **New `jwp-release-checklist` scheduled task** (weekly, Mondays). Runs `tsc --noEmit`, summarizes `git status`/uncommitted work, flags schema drift needing `db:push`, sanity-checks the CFO snapshot script, and checks whether this file's "Recent changes" section has fallen behind the actual git log. Meant to be run on its own schedule *or* triggered manually any time before a commit/deploy.
+6. **A month of uncommitted work got committed.** Roughly five weeks of in-progress changes (Outreach, Inventory, Inspections, Booking pages, the auto-invoice logic, schema changes, etc.) had piled up uncommitted in git. Committed in three logical chunks: backend/infra, frontend, then docs/config. While doing this, caught that **`.env` was untracked but not gitignored** — added it to `.gitignore` before any commit could pick it up. Also gitignored the dated CFO report markdown files the `jwp` scheduled task generates in the project root, so they stop showing up as repo clutter every run.
+
+## Plaid bank-feed integration
+
+Already built — UI in `finances.tsx`, routes in `server/routes.ts`. It is **not active** because it needs Willis's own `PLAID_CLIENT_ID` and `PLAID_SECRET` in `.env`. Once those are set, the existing integration should "just work" — no further coding needed unless something breaks at connection time.
+
+## Scheduled tasks (outside this repo, but operate on it)
+
+Live under `/Users/johnwilliskrammer/Documents/Claude/Scheduled/<taskId>/SKILL.md`, managed via the scheduled-tasks MCP tools. Each run starts fresh with no memory of any conversation, so their prompts are fully self-contained.
+
+- **`jwp`** — daily CFO briefing (6:48 AM). Pulls live numbers via `cfo-snapshot.mjs`, then advises on app priorities, outreach targets, Quicken spending review, and Boston job-market scouting.
+- **`jwp-release-checklist`** — weekly health/release check (Mondays). See item 5 above.
+- Others exist (`bu-schedule-app`, `jwp-books`, `sc2`, `morning-coffee`, `zombicide`) but aren't part of this project's workflow.
+
+## Recent changes (June 4, 2026)
+
+1. **Sidebar reorder.** Outreach moved to just above Settings. Inventory added between Finances and Outreach. New icon: `Package` from lucide-react.
+2. **Piano photo upload fixed.** Removed the `owner.userId !== userId` check from both `POST /api/pianos/:id/photos` and `DELETE /api/pianos/:pianoId/photos` (was causing 403 errors in single-owner app). File size limit raised to 25 MB. Added HEIC, HEIF, AVIF, TIFF, BMP to allowed extensions; also accepts any `image/*` mimetype so iPhone HEIC photos work.
+3. **Inventory page added** (`/inventory`, `client/src/pages/inventory.tsx`). Four tabs:
+   - **Hammers** — editable table with make/model, type, bass/treble counts, bore depth/offset, taper ratio, shoulder size, strike weight, note range, compatible brands, qty, location, notes.
+   - **Renner Parts Kit** — table for Renner parts with part # / name + full whippen geometry: whippen length, jack length/width, knuckle radius, capstan height, repetition lever ratio, spring tension.
+   - **Other Parts** — general parts/supplies table with category, part #, qty, unit, location.
+   - **Action Geometry Calculator** — live calculator: enter blow distance, key dip, balance rail pos, key length, whippen length, let-off, drop, after-touch → outputs blow ratio, key leverage ratio, estimated jack travel, let-off %, and an efficiency assessment.
+4. **Inventory storage** — `GET /PUT /api/inventory` endpoints in `server/routes.ts`; data stored as `data/inventory.json` on disk (no DB migration needed). File is initialized automatically if missing.
+
+## Recent changes (May 15, 2026)
+
+1. **Trip Planner layout: horizontal day columns.** Was a continuous vertical scroll. Now each day is a ~260-280px card laid out side-by-side in an `overflow-x-auto` flex row inside each `TripPanel`'s `<CollapsibleContent>`. `DayItinerarySection` was restyled to render as a column card with header → appts → action area.
+2. **Trip Budget rebuilt around Schedule C.** New `BudgetItem` shape: `{ category, date, vendor, expected, actual, notes }`. Categories are a `<Select>` of the 17 Schedule C lines from the shared lib. Old budgets are auto-migrated via `migrateBudgetItem()` (Flight/Hotel → Travel, Gas/Car Rental → Car & Truck (Actual), Meals → Meals (50%)).
+3. **New "Schedule C summary" card** at the bottom of the budget panel: rolls up actuals by IRS line, applies the 50% haircut for meals automatically, adds Line 9 mileage deduction (uses the trip's auto-computed `tripTotalMileage`), shows total deductible + estimated tax savings.
+4. **Vehicle deduction toggle**: `mileageMethod: "standard" | "actual"` on the budget root, controls whether the mileage row appears in the Schedule C summary.
+5. **Removed itinerary notes feature entirely.** Deleted `ItineraryNoteBlock`, `ItineraryNote` interface, `saveNotes`, `saveItineraryNotesMutation`, `onSaveItineraryNotes` prop, and the "+ Add note" UI. Old `itineraryNotes` data in trip JSON is left untouched but ignored. The `Star` lucide import is still used elsewhere (don't remove it).
+
+## How budget data is persisted
+
+Trip budget lives inside `trip.notes` as JSON: `{ budget: { taxRate, tuningRate, mileageMethod, items: [...] }, ...other }`. `saveBudget()` reads existing JSON, merges, then `PATCH /api/trips/:id`. Parsing is via `parseTripBudget()` in `slc-schedule.tsx`.
+
+## Environment / tool quirks
+
+- **Chrome is tier "read"** for computer-use — can screenshot but not click/type. User does **not** have the "Claude in Chrome" extension connected, so DOM-driven browser actions aren't available. If you need to navigate the running app, ask the user to click.
+- **`~/Library/Application Support` is protected** — can't mount it. Don't try to read VS Code workspace state from there.
+- **Project location**: `~/Documents/JWP Books` (top level of Documents — the main, business-critical project, intentionally kept out of `~/Documents/Claude/Projects`).
+- **Dev server** is normally already running on localhost:3000 when the user is iterating. Vite HMR picks up edits automatically.
+- **TypeScript check**: `npx tsc --noEmit` is the canonical "did I break anything?" gate. No lint step beyond that.
+- **esbuild/native-binary platform mismatch (important).** When working on this project from a sandboxed/remote session, the sandbox's `node_modules` is often a live mount of the real macOS project folder (darwin-arm64 binaries), while the sandbox itself runs Linux. Anything that depends on esbuild's native binary breaks: `npm run db:push` (drizzle-kit) and `npx tsx <file>.ts` both fail with a platform-mismatch error. Plain `node <file>.mjs` (no TS/no transform) and `npx tsc --noEmit` (pure TS type-checker, no native binary involved) both work fine anywhere. **Practical rule: write standalone scripts as plain `.mjs`, not `.ts`, if they might ever run outside Willis's own Mac terminal** (e.g. from a scheduled task). `scripts/cfo-snapshot.mjs` exists specifically because of this.
+- **`npm run db:push` must be run by Willis himself**, in his own Mac Terminal, after any `shared/schema.ts` change — it cannot be run from a remote/sandboxed session for the reason above.
+- **File deletion in the connected project folder can be gated above normal Unix permissions** — `rm` may fail with "Operation not permitted" even when `ls -la` shows correct ownership. If that happens, use the `mcp__cowork__allow_cowork_file_delete` tool (request permission for the specific path) rather than concluding deletion is impossible.
+
+## Conventions worth keeping
+
+- Trip-related testing IDs: `data-testid="text-trip-planner-title"`, `data-testid={\`trip-appointment-${appt.id}\`}`, etc. Add `data-testid` to new interactive controls.
+- Schedule C labels must match strings in `SCHEDULE_C_CATEGORIES` exactly — `getCatInfo` falls back to "Line 27a / Other" for unknowns.
+- Money inputs use `tabular-nums`, `inputMode="decimal"`, and right-align; expects free-text like `"$1,250.50"` and parses with `parseBudgetNum`/`parseDollar`.
+- Don't add emojis unless the user asks.
+- **`.env` must stay out of git.** It's now in `.gitignore`, but if anything ever has to recreate that file or `.gitignore`, double-check `.env` is excluded before the next commit — it holds `DATABASE_URL` and (once configured) Plaid secrets.
+
+## How to maintain this file
+
+- Treat **"Recent changes"** as a rolling, dated log — add a new dated section each session that touches the code, rather than editing old sections in place. Periodically (every few months) fold the oldest sections' durable facts into "File map" / "Conventions" and delete the dated section once it's no longer "recent."
+- Treat **"Open / possibly-next"** as a living TODO. Check it at the start of a work session; cross items off (delete them) once actually done instead of leaving stale TODOs.
+- The new `jwp-release-checklist` scheduled task now automatically checks whether this file's "Recent changes" matches `git log` — if it flags drift, that's the signal to update this file, not just a nag to ignore.
+- This file itself was **untracked in git until June 19, 2026** (it existed on disk but had never been committed, alongside roughly a month of other uncommitted work). It's tracked now — future edits will show up in `git log -- CLAUDE.md`, so it's safe to treat git history as a record of how this file has evolved going forward.
+
+## Open / possibly-next
+
+- Receipt photo uploads exist for `businessExpenses` (see commit `da67b79`) but **not yet** for trip-budget items — the new `BudgetItem` could grow a `receiptUrl` if user wants per-trip receipt capture.
+- Schedule C export on the Finances page currently sums from `businessExpenses` only — it does **not** pull from trip-budget items. If the user wants trips to roll into year-end Schedule C automatically, that's a future wiring job (probably easiest: persist trip-budget items into the `businessExpenses` table when actuals are entered, with a `tripId` foreign key).
+- A real in-app chat assistant (vs. the scheduled-task CFO briefing) was requested once — scoped as a future feature, not started. Would need a chat UI component plus an API key wired into the Express backend.
+- `client/src/pages/inspections.tsx` and `client/src/pages/book.tsx` exist in the codebase but don't have a "Recent changes" writeup yet — worth documenting properly next time either gets touched.
