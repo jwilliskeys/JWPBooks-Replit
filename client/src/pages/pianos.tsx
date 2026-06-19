@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   DropdownMenu,
@@ -44,40 +43,44 @@ function formatLastTuned(dateStr: string | null | undefined): string {
   return dateStr;
 }
 
-function tuningStatusBadge(lastTuned: string | null | undefined, isActive: boolean | null) {
-  if (isActive === false) {
-    return (
-      <Badge variant="secondary" className="uppercase text-[10px] font-semibold tracking-wide px-1.5 py-0 border-0">
-        Inactive
-      </Badge>
-    );
-  }
-  const months = getMonthsSince(lastTuned);
-  if (months === null) {
-    return (
-      <Badge className="uppercase text-[10px] font-semibold tracking-wide px-1.5 py-0 bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 border-0">
-        Never
-      </Badge>
-    );
-  }
-  if (months >= 24) {
-    return (
-      <Badge className="uppercase text-[10px] font-semibold tracking-wide px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300 border-0">
-        Overdue
-      </Badge>
-    );
-  }
-  if (months >= 12) {
-    return (
-      <Badge className="uppercase text-[10px] font-semibold tracking-wide px-1.5 py-0 bg-orange-100 text-orange-700 dark:bg-orange-900 dark:text-orange-300 border-0">
-        Due Soon
-      </Badge>
-    );
-  }
+/** Tier score for "warm leads" sort. Lower = shown first. */
+function warmLeadsTier(months: number | null): number {
+  if (months === null) return 5; // never tuned — bottom
+  if (months >= 12 && months <= 18) return 0; // prime orange zone — top
+  if (months >= 10 && months < 12) return 1; // yellow / due soon
+  if (months > 18 && months < 24) return 2; // slightly past prime
+  if (months < 10) return 3; // too fresh
+  return 4; // 24+ months deeply overdue — low priority
+}
+
+/** Background class for a row based on tuning age. */
+function getRowTierClass(months: number | null, isActive: boolean | null): string {
+  if (isActive === false) return "";
+  if (months === null) return "";
+  if (months >= 24) return "bg-muted/30 opacity-75"; // deeply overdue — muted
+  if (months >= 12 && months <= 18) return "bg-orange-50 dark:bg-orange-950/20"; // orange prime
+  if (months >= 10 && months < 12) return "bg-yellow-50 dark:bg-yellow-950/20"; // yellow due soon
+  return "";
+}
+
+/** Compact status indicator: colored dot + state abbreviation. */
+function StatusDot({ isActive, state }: { isActive: boolean | null; state: string | null | undefined }) {
+  const active = isActive !== false;
+  const stateLabel = state ? state.trim().toUpperCase().slice(0, 2) : null;
   return (
-    <Badge className="uppercase text-[10px] font-semibold tracking-wide px-1.5 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300 border-0">
-      Active
-    </Badge>
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className={`inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+          active ? "bg-emerald-500" : "bg-gray-300 dark:bg-gray-600"
+        }`}
+        aria-label={active ? "Active" : "Inactive"}
+      />
+      {stateLabel && (
+        <span className="text-[10px] font-semibold text-muted-foreground tracking-wide">
+          {stateLabel}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -92,7 +95,7 @@ type FilterKey =
   | "grand"
   | "upright";
 
-type SortKey = "make" | "last-tuned" | "client" | "created" | "type";
+type SortKey = "warm-leads" | "make" | "last-tuned" | "client" | "created" | "type";
 type SortDir = "asc" | "desc";
 
 const FILTER_LABELS: Record<FilterKey, string> = {
@@ -108,6 +111,7 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 };
 
 const SORT_LABELS: Record<SortKey, string> = {
+  "warm-leads": "Warm Leads First",
   make: "Make & Model",
   "last-tuned": "Last Tuned",
   client: "Client",
@@ -119,7 +123,7 @@ export default function PianosPage() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterKey>("active");
-  const [sortKey, setSortKey] = useState<SortKey>("last-tuned");
+  const [sortKey, setSortKey] = useState<SortKey>("warm-leads");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
   const { data: pianos, isLoading } = useQuery<Piano[]>({
@@ -177,6 +181,19 @@ export default function PianosPage() {
     result = result.slice().sort((a, b) => {
       let cmp = 0;
       switch (sortKey) {
+        case "warm-leads": {
+          const ma = getMonthsSince(a.lastTuned);
+          const mb = getMonthsSince(b.lastTuned);
+          const ta = warmLeadsTier(ma);
+          const tb = warmLeadsTier(mb);
+          if (ta !== tb) { cmp = ta - tb; break; }
+          // Within same tier, sort most overdue first
+          if (ma === null && mb === null) { cmp = 0; break; }
+          if (ma === null) { cmp = 1; break; }
+          if (mb === null) { cmp = -1; break; }
+          cmp = mb - ma; // higher months first within tier
+          break;
+        }
         case "make": {
           const am = [a.make, a.model, a.pianoType].filter(Boolean).join(" ");
           const bm = [b.make, b.model, b.pianoType].filter(Boolean).join(" ");
@@ -315,6 +332,22 @@ export default function PianosPage() {
           </span>
         )}
 
+        {/* Legend */}
+        <div className="hidden sm:flex items-center gap-3 ml-1">
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span className="w-2.5 h-2.5 rounded-sm bg-orange-100 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-800 inline-block" />
+            Prime (12–18 mo)
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span className="w-2.5 h-2.5 rounded-sm bg-yellow-100 dark:bg-yellow-950/40 border border-yellow-200 dark:border-yellow-800 inline-block" />
+            Due soon (10–11 mo)
+          </span>
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span className="w-2.5 h-2.5 rounded-sm bg-muted/60 border border-border inline-block" />
+            Deeply overdue (24+ mo)
+          </span>
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -354,7 +387,7 @@ export default function PianosPage() {
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
               <tr className="border-b">
-                <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground text-xs whitespace-nowrap w-24">
+                <th className="text-left px-4 py-2.5 font-semibold text-muted-foreground text-xs whitespace-nowrap w-16">
                   Status
                 </th>
                 <HeaderSort col="make" label="Make & Model" />
@@ -373,7 +406,7 @@ export default function PianosPage() {
               {isLoading ? (
                 Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b last:border-0">
-                    <td className="px-4 py-3"><Skeleton className="h-4 w-14" /></td>
+                    <td className="px-4 py-3"><Skeleton className="h-4 w-10" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-4 w-40" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-4 w-20" /></td>
                     <td className="px-4 py-3"><Skeleton className="h-4 w-16" /></td>
@@ -392,6 +425,8 @@ export default function PianosPage() {
               ) : (
                 filtered.map((piano) => {
                   const customer = customerMap.get(piano.customerId);
+                  const months = getMonthsSince(piano.lastTuned);
+                  const tierClass = getRowTierClass(months, piano.isActive);
                   const makeModel =
                     [piano.make, piano.model].filter(Boolean).join(" ") ||
                     piano.pianoType ||
@@ -401,12 +436,15 @@ export default function PianosPage() {
                   return (
                     <tr
                       key={piano.id}
-                      className="border-b last:border-0 hover:bg-muted/40 cursor-pointer transition-colors"
+                      className={`border-b last:border-0 hover:brightness-95 cursor-pointer transition-colors ${tierClass}`}
                       onClick={() => navigate(`/pianos/${piano.id}`)}
                       data-testid={`row-piano-${piano.id}`}
                     >
                       <td className="px-4 py-3">
-                        {tuningStatusBadge(piano.lastTuned, piano.isActive)}
+                        <StatusDot
+                          isActive={piano.isActive}
+                          state={customer?.state}
+                        />
                       </td>
                       <td className="px-4 py-3 font-medium">{displayName}</td>
                       <td className="px-4 py-3 text-muted-foreground font-mono text-xs">

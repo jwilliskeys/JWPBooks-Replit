@@ -26,7 +26,9 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Printer, Pencil, Trash2, Plus, X, CheckCircle, ArrowLeft, Mail, Download, DollarSign } from "lucide-react";
 import { EnterPaymentDialog } from "@/components/enter-payment-dialog";
+import { PhoneInput } from "@/components/phone-input";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings, CustomerContact } from "@shared/schema";
 
@@ -39,6 +41,7 @@ type LineItem = {
   unitPrice: string;
   taxes: string;
   lineTotal: string;
+  type?: "labor" | "parts";
 };
 
 function parseMDYY(dateStr: string): Date | null {
@@ -115,6 +118,7 @@ function buildLineItemsFromAppointment(appt: Appointment, catalog: ServiceCatalo
       unitPrice: price,
       taxes: "",
       lineTotal: price,
+      type: "labor" as const,
     }];
   }
 
@@ -129,6 +133,7 @@ function buildLineItemsFromAppointment(appt: Appointment, catalog: ServiceCatalo
       unitPrice: price,
       taxes: "",
       lineTotal: price,
+      type: "labor" as const,
     };
   });
 }
@@ -163,7 +168,7 @@ function defaultForm(): InvoiceFormState {
     invoiceDate: todayMDYY(),
     dueDate: todayMDYY(),
     status: "draft",
-    lineItems: [{ description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }],
+    lineItems: [{ description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00", type: "labor" as const }],
     subtotal: "$0.00",
     total: "$0.00",
     paidAmount: "$0.00",
@@ -187,6 +192,7 @@ function invoiceToForm(inv: Invoice): InvoiceFormState {
     unitPrice: formatDollar(parseDollar((li as any).unitPrice ?? "$0.00")),
     taxes: li.taxes ?? "",
     lineTotal: formatDollar(parseDollar((li as any).lineTotal ?? (li as any).unitPrice ?? "$0.00")),
+    type: (li.type === "parts" ? "parts" : "labor") as "labor" | "parts",
   }));
   if (lineItems.length === 0) {
     lineItems = [{ description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }];
@@ -395,7 +401,7 @@ export default function InvoiceDetailPage() {
   function addLineItem() {
     setForm(f => ({
       ...f,
-      lineItems: [...f.lineItems, { description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00" }],
+      lineItems: [...f.lineItems, { description: "", quantity: 1, unitPrice: "$0.00", taxes: "", lineTotal: "$0.00", type: "labor" as const }],
     }));
   }
 
@@ -778,11 +784,11 @@ export default function InvoiceDetailPage() {
                   className="text-sm resize-none h-16"
                   data-testid="input-customer-address"
                 />
-                <Input
+                <PhoneInput
                   value={form.customerPhone}
-                  onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))}
-                  placeholder="Phone"
-                  className="h-8 text-sm"
+                  onChange={v => setForm(f => ({ ...f, customerPhone: v }))}
+                  placeholder="(801)-555-1234"
+                  className="h-8 text-sm font-mono"
                   data-testid="input-customer-phone"
                 />
               </div>
@@ -794,7 +800,7 @@ export default function InvoiceDetailPage() {
                 )}
                 <div className="text-muted-foreground whitespace-pre-line">{displayData.customerAddress}</div>
                 {displayData.customerPhone && (
-                  <div className="text-muted-foreground">{displayData.customerPhone}</div>
+                  <div className="text-muted-foreground">{formatPhone(displayData.customerPhone)}</div>
                 )}
               </div>
             )}
@@ -825,7 +831,7 @@ export default function InvoiceDetailPage() {
                   <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Description</th>
                   <th className="text-left py-2 pr-4 font-semibold text-muted-foreground whitespace-nowrap">Quantity</th>
                   <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Subtotal</th>
-                  <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Taxes</th>
+                  <th className="text-left py-2 pr-4 font-semibold text-muted-foreground">Type</th>
                   <th className="text-right py-2 font-semibold text-muted-foreground">Line Total</th>
                   {(editMode || isNew) && <th className="py-2 w-8" />}
                 </tr>
@@ -873,7 +879,30 @@ export default function InvoiceDetailPage() {
                         <span className="tabular-nums">{li.lineTotal}</span>
                       )}
                     </td>
-                    <td className="py-2.5 pr-4 text-muted-foreground">—</td>
+                    <td className="py-2.5 pr-4">
+                      {editMode || isNew ? (
+                        <button
+                          type="button"
+                          onClick={() => updateLineItem(idx, "type", li.type === "parts" ? "labor" : "parts")}
+                          className={`text-[10px] px-2 py-1 rounded-full border font-medium transition-colors whitespace-nowrap ${
+                            li.type === "parts"
+                              ? "bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700"
+                              : "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-700"
+                          }`}
+                          data-testid={`toggle-line-type-${idx}`}
+                        >
+                          {li.type === "parts" ? "Parts" : "Labor"}
+                        </button>
+                      ) : (
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium whitespace-nowrap ${
+                          li.type === "parts"
+                            ? "text-amber-600 border-amber-200 dark:text-amber-400"
+                            : "text-blue-600 border-blue-200 dark:text-blue-400"
+                        }`}>
+                          {li.type === "parts" ? "Parts" : "Labor"}
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2.5 text-right tabular-nums font-medium">
                       {computeLineTotal(li.quantity, li.unitPrice)}
                     </td>

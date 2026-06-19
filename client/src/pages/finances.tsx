@@ -16,16 +16,23 @@ import {
 } from "recharts";
 import {
   DollarSign, TrendingUp, Car, Receipt, Plus, Trash2, Printer, Calculator,
-  CheckCircle2, Route, Paperclip, X,
+  CheckCircle2, Route, Paperclip, X, FileText, Download,
+  ClipboardCheck, ChevronDown, ExternalLink,
 } from "lucide-react";
 import { parseTimeToMinutes } from "@/lib/scheduling";
-import type { Invoice, MileageLog, BusinessExpense, Appointment, Customer } from "@shared/schema";
+import {
+  SCHEDULE_C_CATEGORIES,
+  getCatInfo,
+  IRS_MILEAGE_RATE as IRS_RATE,
+  SE_TAX_RATE,
+  type SchedCCat,
+} from "@/lib/schedule-c";
+import type { Invoice, MileageLog, BusinessExpense, Appointment, Customer, BankAccount, BankTransaction } from "@shared/schema";
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const IRS_RATE = 0.70;
-const SE_TAX_RATE = 0.153;
-const EXPENSE_CATEGORIES = ["Equipment", "Vehicle", "Marketing", "Office", "Software", "Meals", "Other"];
-const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
+const STANDARD_DEDUCTION = 15000; // 2026 single filer
+const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014"; // SLC home base (customer fallback)
+const MILEAGE_ORIGIN = "Somerville, MA"; // Boston mileage start point
 
 function buildCustomerAddress(cust: Customer | undefined): string {
   if (!cust) return HOME_ADDRESS;
@@ -180,72 +187,182 @@ const QUARTER_DUE_DATES: Record<number, string> = {
   4: "Jan 15 (next yr)",
 };
 
+const TAX_SAFE_HARBOR_RATE = 0.30;
+
 function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; loading: boolean }) {
+  const [showMath, setShowMath] = useState(false);
   const [incomeTaxRate, setIncomeTaxRate] = useState(22);
+  const [useStdDed, setUseStdDed] = useState(true);
   const currentYear = new Date().getFullYear();
 
-  const quarterlyData = useMemo(() => {
-    const quarters: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
-    invoices?.forEach((inv) => {
+  // YTD collected income (paid invoices this year)
+  const ytdCollected = useMemo(() => {
+    let total = 0;
+    invoices?.forEach(inv => {
       if (inv.status !== "paid") return;
       const date = parseDate(inv.invoiceDate);
       if (!date || date.getFullYear() !== currentYear) return;
-      const q = getQuarter(date);
-      quarters[q] += parseDollar(inv.paidAmount || inv.total);
+      total += parseDollar(inv.paidAmount || inv.total);
+    });
+    return total;
+  }, [invoices, currentYear]);
+
+  // Outstanding (billed but not yet paid)
+  const ytdOutstanding = useMemo(() => {
+    let total = 0;
+    invoices?.forEach(inv => {
+      if (inv.status === "paid") return;
+      const date = parseDate(inv.invoiceDate);
+      if (!date || date.getFullYear() !== currentYear) return;
+      total += parseDollar(inv.total);
+    });
+    return total;
+  }, [invoices, currentYear]);
+
+  const safeHarborTarget = ytdCollected * TAX_SAFE_HARBOR_RATE;
+
+  // Detailed quarterly math (hidden by default)
+  const quarterlyData = useMemo(() => {
+    const quarters: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
+    invoices?.forEach(inv => {
+      if (inv.status !== "paid") return;
+      const date = parseDate(inv.invoiceDate);
+      if (!date || date.getFullYear() !== currentYear) return;
+      quarters[getQuarter(date)] += parseDollar(inv.paidAmount || inv.total);
     });
     return quarters;
   }, [invoices, currentYear]);
 
-  const totalRate = SE_TAX_RATE + incomeTaxRate / 100;
+  function calcSetAside(income: number) {
+    const seTax = income * 0.9235 * SE_TAX_RATE;
+    const halfSE = seTax / 2;
+    const proratedStdDed = useStdDed ? STANDARD_DEDUCTION / 4 : 0;
+    const taxableIncome = Math.max(0, income - halfSE - proratedStdDed);
+    const incomeTax = taxableIncome * (incomeTaxRate / 100);
+    return { seTax, incomeTax, total: seTax + incomeTax };
+  }
+
+  const annualIncome = Object.values(quarterlyData).reduce((s, v) => s + v, 0);
+  const annualCalc = (() => {
+    const seTax = annualIncome * 0.9235 * SE_TAX_RATE;
+    const halfSE = seTax / 2;
+    const stdDed = useStdDed ? STANDARD_DEDUCTION : 0;
+    const taxableIncome = Math.max(0, annualIncome - halfSE - stdDed);
+    const incomeTax = taxableIncome * (incomeTaxRate / 100);
+    return { seTax, incomeTax, total: seTax + incomeTax };
+  })();
 
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base font-semibold flex items-center gap-2">
-          <Calculator className="h-4 w-4" /> Quarterly Tax Estimates
+          <Calculator className="h-4 w-4" /> Tax Auto-Pilot
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <Label className="text-xs text-muted-foreground whitespace-nowrap">Income tax bracket %</Label>
-          <Input
-            type="number"
-            min={0}
-            max={50}
-            value={incomeTaxRate}
-            onChange={e => setIncomeTaxRate(Number(e.target.value))}
-            className="w-20 h-7 text-sm"
-            data-testid="input-income-tax-rate"
-          />
-          <span className="text-xs text-muted-foreground">+ 15.3% SE = {(totalRate * 100).toFixed(1)}% total</span>
-        </div>
-        <div className="space-y-2">
-          {([1, 2, 3, 4] as const).map(q => {
-            const income = quarterlyData[q];
-            const setAside = income * totalRate;
-            return (
-              <div key={q} className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2">
-                <div>
-                  <span className="text-sm font-medium">Q{q} {currentYear}</span>
-                  <span className="text-xs text-muted-foreground ml-2">Due {QUARTER_DUE_DATES[q]}</span>
-                </div>
+        {loading ? (
+          <Skeleton className="h-28 w-full rounded-xl" />
+        ) : ytdCollected === 0 ? (
+          <div className="rounded-xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+            No paid invoices yet this year — your tax number will appear here once you collect income.
+          </div>
+        ) : (
+          <div className="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-900/10 px-4 py-4 space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+              Tax Safe Harbor
+            </p>
+            <p className="text-sm text-foreground leading-relaxed">
+              You've collected{" "}
+              <span className="font-bold">{fmt(ytdCollected)}</span> in income this year.
+              {ytdOutstanding > 0 && (
+                <> (<span className="text-muted-foreground">{fmt(ytdOutstanding)} still outstanding</span>)</>
+              )}
+            </p>
+            <div className="rounded-lg bg-amber-100 dark:bg-amber-900/30 px-3 py-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs text-amber-700/70 dark:text-amber-400/60">Transfer to tax savings</p>
+                <p className="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
+                  {fmt(safeHarborTarget)}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-amber-700/60 dark:text-amber-400/50">= 30% of income</p>
+                <p className="text-xs text-amber-700/60 dark:text-amber-400/50 mt-0.5">safe harbor rate</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Detailed math — hidden by default */}
+        <button
+          type="button"
+          onClick={() => setShowMath(v => !v)}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          data-testid="toggle-tax-math"
+        >
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${showMath ? "rotate-180" : ""}`} />
+          {showMath ? "Hide" : "View"} Detailed Tax Math
+        </button>
+
+        {showMath && (
+          <div className="space-y-3 border rounded-lg p-3 bg-muted/20">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">Income bracket %</Label>
+                <Input
+                  type="number" min={0} max={50}
+                  value={incomeTaxRate}
+                  onChange={e => setIncomeTaxRate(Number(e.target.value))}
+                  className="w-16 h-7 text-sm"
+                  data-testid="input-income-tax-rate"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setUseStdDed(v => !v)}
+                className={`flex items-center gap-1.5 text-xs rounded-full px-3 py-1 border transition-colors ${
+                  useStdDed ? "bg-primary/10 border-primary/40 text-primary font-medium" : "border-border text-muted-foreground hover:bg-muted/40"
+                }`}
+                data-testid="toggle-std-deduction"
+              >
+                {useStdDed ? "✓" : "○"} Std. deduction (${STANDARD_DEDUCTION.toLocaleString()})
+              </button>
+            </div>
+            <div className="space-y-1.5">
+              {([1, 2, 3, 4] as const).map(q => {
+                const income = quarterlyData[q];
+                const { seTax, incomeTax, total } = calcSetAside(income);
+                return (
+                  <div key={q} className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-xs">
+                    <div>
+                      <span className="font-medium">Q{q} {currentYear}</span>
+                      <span className="text-muted-foreground ml-2">Due {QUARTER_DUE_DATES[q]}</span>
+                    </div>
+                    <div className="text-right">
+                      {loading ? <Skeleton className="h-4 w-24" /> : (
+                        <>
+                          <p className="text-muted-foreground">Income: {fmt(income)}</p>
+                          <p className="text-muted-foreground">SE: {fmt(seTax)} · Inc: {fmt(incomeTax)}</p>
+                          <p className="font-semibold text-amber-600 dark:text-amber-400">Set aside: {fmt(total)}</p>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {!loading && annualIncome > 0 && (
+              <div className="flex justify-between items-center rounded-md bg-muted/60 px-3 py-2 text-xs">
+                <span className="font-medium">Annual IRS estimate {currentYear}</span>
                 <div className="text-right">
-                  {loading ? <Skeleton className="h-4 w-24" /> : (
-                    <>
-                      <p className="text-xs text-muted-foreground">Income: {fmt(income)}</p>
-                      <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">
-                        Set aside: {fmt(setAside)}
-                      </p>
-                    </>
-                  )}
+                  <p className="font-bold">{fmt(annualCalc.total)}</p>
+                  <p className="text-muted-foreground">SE: {fmt(annualCalc.seTax)} · Inc tax: {fmt(annualCalc.incomeTax)}</p>
                 </div>
               </div>
-            );
-          })}
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Estimates only — consult a tax professional. SE tax = 15.3%; adjust income bracket above.
-        </p>
+            )}
+            <p className="text-xs text-muted-foreground">Estimates only — consult your accountant. SE tax uses the 92.35% self-employment factor.</p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -274,7 +391,7 @@ function ItineraryDayRow({ dateStr, dayAppts, customerMap, loggedDates, onAdd, i
 
   const addresses = useMemo(() => {
     const apptAddresses = sortedAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
-    return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
+    return [MILEAGE_ORIGIN, ...apptAddresses, MILEAGE_ORIGIN];
   }, [sortedAppts, customerMap]);
 
   const { data: drivingData, isLoading } = useQuery<{ distances: number[] | null; durations: number[] | null; error?: string }>({
@@ -301,7 +418,7 @@ function ItineraryDayRow({ dateStr, dayAppts, customerMap, loggedDates, onAdd, i
 
   if (apiError || (unavailable && !isLoading)) return null;
 
-  const cities = [...new Set(dayAppts.map(a => customerMap.get(a.customerId)?.city).filter(Boolean))].join(", ");
+  const cities = Array.from(new Set(dayAppts.map(a => customerMap.get(a.customerId)?.city).filter(Boolean))).join(", ");
   const description = `Service calls${cities ? ` — ${cities}` : ""} (${friendlyDate(dateStr)})`;
   const count = dayAppts.length;
 
@@ -383,20 +500,26 @@ function MileageTab() {
 
   const itineraryDays = useMemo(() => {
     if (!appointments) return [];
+    // Show only the current week (Mon–Sun surrounding today)
     const now = new Date();
-    const past = new Date(now); past.setDate(past.getDate() - 60);
-    const future = new Date(now); future.setDate(future.getDate() + 30);
+    const dayOfWeek = now.getDay(); // 0 = Sun
+    const monday = new Date(now);
+    monday.setDate(now.getDate() - ((dayOfWeek + 6) % 7));
+    monday.setHours(0, 0, 0, 0);
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+    sunday.setHours(23, 59, 59, 999);
 
     const byDate = new Map<string, Appointment[]>();
     appointments.forEach(a => {
       const d = parseDate(a.date);
-      if (!d || d < past || d > future) return;
+      if (!d || d < monday || d > sunday) return;
       if (!byDate.has(a.date)) byDate.set(a.date, []);
       byDate.get(a.date)!.push(a);
     });
 
     return Array.from(byDate.entries())
-      .sort((a, b) => dateToSortKey(b[0]) - dateToSortKey(a[0]));
+      .sort((a, b) => dateToSortKey(a[0]) - dateToSortKey(b[0]));
   }, [appointments]);
 
   function handleAddFromItinerary(dateStr: string, miles: number, description: string) {
@@ -444,48 +567,18 @@ function MileageTab() {
         </div>
       )}
 
-      <div className="space-y-2">
+      {/* Log history — collapsed to a single summary line */}
+      <div className="flex items-center justify-between rounded-md bg-muted/30 px-3 py-2.5">
         <div className="flex items-center gap-2">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Log History</p>
-          <div className="flex-1 border-t" />
+          <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">Total YTD Deductible</span>
         </div>
         {logsLoading ? (
-          <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-        ) : logs && logs.length > 0 ? (
-          <div className="rounded-md border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/40">
-                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Date</th>
-                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Purpose</th>
-                  <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Miles</th>
-                  <th className="w-8" />
-                </tr>
-              </thead>
-              <tbody>
-                {[...logs].sort((a, b) => dateToSortKey(b.date) - dateToSortKey(a.date)).map(log => (
-                  <tr key={log.id} className="border-b last:border-0 hover:bg-muted/20" data-testid={`mileage-row-${log.id}`}>
-                    <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{log.date}</td>
-                    <td className="px-3 py-2 text-xs truncate max-w-[180px]">{log.description || "—"}</td>
-                    <td className="px-3 py-2 text-xs text-right font-medium">{parseFloat(log.miles).toLocaleString()}</td>
-                    <td className="px-2 py-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                        onClick={() => deleteMutation.mutate(log.id)}
-                        data-testid={`button-delete-mileage-${log.id}`}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Skeleton className="h-4 w-20" />
         ) : (
-          <p className="text-sm text-muted-foreground py-4 text-center">No mileage entries yet</p>
+          <span className="text-sm font-bold text-green-600 dark:text-green-400" data-testid="finances-ytd-deductible">
+            {fmt(deduction)}
+          </span>
         )}
       </div>
 
@@ -545,7 +638,7 @@ function ExpensesTab() {
   const [open, setOpen] = useState(false);
   const [yearFilter, setYearFilter] = useState(String(new Date().getFullYear()));
   const [categoryFilter, setCategoryFilter] = useState("All");
-  const [form, setForm] = useState({ date: todayStr(), description: "", category: "Equipment", amount: "" });
+  const [form, setForm] = useState({ date: todayStr(), description: "", category: "Supplies", amount: "" });
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
@@ -628,6 +721,11 @@ function ExpensesTab() {
 
   const ytdTotal = useMemo(() => forYear.reduce((s, e) => s + parseDollar(e.amount), 0), [forYear]);
 
+  const ytdDeductible = useMemo(() => forYear.reduce((s, e) => {
+    const info = getCatInfo(e.category);
+    return s + parseDollar(e.amount) * (info.deductPct / 100);
+  }, 0), [forYear]);
+
   const byCategory = useMemo(() => {
     const map: Record<string, number> = {};
     forYear.forEach(e => {
@@ -640,59 +738,77 @@ function ExpensesTab() {
     const win = window.open("", "_blank", "width=800,height=700");
     if (!win) return;
 
-    const rows = EXPENSE_CATEGORIES
+    // Group expenses by their IRS line, handling both old and new category names
+    const seen = new Set<string>();
+    const allCats = forYear.map(e => e.category).filter(c => { if (seen.has(c)) return false; seen.add(c); return true; });
+    const sortedCats = allCats.sort((a, b) => {
+      const la = getCatInfo(a).line;
+      const lb = getCatInfo(b).line;
+      return la.localeCompare(lb);
+    });
+
+    let totalDeductible = 0;
+    const rows = sortedCats
       .filter(cat => byCategory[cat])
       .map(cat => {
+        const info = getCatInfo(cat);
         const items = forYear.filter(e => e.category === cat);
         const catTotal = items.reduce((s, e) => s + parseDollar(e.amount), 0);
+        const catDeductible = catTotal * (info.deductPct / 100);
+        totalDeductible += catDeductible;
         const itemRows = items.map(e =>
           `<tr>
             <td style="padding:4px 8px;color:#555">${e.date}</td>
             <td style="padding:4px 8px">${e.description}</td>
             <td style="padding:4px 8px;text-align:right">${fmt(parseDollar(e.amount))}</td>
+            <td style="padding:4px 8px;text-align:right;color:#444">${info.deductPct < 100 ? fmt(parseDollar(e.amount) * info.deductPct / 100) : "—"}</td>
           </tr>`
         ).join("");
+        const headerLabel = `${info.line}: ${cat}${info.deductPct < 100 ? ` (${info.deductPct}% deductible)` : ""}`;
         return `
-          <tr><td colspan="3" style="background:#f5f5f5;font-weight:600;padding:6px 8px;border-top:2px solid #ddd">${cat}</td></tr>
+          <tr><td colspan="4" style="background:#f5f5f5;font-weight:600;padding:6px 8px;border-top:2px solid #ddd">${headerLabel}</td></tr>
           ${itemRows}
           <tr>
             <td colspan="2" style="padding:4px 8px;text-align:right;font-style:italic;color:#555">Subtotal</td>
             <td style="padding:4px 8px;text-align:right;font-weight:600">${fmt(catTotal)}</td>
+            <td style="padding:4px 8px;text-align:right;font-weight:600;color:#16a34a">${fmt(catDeductible)}</td>
           </tr>`;
       }).join("");
 
     win.document.write(`<!DOCTYPE html>
 <html>
 <head>
-  <title>Expense Report ${yearFilter}</title>
+  <title>Schedule C Expense Report ${yearFilter}</title>
   <style>
     body { font-family: Arial, sans-serif; font-size: 13px; margin: 40px; color: #222; }
     h1 { font-size: 18px; margin-bottom: 4px; }
     .meta { color: #666; font-size: 12px; margin-bottom: 24px; }
     table { width: 100%; border-collapse: collapse; }
     th { text-align: left; padding: 6px 8px; border-bottom: 2px solid #333; font-size: 12px; }
-    th:last-child { text-align: right; }
+    th:last-child, th:nth-last-child(2) { text-align: right; }
     .total-row td { border-top: 2px solid #333; font-size: 14px; font-weight: 700; padding: 8px; }
-    .total-row td:last-child { text-align: right; }
+    .total-row td:last-child, .total-row td:nth-last-child(2) { text-align: right; }
     @media print { button { display: none; } }
   </style>
 </head>
 <body>
-  <h1>Business Expense Report — ${yearFilter}</h1>
-  <p class="meta">John Willis Piano · Generated ${new Date().toLocaleDateString()}</p>
+  <h1>IRS Schedule C Expense Report — ${yearFilter}</h1>
+  <p class="meta">John Willis Piano · Generated ${new Date().toLocaleDateString()} · Expenses organized by Schedule C line</p>
   <table>
     <thead>
       <tr>
         <th>Date</th>
         <th>Description</th>
         <th style="text-align:right">Amount</th>
+        <th style="text-align:right">Deductible</th>
       </tr>
     </thead>
     <tbody>
       ${rows}
       <tr class="total-row">
-        <td colspan="2">Total ${yearFilter} Expenses</td>
+        <td colspan="2">Total ${yearFilter} Deductible Expenses</td>
         <td>${fmt(ytdTotal)}</td>
+        <td style="color:#16a34a">${fmt(totalDeductible)}</td>
       </tr>
     </tbody>
   </table>
@@ -701,6 +817,51 @@ function ExpensesTab() {
 </body>
 </html>`);
     win.document.close();
+  }
+
+  function handleScheduleCExport() {
+    const rows: string[] = [
+      `"IRS Schedule C Summary — ${yearFilter} — John Willis Piano"`,
+      `"Generated: ${new Date().toLocaleDateString()}"`,
+      `""`,
+      `"IRS Line","Category","Total Spent","Deductible Amount","Notes"`,
+    ];
+
+    // Group by IRS line
+    const catMap = new Map<string, { cat: string; info: SchedCCat; exps: BusinessExpense[] }>();
+    for (const exp of forYear) {
+      const info = getCatInfo(exp.category);
+      const key = info.line + "__" + exp.category;
+      if (!catMap.has(key)) catMap.set(key, { cat: exp.category, info, exps: [] });
+      catMap.get(key)!.exps.push(exp);
+    }
+
+    let totalSpent = 0;
+    let totalDeductible = 0;
+    catMap.forEach(({ cat, info, exps }) => {
+      const spent = exps.reduce((s, e) => s + parseDollar(e.amount), 0);
+      const ded = spent * (info.deductPct / 100);
+      totalSpent += spent;
+      totalDeductible += ded;
+      const note = info.deductPct < 100 ? `${info.deductPct}% deductible` : "";
+      rows.push(`"${info.line}","${cat}","${spent.toFixed(2)}","${ded.toFixed(2)}","${note}"`);
+    });
+
+    rows.push(`"","","","",""`);
+    rows.push(`"Line 9","Mileage (see Mileage log)","(see mileage tab)","${IRS_RATE}/mi × miles","IRS standard mileage rate"`);
+    rows.push(`"","","","",""`);
+    rows.push(`"TOTAL","All expense deductions","${totalSpent.toFixed(2)}","${totalDeductible.toFixed(2)}",""`);
+
+    const csv = rows.join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `schedule-c-${yearFilter}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   const usedCategories = Object.keys(byCategory);
@@ -728,16 +889,19 @@ function ExpensesTab() {
           </Select>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">
-              YTD: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
+              Spent: <span className="font-semibold text-foreground" data-testid="finances-ytd-expenses">{fmt(ytdTotal)}</span>
             </span>
             <span className="text-xs text-muted-foreground">
-              Deductible: <span className="font-semibold text-green-600 dark:text-green-400">{fmt(ytdTotal)}</span>
+              Deductible: <span className="font-semibold text-green-600 dark:text-green-400">{fmt(ytdDeductible)}</span>
             </span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" size="sm" onClick={handleScheduleCExport} data-testid="button-schedule-c-export">
+            <Download className="h-4 w-4 mr-1" /> Schedule C CSV
+          </Button>
           <Button variant="outline" size="sm" onClick={handlePrintReport} data-testid="button-print-report">
-            <Printer className="h-4 w-4 mr-1" /> Download Report
+            <Printer className="h-4 w-4 mr-1" /> Print Report
           </Button>
           <Button size="sm" onClick={() => setOpen(true)} data-testid="button-add-expense">
             <Plus className="h-4 w-4 mr-1" /> Add Expense
@@ -747,20 +911,24 @@ function ExpensesTab() {
 
       {usedCategories.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {usedCategories.map(cat => (
-            <button
-              key={cat}
-              onClick={() => setCategoryFilter(f => f === cat ? "All" : cat)}
-              data-testid={`badge-category-${cat.toLowerCase()}`}
-            >
-              <Badge
-                variant={categoryFilter === cat ? "default" : "secondary"}
-                className="text-xs cursor-pointer"
+          {usedCategories.map(cat => {
+            const info = getCatInfo(cat);
+            const ded = byCategory[cat] * (info.deductPct / 100);
+            return (
+              <button
+                key={cat}
+                onClick={() => setCategoryFilter(f => f === cat ? "All" : cat)}
+                data-testid={`badge-category-${cat.toLowerCase().replace(/\s+/g, '-')}`}
               >
-                {cat}: {fmt(byCategory[cat])}
-              </Badge>
-            </button>
-          ))}
+                <Badge
+                  variant={categoryFilter === cat ? "default" : "secondary"}
+                  className="text-xs cursor-pointer"
+                >
+                  {info.line}: {cat} · {fmt(ded)}{info.deductPct < 100 ? ` (${info.deductPct}%)` : ""}
+                </Badge>
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -785,7 +953,8 @@ function ExpensesTab() {
                   <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{exp.date}</td>
                   <td className="px-3 py-2 text-xs truncate max-w-[140px]">{exp.description}</td>
                   <td className="px-3 py-2">
-                    <Badge variant="outline" className="text-[10px]">{exp.category}</Badge>
+                    <Badge variant="outline" className="text-[10px]">{getCatInfo(exp.category).line}</Badge>
+                    <span className="ml-1 text-[10px] text-muted-foreground hidden sm:inline">{exp.category}</span>
                   </td>
                   <td className="px-3 py-2 text-xs text-right font-medium">{fmt(parseDollar(exp.amount))}</td>
                   <td className="px-2 py-2">
@@ -851,11 +1020,16 @@ function ExpensesTab() {
             <div>
               <Label className="text-xs">Category</Label>
               <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
-                <SelectTrigger data-testid="select-expense-category">
+                <SelectTrigger data-testid="select-expense-category" className="text-base md:text-sm">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {EXPENSE_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                  {SCHEDULE_C_CATEGORIES.map(c => (
+                    <SelectItem key={c.label} value={c.label} className="py-3 sm:py-1.5">
+                      <span className="text-muted-foreground text-xs mr-1.5">{c.line}</span>
+                      {c.label}{c.deductPct < 100 ? ` (${c.deductPct}%)` : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -957,7 +1131,379 @@ function ExpensesTab() {
   );
 }
 
-function DeductiblesPanel() {
+function BankFeedTab({ invoices }: { invoices: Invoice[] | undefined }) {
+  const { toast } = useToast();
+  const [linking, setLinking] = useState(false);
+  const [syncing, setSyncing] = useState<number | null>(null);
+
+  const { data: plaidStatus } = useQuery<{ enabled: boolean; env: string; message: string }>({
+    queryKey: ["/api/plaid/status"],
+    staleTime: 60_000,
+  });
+
+  const { data: accounts, refetch: refetchAccounts } = useQuery<BankAccount[]>({
+    queryKey: ["/api/bank-accounts"],
+    enabled: plaidStatus?.enabled === true,
+  });
+
+  const { data: transactions, refetch: refetchTxns } = useQuery<BankTransaction[]>({
+    queryKey: ["/api/bank-transactions"],
+    enabled: plaidStatus?.enabled === true,
+  });
+
+  const tagMutation = useMutation({
+    mutationFn: ({ id, tag, cat }: { id: number; tag: string; cat?: string }) =>
+      apiRequest("PATCH", `/api/bank-transactions/${id}`, { businessTag: tag, schedCCategory: cat ?? null }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions"] }),
+    onError: () => toast({ title: "Failed to save", variant: "destructive" }),
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/bank-accounts/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/bank-transactions"] });
+      toast({ title: "Account disconnected" });
+    },
+    onError: () => toast({ title: "Failed to disconnect", variant: "destructive" }),
+  });
+
+  async function handleSync(accountId: number) {
+    setSyncing(accountId);
+    try {
+      const res = await apiRequest("POST", `/api/bank-accounts/${accountId}/sync`, {});
+      const data = await res.json() as { synced: number };
+      await refetchTxns();
+      toast({ title: `Synced ${data.synced} new transaction${data.synced !== 1 ? "s" : ""}` });
+    } catch {
+      toast({ title: "Sync failed", variant: "destructive" });
+    } finally {
+      setSyncing(null);
+    }
+  }
+
+  async function handleConnectAccount() {
+    setLinking(true);
+    try {
+      const res = await apiRequest("POST", "/api/plaid/link-token", {});
+      const { link_token } = await res.json() as { link_token: string };
+
+      // Load Plaid Link SDK dynamically
+      await new Promise<void>((resolve, reject) => {
+        if ((window as any).Plaid) { resolve(); return; }
+        const script = document.createElement("script");
+        script.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+        script.onload = () => resolve();
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+
+      const plaidLink = (window as any).Plaid.create({
+        token: link_token,
+        onSuccess: async (publicToken: string, metadata: any) => {
+          const accounts = (metadata.accounts ?? []).map((a: any) => ({
+            id: a.id,
+            name: a.name,
+            type: a.subtype ?? a.type,
+            mask: a.mask,
+          }));
+          await apiRequest("POST", "/api/plaid/exchange-token", {
+            public_token: publicToken,
+            institution_name: metadata.institution?.name ?? null,
+            accounts,
+          });
+          await refetchAccounts();
+          toast({ title: "Account connected! Tap Sync to pull transactions." });
+        },
+        onExit: () => setLinking(false),
+        onEvent: () => {},
+      });
+      plaidLink.open();
+    } catch (e: any) {
+      toast({ title: e?.message ?? "Failed to open bank connection", variant: "destructive" });
+      setLinking(false);
+    }
+  }
+
+  // Auto-match transactions to outstanding invoices by amount
+  const invoiceAmountMap = useMemo(() => {
+    const map = new Map<string, Invoice>();
+    (invoices ?? []).filter(inv => inv.status !== "paid").forEach(inv => {
+      const amount = parseDollar(inv.total).toFixed(2);
+      map.set(amount, inv);
+    });
+    return map;
+  }, [invoices]);
+
+  const reviewQueue = useMemo(() =>
+    (transactions ?? []).filter(t => !t.businessTag && !t.pending),
+    [transactions]
+  );
+
+  const businessTxns = useMemo(() =>
+    (transactions ?? []).filter(t => t.businessTag === "business"),
+    [transactions]
+  );
+
+  if (!plaidStatus?.enabled) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-dashed p-6 text-center space-y-3">
+          <div className="text-2xl">🏦</div>
+          <p className="font-semibold text-sm">Bank Feed Not Configured</p>
+          <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+            {plaidStatus?.message ?? "Add PLAID_CLIENT_ID and PLAID_SECRET to your .env file to enable automatic transaction import from America First, Apple Card, and Amazon."}
+          </p>
+          <div className="rounded-md bg-muted/40 p-3 text-left text-xs font-mono space-y-1 max-w-sm mx-auto">
+            <p className="text-muted-foreground"># Add to .env</p>
+            <p>PLAID_CLIENT_ID=your_client_id</p>
+            <p>PLAID_SECRET=your_secret_key</p>
+            <p>PLAID_ENV=sandbox</p>
+            <p className="mt-2 text-muted-foreground"># Then run:</p>
+            <p>npm run db:push</p>
+          </div>
+          <p className="text-xs text-muted-foreground">Get free API keys at <strong>plaid.com/developers</strong>. Supports America First, Apple Card (via Apple Finance Kit), and Amazon.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Connected accounts */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Connected Accounts</p>
+          <Button size="sm" onClick={handleConnectAccount} disabled={linking} data-testid="button-connect-bank">
+            <Plus className="h-4 w-4 mr-1" />
+            {linking ? "Connecting…" : "Connect Account"}
+          </Button>
+        </div>
+        {!accounts || accounts.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2 text-center">No accounts connected yet. Click "Connect Account" to link America First, Apple Card, or Amazon.</p>
+        ) : (
+          <div className="rounded-md border overflow-hidden">
+            {accounts.map(acct => (
+              <div key={acct.id} className="flex items-center justify-between px-3 py-2 border-b last:border-0 hover:bg-muted/20">
+                <div>
+                  <p className="text-sm font-medium">{acct.institutionName} — {acct.accountName}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{acct.accountType} ···{acct.accountMask}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={syncing === acct.id}
+                    onClick={() => handleSync(acct.id)}
+                    data-testid={`button-sync-account-${acct.id}`}
+                  >
+                    {syncing === acct.id ? "Syncing…" : "Sync"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs text-muted-foreground hover:text-destructive"
+                    onClick={() => disconnectMutation.mutate(acct.id)}
+                    data-testid={`button-disconnect-account-${acct.id}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Review queue */}
+      {reviewQueue.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Review Queue</p>
+            <Badge variant="secondary" className="text-xs">{reviewQueue.length} unreviewed</Badge>
+            <div className="flex-1 border-t" />
+          </div>
+          <p className="text-xs text-muted-foreground -mt-1">Mark each transaction as Business or Personal. Business transactions are tracked against your Schedule C.</p>
+          <div className="rounded-md border overflow-hidden">
+            {reviewQueue.slice(0, 30).map(txn => {
+              const amt = parseFloat(txn.amount);
+              const isDebit = amt > 0;
+              const matchedInvoice = invoiceAmountMap.get(Math.abs(amt).toFixed(2));
+              return (
+                <div key={txn.id} className="border-b last:border-0 px-3 py-2.5 hover:bg-muted/20" data-testid={`txn-row-${txn.id}`}>
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{txn.merchantName ?? txn.description ?? "Unknown"}</p>
+                      <p className="text-xs text-muted-foreground">{txn.date} · {txn.category}</p>
+                      {matchedInvoice && (
+                        <p className="text-xs text-green-600 dark:text-green-400 mt-0.5">
+                          💡 Matches Invoice #{matchedInvoice.invoiceNumber} ({matchedInvoice.customerName})
+                        </p>
+                      )}
+                    </div>
+                    <span className={`text-sm font-semibold tabular-nums shrink-0 ${isDebit ? "text-red-600 dark:text-red-400" : "text-green-600 dark:text-green-400"}`}>
+                      {isDebit ? "-" : "+"}{fmt(Math.abs(amt))}
+                    </span>
+                  </div>
+                  <div className="flex gap-2 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400"
+                      onClick={() => tagMutation.mutate({ id: txn.id, tag: "business" })}
+                      disabled={tagMutation.isPending}
+                      data-testid={`button-tag-business-${txn.id}`}
+                    >
+                      Business
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs"
+                      onClick={() => tagMutation.mutate({ id: txn.id, tag: "personal" })}
+                      disabled={tagMutation.isPending}
+                      data-testid={`button-tag-personal-${txn.id}`}
+                    >
+                      Personal
+                    </Button>
+                    {isDebit && (
+                      <Select onValueChange={cat => tagMutation.mutate({ id: txn.id, tag: "business", cat })}>
+                        <SelectTrigger className="h-7 w-36 text-xs">
+                          <SelectValue placeholder="→ Sched C…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SCHEDULE_C_CATEGORIES.map(c => (
+                            <SelectItem key={c.label} value={c.label} className="text-xs">
+                              {c.line}: {c.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {reviewQueue.length > 30 && (
+            <p className="text-xs text-muted-foreground text-center">Showing 30 of {reviewQueue.length} — sync more or review these first.</p>
+          )}
+        </div>
+      )}
+
+      {/* Business summary */}
+      {businessTxns.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Business Transactions</p>
+            <div className="flex-1 border-t" />
+          </div>
+          <div className="rounded-md bg-muted/40 px-3 py-2.5 flex justify-between items-center">
+            <span className="text-sm">{businessTxns.length} transactions tagged as Business</span>
+            <span className="text-sm font-bold text-red-600 dark:text-red-400">
+              {fmt(businessTxns.filter(t => parseFloat(t.amount) > 0).reduce((s, t) => s + parseFloat(t.amount), 0))} expenses
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!accounts?.length && reviewQueue.length === 0 && (
+        <p className="text-xs text-muted-foreground text-center py-2">Connect an account above, then sync to pull in transactions.</p>
+      )}
+    </div>
+  );
+}
+
+function SalesTaxTab({ invoices }: { invoices: Invoice[] | undefined }) {
+  const [yearFilter, setYearFilter] = useState(String(new Date().getFullYear()));
+
+  const years = useMemo(() => {
+    const set = new Set<string>([String(new Date().getFullYear())]);
+    invoices?.forEach(inv => {
+      const d = parseDate(inv.invoiceDate);
+      if (d) set.add(String(d.getFullYear()));
+    });
+    return Array.from(set).sort((a, b) => parseInt(b) - parseInt(a));
+  }, [invoices]);
+
+  const yearInvoices = useMemo(() =>
+    (invoices ?? []).filter(inv => {
+      const d = parseDate(inv.invoiceDate);
+      return d && String(d.getFullYear()) === yearFilter && inv.status === "paid";
+    }),
+    [invoices, yearFilter]
+  );
+
+  const { laborRevenue, partsRevenue, unknownRevenue } = useMemo(() => {
+    let labor = 0, parts = 0, unknown = 0;
+    yearInvoices.forEach(inv => {
+      let items: Array<{ lineTotal?: string; type?: string }> = [];
+      try { items = JSON.parse(inv.lineItems); } catch {}
+      items.forEach(li => {
+        const amount = parseDollar(li.lineTotal ?? "0");
+        if (li.type === "parts") parts += amount;
+        else if (li.type === "labor") labor += amount;
+        else unknown += amount;
+      });
+    });
+    return { laborRevenue: labor, partsRevenue: parts, unknownRevenue: unknown };
+  }, [yearInvoices]);
+
+  const total = laborRevenue + partsRevenue + unknownRevenue;
+  const pct = (n: number) => total > 0 ? Math.round(n / total * 100) : 0;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Select value={yearFilter} onValueChange={setYearFilter}>
+          <SelectTrigger className="w-24 h-8 text-sm" data-testid="select-salestax-year">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {years.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <span className="text-xs text-muted-foreground">Paid invoices only · Tag line items as Labor/Parts on each invoice to populate this report</span>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="rounded-md bg-muted/40 p-3">
+          <p className="text-xs text-muted-foreground mb-1">Labor Revenue</p>
+          <p className="text-sm font-bold text-green-600 dark:text-green-400">{fmt(laborRevenue)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{pct(laborRevenue)}% · Non-taxable (most states)</p>
+        </div>
+        <div className="rounded-md bg-muted/40 p-3">
+          <p className="text-xs text-muted-foreground mb-1">Parts Revenue</p>
+          <p className="text-sm font-bold text-amber-600 dark:text-amber-400">{fmt(partsRevenue)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{pct(partsRevenue)}% · Collect &amp; remit sales tax</p>
+        </div>
+        <div className="rounded-md bg-muted/40 p-3">
+          <p className="text-xs text-muted-foreground mb-1">Untagged</p>
+          <p className="text-sm font-bold">{fmt(unknownRevenue)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{pct(unknownRevenue)}% · Edit invoices to tag</p>
+        </div>
+      </div>
+
+      {total > 0 && (
+        <div className="rounded-md border px-3 py-2.5 space-y-1.5 text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">Total Revenue</span><span className="font-semibold">{fmt(total)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Labor (non-taxable)</span><span className="text-green-600 dark:text-green-400">{fmt(laborRevenue)}</span></div>
+          <div className="flex justify-between border-t pt-1.5"><span className="font-medium">Parts taxable revenue</span><span className="font-semibold text-amber-600 dark:text-amber-400">{fmt(partsRevenue)}</span></div>
+        </div>
+      )}
+
+      <div className="rounded-md bg-muted/20 border border-dashed p-3 text-xs text-muted-foreground space-y-1">
+        <p className="font-medium text-foreground text-xs">Sales Tax Rates</p>
+        <p><strong>MA:</strong> Labor generally non-taxable; piano parts &amp; supplies sold to customers taxable at <strong>6.25%</strong>.</p>
+        <p><strong>UT:</strong> Labor non-taxable; tangible parts taxable at local rate (~<strong>7.1%</strong> Salt Lake County).</p>
+        <p className="italic">Tag each line item as "Labor" or "Parts" on invoices to make this accurate.</p>
+      </div>
+    </div>
+  );
+}
+
+function DeductiblesPanel({ invoices }: { invoices: Invoice[] | undefined }) {
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -967,9 +1513,11 @@ function DeductiblesPanel() {
       </CardHeader>
       <CardContent>
         <Tabs defaultValue="mileage">
-          <TabsList className="mb-4">
+          <TabsList className="mb-4 flex-wrap h-auto gap-1">
             <TabsTrigger value="mileage" data-testid="tab-mileage"><Car className="h-3.5 w-3.5 mr-1.5" />Mileage</TabsTrigger>
             <TabsTrigger value="expenses" data-testid="tab-expenses"><Receipt className="h-3.5 w-3.5 mr-1.5" />Expenses</TabsTrigger>
+            <TabsTrigger value="sales-tax" data-testid="tab-sales-tax"><FileText className="h-3.5 w-3.5 mr-1.5" />Sales Tax</TabsTrigger>
+            <TabsTrigger value="bank-feed" data-testid="tab-bank-feed"><DollarSign className="h-3.5 w-3.5 mr-1.5" />Bank Feed</TabsTrigger>
           </TabsList>
           <TabsContent value="mileage">
             <MileageTab />
@@ -977,8 +1525,173 @@ function DeductiblesPanel() {
           <TabsContent value="expenses">
             <ExpensesTab />
           </TabsContent>
+          <TabsContent value="sales-tax">
+            <SalesTaxTab invoices={invoices} />
+          </TabsContent>
+          <TabsContent value="bank-feed">
+            <BankFeedTab invoices={invoices} />
+          </TabsContent>
         </Tabs>
       </CardContent>
+    </Card>
+  );
+}
+
+// ─── Business Setup Checklist ────────────────────────────────────────────────
+
+const BUSINESS_CHECKLIST: { id: string; title: string; desc: string; link?: string }[] = [
+  {
+    id: "biz-cert",
+    title: "File 'John Willis Piano' DBA with Somerville City Clerk",
+    desc: "Must be notarized. Renews every 4 years. ~$40 fee.",
+    link: "https://www.somervillema.gov/departments/programs/doing-business-somerville",
+  },
+  {
+    id: "ein",
+    title: "Get a free EIN from the IRS",
+    desc: "Instant online. Replaces your SSN on W-9s and business bank account applications.",
+    link: "https://www.irs.gov/businesses/small-businesses-self-employed/apply-for-an-employer-identification-number-ein-online",
+  },
+  {
+    id: "biz-bank",
+    title: "Open a dedicated Business Checking Account",
+    desc: "Keeps personal and business money separate — essential for clean tax filing.",
+  },
+  {
+    id: "withholding",
+    title: "Set up auto-withholding (30%) for estimated taxes",
+    desc: "Transfer 30% of every payment you receive into a separate savings account. The Tax Auto-Pilot widget above tracks your target.",
+  },
+  {
+    id: "masstaxconnect",
+    title: "Register with MassTaxConnect (for parts/supplies sales tax)",
+    desc: "Only required if you sell piano parts. Labor is generally non-taxable in MA. Free to register.",
+    link: "https://mtc.dor.state.ma.us/",
+  },
+  {
+    id: "google-biz",
+    title: "Create Google Business Profile",
+    desc: "Shows up in local searches and on Google Maps. Free — takes 15 minutes.",
+    link: "https://business.google.com/",
+  },
+  {
+    id: "sep-ira",
+    title: "Establish SEP-IRA or Solo 401(k)",
+    desc: "Contribute up to 25% of net self-employment income pre-tax. One of the biggest deductions available to a solo operator.",
+    link: "https://www.irs.gov/retirement-plans/sep-plan-faqs",
+  },
+];
+
+const CHECKLIST_STORAGE_KEY = "jwp-biz-checklist-v2";
+
+function BusinessSetupChecklist() {
+  const [open, setOpen] = useState(true);
+  const [checked, setChecked] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(CHECKLIST_STORAGE_KEY) ?? "{}") as Record<string, boolean>;
+    } catch {
+      return {};
+    }
+  });
+
+  function toggle(id: string) {
+    const next = { ...checked, [id]: !checked[id] };
+    setChecked(next);
+    try { localStorage.setItem(CHECKLIST_STORAGE_KEY, JSON.stringify(next)); } catch {}
+  }
+
+  const total = BUSINESS_CHECKLIST.length;
+  const done = BUSINESS_CHECKLIST.filter(i => checked[i.id]).length;
+  const allDone = done === total;
+
+  // When all done → shrink to an unobtrusive badge
+  if (allDone) {
+    return (
+      <div className="flex items-center gap-2 px-1">
+        <Badge variant="outline" className="text-xs text-green-600 dark:text-green-400 border-green-300 dark:border-green-700 font-normal gap-1.5 py-1 px-2.5">
+          <CheckCircle2 className="h-3 w-3" /> Setup Complete
+        </Badge>
+        <button
+          type="button"
+          onClick={() => {
+            const last = BUSINESS_CHECKLIST[BUSINESS_CHECKLIST.length - 1];
+            toggle(last.id); // uncheck last item to reopen
+          }}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          Edit
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        className="pb-3 cursor-pointer select-none"
+        onClick={() => setOpen(o => !o)}
+      >
+        <CardTitle className="text-base font-semibold flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            <ClipboardCheck className="h-4 w-4" /> Business Setup
+          </span>
+          <span className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground font-normal">{done}/{total}</span>
+            <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className="h-full bg-green-500 rounded-full transition-all duration-300"
+                style={{ width: `${(done / total) * 100}%` }}
+              />
+            </div>
+            <ChevronDown
+              className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+            />
+          </span>
+        </CardTitle>
+      </CardHeader>
+
+      {open && (
+        <CardContent className="space-y-2 pt-0">
+          {BUSINESS_CHECKLIST.map(item => (
+            <div
+              key={item.id}
+              className={`flex items-start gap-3 rounded-lg border px-3 py-3 cursor-pointer transition-all duration-150 ${
+                checked[item.id]
+                  ? "bg-muted/30 opacity-50"
+                  : "hover:bg-muted/20 hover:border-border/80"
+              }`}
+              onClick={() => toggle(item.id)}
+            >
+              <CheckCircle2
+                className={`h-4 w-4 mt-0.5 flex-shrink-0 transition-colors duration-150 ${
+                  checked[item.id] ? "text-green-500" : "text-muted-foreground/25"
+                }`}
+              />
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-medium leading-snug ${
+                  checked[item.id] ? "line-through text-muted-foreground" : ""
+                }`}>
+                  {item.title}
+                </p>
+                {!checked[item.id] && (
+                  <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{item.desc}</p>
+                )}
+                {item.link && !checked[item.id] && (
+                  <a
+                    href={item.link}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <ExternalLink className="h-3 w-3" /> Open
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      )}
     </Card>
   );
 }
@@ -1004,7 +1717,8 @@ export default function FinancesPage() {
         <TaxPanel invoices={invoices} loading={invoicesLoading} />
       </div>
 
-      <DeductiblesPanel />
+      <DeductiblesPanel invoices={invoices} />
+      <BusinessSetupChecklist />
     </div>
   );
 }

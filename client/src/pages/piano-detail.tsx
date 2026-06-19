@@ -50,11 +50,12 @@ import {
   ChevronLeft,
   CheckCircle2,
   Circle,
+  ClipboardList,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import type { Piano, Customer, ServiceRecord, Invoice, Appointment } from "@shared/schema";
+import type { Piano, Customer, ServiceRecord, Invoice, Appointment, Inspection } from "@shared/schema";
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 
@@ -138,13 +139,15 @@ function tuningStatusClass(months: number | null): { label: string; cls: string 
 type TimelineEntry =
   | { kind: "service"; date: string; sortTs: number; record: ServiceRecord }
   | { kind: "invoice"; date: string; sortTs: number; invoice: Invoice }
-  | { kind: "appointment"; date: string; sortTs: number; appointment: Appointment };
+  | { kind: "appointment"; date: string; sortTs: number; appointment: Appointment }
+  | { kind: "inspection"; date: string; sortTs: number; inspection: Inspection };
 
-function buildTimeline(services: ServiceRecord[], invoices: Invoice[], appointments: Appointment[]): TimelineEntry[] {
+function buildTimeline(services: ServiceRecord[], invoices: Invoice[], appointments: Appointment[], inspections: Inspection[]): TimelineEntry[] {
   return [
     ...services.map((r): TimelineEntry => ({ kind: "service", date: r.serviceDate, sortTs: parseSortTs(r.serviceDate), record: r })),
     ...invoices.map((inv): TimelineEntry => ({ kind: "invoice", date: inv.invoiceDate, sortTs: parseSortTs(inv.invoiceDate), invoice: inv })),
     ...appointments.map((a): TimelineEntry => ({ kind: "appointment", date: a.date, sortTs: parseSortTs(a.date), appointment: a })),
+    ...inspections.map((ins): TimelineEntry => ({ kind: "inspection", date: ins.inspectionDate, sortTs: parseSortTs(ins.inspectionDate), inspection: ins })),
   ].sort((a, b) => b.sortTs - a.sortTs);
 }
 
@@ -164,7 +167,7 @@ export default function PianoDetail() {
 
   const [showServiceDialog, setShowServiceDialog] = useState(false);
   const [editingServiceId, setEditingServiceId] = useState<number | null>(null);
-  const [serviceForm, setServiceForm] = useState({ serviceDate: "", serviceType: "tuning", notes: "", cost: "" });
+  const [serviceForm, setServiceForm] = useState({ serviceDate: "", serviceType: "other", notes: "", cost: "" });
 
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
   const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
@@ -190,6 +193,11 @@ export default function PianoDetail() {
   const { data: pianoAppointments } = useQuery<Appointment[]>({
     queryKey: ["/api/pianos", pianoId, "appointments"],
     enabled: !!pianoId,
+  });
+  const { data: customerInspections } = useQuery<Inspection[]>({
+    queryKey: ["/api/customers", pianoData?.piano?.customerId, "inspections"],
+    queryFn: () => fetch(`/api/customers/${pianoData!.piano.customerId}/inspections`).then(r => r.json()),
+    enabled: !!pianoData?.piano?.customerId,
   });
 
   const piano = pianoData?.piano;
@@ -313,7 +321,8 @@ export default function PianoDetail() {
   const nextScheduledAppt = (pianoAppointments ?? [])
     .filter((a) => a.status !== "cancelled" && parseSortTs(a.date) >= startOfToday.getTime())
     .sort((a, b) => parseSortTs(a.date) - parseSortTs(b.date))[0] ?? null;
-  const timeline = buildTimeline(serviceRecords ?? [], pianoInvoices ?? [], pianoAppointments ?? []);
+  const pianoInspections = (customerInspections ?? []).filter(ins => ins.pianoId === piano?.id);
+  const timeline = buildTimeline(serviceRecords ?? [], pianoInvoices ?? [], pianoAppointments ?? [], pianoInspections);
   const futureEntries = timeline.filter((e) => e.sortTs > nowTs);
   const pastEntries = timeline.filter((e) => e.sortTs <= nowTs);
 
@@ -321,7 +330,7 @@ export default function PianoDetail() {
   const openAddService = () => {
     setServiceForm({
       serviceDate: new Date().toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }),
-      serviceType: "tuning",
+      serviceType: "other",
       notes: "",
       cost: "",
     });
@@ -508,6 +517,47 @@ export default function PianoDetail() {
         </div>
       );
     }
+
+    if (entry.kind === "inspection") {
+      const ins = entry.inspection;
+      const statusColors: Record<string, string> = {
+        pending: "bg-yellow-50 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300",
+        approved: "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300",
+        declined: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
+        converted: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+      };
+      const statusColor = statusColors[ins.status ?? "pending"] ?? statusColors.pending;
+      return (
+        <div key={`ins-${ins.id}`}>
+          {showYear && <p className="text-xs font-semibold text-muted-foreground pt-3 pb-1 px-1">{yearLabel}</p>}
+          <Link href="/inspections">
+            <div className="rounded-lg border bg-card hover:bg-muted/40 transition-colors cursor-pointer mb-2" data-testid={`timeline-inspection-${ins.id}`}>
+              <div className="p-3 flex gap-3 items-start">
+                <div className="h-8 w-8 shrink-0 rounded-md bg-amber-50 dark:bg-amber-950 flex items-center justify-center">
+                  <ClipboardList className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                      {ins.type === "estimate" ? "Estimate" : "Inspection"}
+                    </span>
+                    <Badge className={`text-[10px] px-1.5 py-0 border-0 capitalize ${statusColor}`}>{ins.status}</Badge>
+                  </div>
+                  {ins.summary && <p className="text-sm mt-0.5 line-clamp-2">{ins.summary}</p>}
+                  <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground flex-wrap">
+                    <span>{ins.inspectionDate}</span>
+                    {ins.estimatedTotal && <span className="font-medium text-foreground">{ins.estimatedTotal}</span>}
+                    {ins.overallCondition && <span className="capitalize">Condition: {ins.overallCondition}</span>}
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              </div>
+            </div>
+          </Link>
+        </div>
+      );
+    }
+
     return null;
   };
 
@@ -767,13 +817,6 @@ export default function PianoDetail() {
                 <DetailRow label="Case finish" value={piano.caseFinish} />
                 <DetailRow label="Size" value={piano.size} />
                 <DetailRow label="Use type" value={piano.useType} />
-                <BoolRow label="Player installed?" value={piano.playerInstalled} />
-                <BoolRow label="Piano Life Saver?" value={piano.pianoLifeSaver} />
-                <BoolRow label="Rental piano?" value={piano.rentalPiano} />
-                <BoolRow label="On consignment?" value={piano.onConsignment} />
-                <BoolRow label="Has ivory?" value={piano.hasIvory} />
-                <BoolRow label="Needs repair?" value={piano.needsRepair} />
-                <BoolRow label="Total loss?" value={piano.totalLoss} />
               </div>
               {piano.notes && (
                 <div className="mt-3 pt-3 border-t">
@@ -870,6 +913,11 @@ export default function PianoDetail() {
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={openAddService} data-testid="button-add-service">
                 <Plus className="h-3 w-3" /> Service Note
               </Button>
+              <Link href={`/inspections?customerId=${piano?.customerId}&pianoId=${piano?.id}`}>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1" data-testid="button-new-inspection">
+                  <Plus className="h-3 w-3" /> Inspect
+                </Button>
+              </Link>
             </div>
           </div>
 
@@ -1008,29 +1056,6 @@ export default function PianoDetail() {
             </div>
           </div>
 
-          {/* Boolean flags */}
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2.5 pt-1">
-            {[
-              { key: "playerInstalled" as const, label: "Player installed?" },
-              { key: "pianoLifeSaver" as const, label: "Piano Life Saver installed?" },
-              { key: "rentalPiano" as const, label: "Rental piano?" },
-              { key: "onConsignment" as const, label: "On consignment?" },
-              { key: "hasIvory" as const, label: "Piano has ivory?" },
-              { key: "needsRepair" as const, label: "Needs repair or rebuilding?" },
-              { key: "totalLoss" as const, label: "Total loss?" },
-            ].map(({ key, label }) => (
-              <div key={key} className="flex items-center gap-2">
-                <Checkbox
-                  id={`edit-${key}`}
-                  checked={!!(editForm[key])}
-                  onCheckedChange={(v) => setEditForm({ ...editForm, [key]: !!v })}
-                  data-testid={`checkbox-${key}`}
-                />
-                <Label htmlFor={`edit-${key}`} className="text-sm cursor-pointer">{label}</Label>
-              </div>
-            ))}
-          </div>
-
           {/* Tags */}
           <div className="space-y-1.5">
             <Label className="text-xs">Tags</Label>
@@ -1079,39 +1104,37 @@ export default function PianoDetail() {
 
       {/* ══ Service Dialog ═══════════════════════════════════════════════════ */}
       <Dialog open={showServiceDialog} onOpenChange={(o) => { setShowServiceDialog(o); if (!o) setEditingServiceId(null); }}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editingServiceId ? "Edit Service Record" : "Add Service History Note"}</DialogTitle>
+            <DialogTitle>Service history notes</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              {[piano.make, piano.model, piano.serialNumber, piano.location].filter(Boolean).join(", ")}
+            </p>
           </DialogHeader>
           <div className="space-y-4 mt-1">
             <div className="space-y-1.5">
-              <Label>Date (M/D/YY)</Label>
-              <Input value={serviceForm.serviceDate} onChange={(e) => setServiceForm({ ...serviceForm, serviceDate: e.target.value })} placeholder="1/15/25" data-testid="input-service-date" />
+              <Label className="text-xs text-muted-foreground">Date (M/D/YY)</Label>
+              <Input
+                value={serviceForm.serviceDate}
+                onChange={(e) => setServiceForm({ ...serviceForm, serviceDate: e.target.value })}
+                placeholder="5/24/26"
+                className="text-base"
+                data-testid="input-service-date"
+              />
             </div>
             <div className="space-y-1.5">
-              <Label>Service Type</Label>
-              <Select value={serviceForm.serviceType} onValueChange={(v) => setServiceForm({ ...serviceForm, serviceType: v })}>
-                <SelectTrigger data-testid="select-service-type"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tuning">Tuning</SelectItem>
-                  <SelectItem value="repair">Repair</SelectItem>
-                  <SelectItem value="regulation">Regulation</SelectItem>
-                  <SelectItem value="voicing">Voicing</SelectItem>
-                  <SelectItem value="inspection">Inspection</SelectItem>
-                  <SelectItem value="other">Other</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label className="text-xs text-muted-foreground">Notes</Label>
+              <Textarea
+                value={serviceForm.notes}
+                onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })}
+                placeholder=""
+                className="min-h-[180px] text-base resize-none"
+                data-testid="input-service-notes"
+                autoFocus
+              />
             </div>
-            <div className="space-y-1.5">
-              <Label>Cost</Label>
-              <Input value={serviceForm.cost} onChange={(e) => setServiceForm({ ...serviceForm, cost: e.target.value })} placeholder="$150" data-testid="input-service-cost" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Notes</Label>
-              <Textarea value={serviceForm.notes} onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })} placeholder="Service details…" className="min-h-[80px]" data-testid="input-service-notes" />
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => { setShowServiceDialog(false); setEditingServiceId(null); }}>Cancel</Button>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" onClick={() => { setShowServiceDialog(false); setEditingServiceId(null); }}>Cancel</Button>
               <Button onClick={handleServiceSubmit} disabled={addService.isPending || updateService.isPending} data-testid="button-save-service">
                 {(addService.isPending || updateService.isPending) ? "Saving…" : "Save"}
               </Button>

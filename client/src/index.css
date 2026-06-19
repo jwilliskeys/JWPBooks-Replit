@@ -47,14 +47,14 @@
   --font-serif: Libre Baskerville, Georgia, serif;
   --font-mono: JetBrains Mono, Menlo, monospace;
   --radius: .5rem;
-  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 2px 4px -1px hsl(0 0% 0% / 0.00);
-  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 4px 6px -1px hsl(0 0% 0% / 0.00);
-  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 8px 10px -1px hsl(0 0% 0% / 0.00);
-  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --shadow-2xs: 0px 1px 2px 0px hsl(20 15% 5% / 0.04);
+  --shadow-xs: 0px 1px 3px 0px hsl(20 15% 5% / 0.06);
+  --shadow-sm: 0px 1px 3px 0px hsl(20 15% 5% / 0.05), 0px 1px 2px -1px hsl(20 15% 5% / 0.04);
+  --shadow: 0px 2px 4px 0px hsl(20 15% 5% / 0.06), 0px 1px 2px -1px hsl(20 15% 5% / 0.04);
+  --shadow-md: 0px 4px 6px -1px hsl(20 15% 5% / 0.07), 0px 2px 4px -2px hsl(20 15% 5% / 0.05);
+  --shadow-lg: 0px 10px 15px -3px hsl(20 15% 5% / 0.07), 0px 4px 6px -4px hsl(20 15% 5% / 0.05);
+  --shadow-xl: 0px 20px 25px -5px hsl(20 15% 5% / 0.09), 0px 8px 10px -6px hsl(20 15% 5% / 0.06);
+  --shadow-2xl: 0px 25px 50px -12px hsl(20 15% 5% / 0.13);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
@@ -114,14 +114,14 @@
   --chart-3: 152 50% 52%;
   --chart-4: 271 55% 60%;
   --chart-5: 340 55% 58%;
-  --shadow-2xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-xs: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
-  --shadow-sm: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 1px 2px -1px hsl(0 0% 0% / 0.00);
-  --shadow-md: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 2px 4px -1px hsl(0 0% 0% / 0.00);
-  --shadow-lg: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 4px 6px -1px hsl(0 0% 0% / 0.00);
-  --shadow-xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00), 0px 8px 10px -1px hsl(0 0% 0% / 0.00);
-  --shadow-2xl: 0px 2px 0px 0px hsl(0 0% 0% / 0.00);
+  --shadow-2xs: 0px 1px 2px 0px hsl(0 0% 0% / 0.18);
+  --shadow-xs: 0px 1px 3px 0px hsl(0 0% 0% / 0.22);
+  --shadow-sm: 0px 1px 3px 0px hsl(0 0% 0% / 0.22), 0px 1px 2px -1px hsl(0 0% 0% / 0.16);
+  --shadow: 0px 2px 4px 0px hsl(0 0% 0% / 0.28), 0px 1px 2px -1px hsl(0 0% 0% / 0.18);
+  --shadow-md: 0px 4px 6px -1px hsl(0 0% 0% / 0.32), 0px 2px 4px -2px hsl(0 0% 0% / 0.22);
+  --shadow-lg: 0px 10px 15px -3px hsl(0 0% 0% / 0.36), 0px 4px 6px -4px hsl(0 0% 0% / 0.26);
+  --shadow-xl: 0px 20px 25px -5px hsl(0 0% 0% / 0.4), 0px 8px 10px -6px hsl(0 0% 0% / 0.3);
+  --shadow-2xl: 0px 25px 50px -12px hsl(0 0% 0% / 0.5);
 
   --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
   --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
@@ -144,9 +144,37 @@
     @apply border-border;
   }
 
+  html {
+    scroll-behavior: smooth;
+    /* Eliminate 300ms tap delay on mobile */
+    touch-action: manipulation;
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground;
+    /* Prevent content shifting when iOS keyboard opens */
+    -webkit-text-size-adjust: 100%;
   }
+
+  button, a, [role="button"] {
+    touch-action: manipulation;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
 }
 
 @layer utilities {
@@ -200,6 +228,16 @@
     inset: 0px;
     border-radius: inherit;
     z-index: 999;
+    background-color: transparent;
+    transition: background-color 0.15s ease;
+  }
+
+  /* Smooth shadow lift on hoverable cards */
+  .shadcn-card {
+    transition: box-shadow 0.2s ease;
+  }
+  .shadcn-card.hover-elevate:hover {
+    box-shadow: var(--shadow-md);
   }
 
   .hover-elevate:hover:not(.no-default-hover-elevate)::after,

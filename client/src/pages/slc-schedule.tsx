@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -58,9 +58,35 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   ChevronsUpDown,
   Check,
+  GripVertical,
+  TrendingUp,
+  Plane,
+  Upload,
+  X,
 } from "lucide-react";
+import { Calendar as CalendarPicker } from "@/components/ui/calendar";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { DateRange } from "react-day-picker";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
@@ -78,9 +104,16 @@ import {
 } from "@/components/time-stepper";
 import type { Trip, TripAppointment, Customer, Piano, Invoice } from "@shared/schema";
 import {
+  SCHEDULE_C_CATEGORIES,
+  getCatInfo,
+  IRS_MILEAGE_RATE,
+  TRIP_DEFAULT_CATEGORIES,
+} from "@/lib/schedule-c";
+import {
   getNearbyCities,
   areNearby,
   getClusterName,
+  getServiceRegion,
   checkTimeConflict,
   getNextAvailableTime,
   parseTimeToMinutes,
@@ -224,45 +257,237 @@ function isTripActive(trip: Trip): boolean {
   return !isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= today && today <= end;
 }
 
+function getMonthsSinceDate(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const parts = dateStr.split("/");
+  if (parts.length < 2) return null;
+  const month = parseInt(parts[0]) - 1;
+  const day = parseInt(parts[1]);
+  let year = parseInt(parts[2] ?? String(new Date().getFullYear()));
+  if (year < 100) year += 2000;
+  const date = new Date(year, month, day);
+  if (isNaN(date.getTime())) return null;
+  const now = new Date();
+  return (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
+}
 
-interface DayScheduleColumnProps {
+interface OverdueSLCClientsProps {
+  customers: Customer[];
+  pianosByCustomer: Map<number, Piano>;
+  customersWithAllInactivePianos: Set<number>;
+}
+
+function OverdueSLCClients({ customers, pianosByCustomer, customersWithAllInactivePianos }: OverdueSLCClientsProps) {
+  const [open, setOpen] = useState(false);
+
+  const overdueClients = useMemo(() => {
+    return customers
+      .filter(c => {
+        if (customersWithAllInactivePianos.has(c.id)) return false;
+        const region = getServiceRegion(c.city ?? "");
+        return region === "Salt Lake City";
+      })
+      .map(c => {
+        const monthsTuned = getMonthsSinceDate(c.lastTuned);
+        const piano = pianosByCustomer.get(c.id);
+        const pianoLabel = piano && (piano.make || piano.pianoType)
+          ? [piano.make, piano.pianoType].filter(Boolean).join(" ")
+          : null;
+        return { ...c, monthsTuned, pianoLabel };
+      })
+      .filter(c => (c.monthsTuned ?? 0) >= 10)
+      .sort((a, b) => (b.monthsTuned ?? 0) - (a.monthsTuned ?? 0));
+  }, [customers, pianosByCustomer, customersWithAllInactivePianos]);
+
+  if (overdueClients.length === 0) return null;
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+          data-testid="button-overdue-slc-toggle"
+        >
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <span className="text-amber-800 dark:text-amber-200">
+              {overdueClients.length} SLC client{overdueClients.length !== 1 ? "s" : ""} overdue for tuning
+            </span>
+          </div>
+          {open ? <ChevronDown className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />}
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 rounded-lg border border-border overflow-hidden">
+          {overdueClients.map((c, i) => {
+            const mo = c.monthsTuned ?? 0;
+            const urgencyClass = mo >= 18 ? "text-destructive font-bold" : mo >= 14 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-muted-foreground";
+            return (
+              <Link key={c.id} href={`/customers/${c.id}`}>
+                <div
+                  className={`flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-sm ${i > 0 ? "border-t border-border" : ""}`}
+                  data-testid={`overdue-slc-client-${c.id}`}
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{c.firstName} {c.lastName}</div>
+                    <div className="text-xs text-muted-foreground truncate">
+                      {c.city ?? ""}
+                      {c.pianoLabel ? ` · ${c.pianoLabel}` : ""}
+                      {c.phone ? ` · ${formatPhone(c.phone)}` : ""}
+                    </div>
+                  </div>
+                  <span className={`text-xs shrink-0 ${urgencyClass}`}>
+                    {mo}mo ago
+                  </span>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+interface SortableApptRowProps {
+  appt: TripAppointment;
+  index: number;
+  totalAppts: number;
+  driveMinutes: number | null;
+  driveMiles: number | null;
+  customerMap: Map<number, Customer>;
+  pianoMap: Map<number, Piano>;
+  onEdit: () => void;
+  onComplete: () => void;
+  onDelete: () => void;
+  onConfirm: () => void;
+}
+
+function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm }: SortableApptRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: appt.id });
+  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
+  const cust = customerMap.get(appt.customerId);
+  const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+  const isCompleted = appt.status === "completed";
+  const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
+  const addressStr = addressParts.join(", ");
+  const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
+
+  return (
+    <div ref={setNodeRef} style={style}>
+      {/* Drive time separator above this appointment (index > 0) */}
+      {index > 0 && driveMinutes != null && driveMinutes >= 0 && (
+        <div className="flex items-center gap-1.5 py-1.5 px-4 text-[11px] text-muted-foreground">
+          <Car className="h-3 w-3 shrink-0" />
+          <span>{driveMinutes} min{driveMiles != null && driveMiles >= 0 ? ` · ${driveMiles} mi` : ""}</span>
+          <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+        </div>
+      )}
+      <div className={`flex items-start gap-2 px-3 py-2.5 rounded-lg mx-2 mb-1 ${isCompleted ? "opacity-55" : ""} hover:bg-muted/40 transition-colors group`} data-testid={`trip-appointment-${appt.id}`}>
+        {/* Drag handle */}
+        <button
+          className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors shrink-0 touch-none"
+          {...attributes}
+          {...listeners}
+          aria-label="Drag to reorder"
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        {/* Content */}
+        <div className="flex-1 min-w-0 space-y-0.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-semibold text-foreground">{appt.time}</span>
+            {appt.duration && <span className="text-xs text-muted-foreground">({appt.duration})</span>}
+            {isCompleted && <Badge variant="secondary" className="text-[10px] px-1 py-0">Done</Badge>}
+          </div>
+          {cust ? (
+            <Link href={`/customers/${cust.id}`}>
+              <span className="text-sm font-medium hover:underline cursor-pointer block" data-testid={`text-itinerary-customer-${appt.id}`}>{cust.firstName} {cust.lastName}</span>
+            </Link>
+          ) : (
+            <span className="text-sm font-medium text-muted-foreground">Unknown client</span>
+          )}
+          {addressStr && (
+            <p className="text-xs text-muted-foreground flex items-start gap-1">
+              <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+              {addressStr}
+            </p>
+          )}
+          {cust?.phone && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Phone className="h-3 w-3 shrink-0" />
+              {formatPhone(cust.phone)}
+            </p>
+          )}
+          {pianoStr && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <Music className="h-3 w-3 shrink-0" />
+              {pianoStr}
+            </p>
+          )}
+          {appt.servicesRequested && <p className="text-xs text-muted-foreground">{appt.servicesRequested}</p>}
+          {appt.priceEstimate && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <DollarSign className="h-3 w-3" />{appt.priceEstimate}
+            </p>
+          )}
+        </div>
+        {/* Action buttons */}
+        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit" data-testid={`button-edit-trip-appt-${appt.id}`}>
+            <Pencil className="h-3 w-3" />
+          </Button>
+          {!isCompleted && (
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onComplete} title="Complete" data-testid={`button-complete-trip-appt-${appt.id}`}>
+              <CheckCircle className="h-3 w-3" />
+            </Button>
+          )}
+          <Button
+            variant="ghost" size="icon"
+            className={`h-6 w-6 ${appt.linkedAppointmentId ? "text-green-600 dark:text-green-400" : "text-blue-600 dark:text-blue-400"}`}
+            onClick={onConfirm}
+            title={appt.linkedAppointmentId ? "Already confirmed — click to re-download" : "Confirm & add to calendar"}
+            data-testid={`button-confirm-trip-appt-${appt.id}`}
+          >
+            {appt.linkedAppointmentId ? <CalendarCheck className="h-3 w-3" /> : <CalendarPlus className="h-3 w-3" />}
+          </Button>
+          <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={onDelete} title="Delete" data-testid={`button-delete-trip-appt-${appt.id}`}>
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface DayItinerarySectionProps {
   dateStr: string;
   dayDate: Date;
   dayAppts: TripAppointment[];
-  dayArea: string;
-  dayRevenue: number;
   customerMap: Map<number, Customer>;
   pianoMap: Map<number, Piano>;
-  onOpenDialog: (dateStr: string) => void;
+  onOpenAddDialog: (dateStr: string) => void;
   onOpenEditDialog: (appt: TripAppointment) => void;
   onCompleteAppointment: (appt: TripAppointment) => void;
   onDeleteAppointment: (id: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
+  onReorderAppointments: (updates: { id: number; time: string }[]) => void;
   onMileageReported?: (dateStr: string, miles: number | null) => void;
 }
 
-function DayScheduleColumn({
-  dateStr,
-  dayDate,
-  dayAppts,
-  dayArea,
-  dayRevenue,
-  customerMap,
-  pianoMap,
-  onOpenDialog,
-  onOpenEditDialog,
-  onCompleteAppointment,
-  onDeleteAppointment,
-  onConfirmAppointment,
-  onMileageReported,
-}: DayScheduleColumnProps) {
+function DayItinerarySection({
+  dateStr, dayDate, dayAppts, customerMap, pianoMap,
+  onOpenAddDialog, onOpenEditDialog, onCompleteAppointment, onDeleteAppointment,
+  onConfirmAppointment, onReorderAppointments, onMileageReported,
+}: DayItinerarySectionProps) {
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
     const apptAddresses = dayAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
     return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
   }, [dayAppts, customerMap]);
 
-  const { data: drivingData } = useQuery<{ durations: number[] | null; distances: number[] | null; error?: string }>({
+  const { data: drivingData } = useQuery<{ durations: number[] | null; distances: number[] | null }>({
     queryKey: ["/api/driving-times", addresses.join("|")],
     queryFn: async () => {
       const res = await apiRequest("POST", "/api/driving-times", { addresses });
@@ -277,20 +502,13 @@ function DayScheduleColumn({
 
   const totalMileage = useMemo(() => {
     if (!drivingDistances || drivingDistances.length === 0) return null;
-    const validDistances = drivingDistances.filter(d => d >= 0);
-    if (validDistances.length === 0) return null;
-    return Math.round(validDistances.reduce((sum, d) => sum + d, 0) * 10) / 10;
-  }, [drivingDistances]);
-
-  const isMileagePartial = useMemo(() => {
-    if (!drivingDistances || drivingDistances.length === 0) return false;
-    return drivingDistances.some(d => d < 0);
+    const valid = drivingDistances.filter(d => d >= 0);
+    if (valid.length === 0) return null;
+    return Math.round(valid.reduce((sum, d) => sum + d, 0) * 10) / 10;
   }, [drivingDistances]);
 
   useEffect(() => {
-    if (onMileageReported) {
-      onMileageReported(dateStr, totalMileage);
-    }
+    onMileageReported?.(dateStr, totalMileage);
   }, [dateStr, totalMileage, onMileageReported]);
 
   const leaveByTime = useMemo(() => {
@@ -301,211 +519,251 @@ function DayScheduleColumn({
     return leaveMins > 0 ? minutesToTimeStr(leaveMins) : null;
   }, [dayAppts, drivingTimes]);
 
-  const dayNameShort = getDayName(dayDate);
+  const returnDriveMinutes = drivingTimes ? drivingTimes[drivingTimes.length - 1] : null;
+  const returnDriveMiles = drivingDistances ? drivingDistances[drivingDistances.length - 1] : null;
+
+  const dayName = dayDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+  const dayRevenue = dayAppts.reduce((s, a) => s + parsePrice(a.priceEstimate), 0);
+  const dayArea = dayAppts.length > 0
+    ? customerMap.get(dayAppts[0].customerId)?.city || dayAppts[0].serviceArea || ""
+    : "";
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldOrder = [...dayAppts];
+    const oldIdx = oldOrder.findIndex(a => a.id === active.id);
+    const newIdx = oldOrder.findIndex(a => a.id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
+    const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
+    const times = oldOrder.map(a => a.time);
+    const updates = newOrder
+      .map((appt, i) => ({ id: appt.id, time: times[i] }))
+      .filter((u, i) => u.time !== oldOrder[i].time);
+    if (updates.length > 0) onReorderAppointments(updates);
+  }
 
   return (
-    <div
-      className="w-[220px] shrink-0 flex flex-col border rounded-lg bg-card"
-      data-testid={`column-day-${dateStr}`}
-    >
-      <div className="p-3 border-b bg-muted/30 rounded-t-lg">
-        <div className="font-semibold text-sm">{dayNameShort}</div>
-        <div className="text-xs text-muted-foreground">{dateStr}</div>
-        {dayArea && (
-          <Badge variant="secondary" className="mt-1.5 text-xs gap-1" data-testid={`badge-area-${dateStr}`}>
-            <MapPin className="h-3 w-3" />
-            {getClusterName(dayArea)}
-          </Badge>
-        )}
-        {dayRevenue > 0 && (
-          <div className="text-xs text-muted-foreground mt-1">Expected ${dayRevenue.toFixed(0)}</div>
-        )}
+    <div className="flex flex-col h-full" data-testid={`itinerary-day-${dateStr}`}>
+      {/* Day header */}
+      <div className="px-3 py-2 bg-muted/30 border-b rounded-t-lg">
+        <div className="flex items-start justify-between gap-2">
+          <span className="font-semibold text-sm leading-tight">{dayName}</span>
+          <Button variant="ghost" size="sm" className="h-6 text-xs gap-1 shrink-0 px-2 -mr-1 -mt-0.5" onClick={() => onOpenAddDialog(dateStr)} data-testid={`button-add-itinerary-appt-${dateStr}`}>
+            <Plus className="h-3 w-3" /> Add
+          </Button>
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap mt-1">
+          {dayArea && (
+            <Badge variant="secondary" className="text-xs gap-1 px-1.5 py-0 h-5" data-testid={`badge-area-itinerary-${dateStr}`}>
+              <MapPin className="h-3 w-3" />{getClusterName(dayArea)}
+            </Badge>
+          )}
+          {dayRevenue > 0 && <span className="text-xs text-muted-foreground">${dayRevenue.toFixed(0)}</span>}
+          {totalMileage != null && totalMileage > 0 && (
+            <span className="text-xs text-muted-foreground flex items-center gap-0.5">
+              <Car className="h-3 w-3" />{totalMileage} mi
+            </span>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 p-2 min-h-[200px]">
+      {/* Appointments */}
+      <div className="py-1.5 flex-1 min-h-[100px]">
         {dayAppts.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-8">No appointments</p>
+          <p className="text-xs text-muted-foreground text-center py-4 px-2">No appointments yet</p>
         ) : (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1.5 px-1 py-1">
-              <Home className="h-3 w-3 text-muted-foreground shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-medium text-muted-foreground">Start of day</div>
-                {leaveByTime && (
-                  <div className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
-                    Leave by {leaveByTime}
-                  </div>
+          <>
+            {/* Leave-by row */}
+            {leaveByTime && (
+              <div className="flex items-center gap-1.5 px-4 py-1.5 text-xs text-blue-600 dark:text-blue-400">
+                <Home className="h-3.5 w-3.5 shrink-0" />
+                <span className="font-medium">Leave by {leaveByTime}</span>
+                {drivingTimes?.[0] != null && drivingTimes[0] >= 0 && (
+                  <span className="text-muted-foreground">({drivingTimes[0]} min drive)</span>
                 )}
               </div>
-            </div>
-
-            {dayAppts.map((appt, i) => {
-              const cust = customerMap.get(appt.customerId);
-              const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
-              const isCompleted = appt.status === "completed";
-              const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
-              const addressStr = addressParts.join(", ");
-              const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
-              const otherAppts: ExistingAppointment[] = dayAppts
-                .filter(a => a.id !== appt.id && a.time)
-                .map(a => ({ time: a.time!, duration: a.duration || "2 hours", city: "" }));
-              const isOverlapping = appt.time
-                ? !checkTimeConflict(appt.time, appt.duration || "2 hours", "", otherAppts).valid
-                : false;
-              const driveMinutes = drivingTimes ? drivingTimes[i] : null;
-              const driveMiles = drivingDistances ? drivingDistances[i] : null;
-
-              return (
-                <div key={appt.id}>
-                  {driveMinutes != null && driveMinutes >= 0 && (
-                    <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground">
-                      <Car className="h-2.5 w-2.5 shrink-0" />
-                      <span>Driving ({driveMinutes}m{driveMiles != null && driveMiles >= 0 ? `, ${driveMiles}mi` : ""})</span>
-                      <div className="flex-1 border-t border-dashed border-muted-foreground/25 ml-0.5" />
-                    </div>
-                  )}
-                  <div
-                    className={`rounded-md border p-2 text-xs flex gap-2 ${isCompleted ? "opacity-60" : ""} ${isOverlapping ? "border-orange-300 bg-orange-50/50 dark:border-orange-800 dark:bg-orange-950/10" : ""}`}
-                    data-testid={`trip-appointment-${appt.id}`}
-                  >
-                    <div className="flex-1 space-y-1 min-w-0">
-                      <div className="flex items-center gap-1 flex-wrap">
-                        <span className="flex items-center gap-1 text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          {appt.time}
-                        </span>
-                        {isOverlapping && (
-                          <span className="inline-flex items-center gap-0.5 text-orange-600 dark:text-orange-400 font-medium" data-testid={`badge-overlap-${appt.id}`}>
-                            <AlertCircle className="h-2.5 w-2.5" />
-                            <span className="text-[10px]">Overlapping</span>
-                          </span>
-                        )}
-                      </div>
-                      {cust ? (
-                        <Link href={`/customers/${cust.id}`}>
-                          <span className="font-medium hover:underline cursor-pointer block truncate" data-testid={`text-appt-customer-${appt.id}`}>
-                            {cust.firstName} {cust.lastName}
-                          </span>
-                        </Link>
-                      ) : (
-                        <span className="font-medium">Unknown</span>
-                      )}
-                      {addressStr && (
-                        <p className="text-muted-foreground flex items-start gap-1">
-                          <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-                          <span>{addressStr}</span>
-                        </p>
-                      )}
-                      {cust?.phone && (
-                        <p className="text-muted-foreground flex items-center gap-1">
-                          <Phone className="h-3 w-3 shrink-0" />
-                          <span>{formatPhone(cust.phone)}</span>
-                        </p>
-                      )}
-                      {pianoStr && (
-                        <p className="text-muted-foreground flex items-center gap-1">
-                          <Music className="h-3 w-3 shrink-0" />
-                          <span>{pianoStr}</span>
-                        </p>
-                      )}
-                      {appt.servicesRequested && (
-                        <p className="text-muted-foreground">{appt.servicesRequested}</p>
-                      )}
-                      {appt.priceEstimate && (
-                        <p className="text-muted-foreground flex items-center gap-1">
-                          <DollarSign className="h-3 w-3" />{appt.priceEstimate}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex flex-col justify-between items-center shrink-0">
-                      <div className="flex flex-col gap-0.5">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5"
-                          onClick={() => onOpenEditDialog(appt)}
-                          data-testid={`button-edit-trip-appt-${appt.id}`}
-                        >
-                          <Pencil className="h-3 w-3" />
-                        </Button>
-                        {!isCompleted && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5"
-                            onClick={() => onCompleteAppointment(appt)}
-                            data-testid={`button-complete-trip-appt-${appt.id}`}
-                          >
-                            <CheckCircle className="h-3 w-3" />
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-5 w-5 ${appt.linkedAppointmentId ? "text-green-600 dark:text-green-400" : "text-blue-600 dark:text-blue-400"}`}
-                          onClick={() => onConfirmAppointment(appt, cust, piano)}
-                          title={appt.linkedAppointmentId ? "Already confirmed — click to re-download calendar file" : "Confirm appointment & add to calendar"}
-                          data-testid={`button-confirm-trip-appt-${appt.id}`}
-                        >
-                          {appt.linkedAppointmentId
-                            ? <CalendarCheck className="h-3 w-3" />
-                            : <CalendarPlus className="h-3 w-3" />
-                          }
-                        </Button>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-5 w-5 text-destructive"
-                        onClick={() => onDeleteAppointment(appt.id)}
-                        data-testid={`button-delete-trip-appt-${appt.id}`}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {drivingTimes && drivingTimes[dayAppts.length] != null && drivingTimes[dayAppts.length] >= 0 && (
-              <div className="flex items-center gap-1 px-1 py-0.5 text-[10px] text-muted-foreground">
-                <Car className="h-2.5 w-2.5 shrink-0" />
-                <span>Driving ({drivingTimes[dayAppts.length]}m{drivingDistances && drivingDistances[dayAppts.length] != null && drivingDistances[dayAppts.length] >= 0 ? `, ${drivingDistances[dayAppts.length]}mi` : ""}) home</span>
-                <div className="flex-1 border-t border-dashed border-muted-foreground/25 ml-0.5" />
+            )}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              <SortableContext items={dayAppts.map(a => a.id)} strategy={verticalListSortingStrategy}>
+                {dayAppts.map((appt, i) => (
+                  <SortableApptRow
+                    key={appt.id}
+                    appt={appt}
+                    index={i}
+                    totalAppts={dayAppts.length}
+                    driveMinutes={drivingTimes ? drivingTimes[i] : null}
+                    driveMiles={drivingDistances ? drivingDistances[i] : null}
+                    customerMap={customerMap}
+                    pianoMap={pianoMap}
+                    onEdit={() => onOpenEditDialog(appt)}
+                    onComplete={() => onCompleteAppointment(appt)}
+                    onDelete={() => { if (confirm("Delete this appointment?")) onDeleteAppointment(appt.id); }}
+                    onConfirm={() => {
+                      const cust = customerMap.get(appt.customerId);
+                      const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+                      onConfirmAppointment(appt, cust, piano);
+                    }}
+                  />
+                ))}
+              </SortableContext>
+            </DndContext>
+            {/* Return home row */}
+            {returnDriveMinutes != null && returnDriveMinutes >= 0 && (
+              <div className="flex items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground">
+                <Home className="h-3.5 w-3.5 shrink-0" />
+                <span>Return home</span>
+                <span>({returnDriveMinutes} min{returnDriveMiles != null && returnDriveMiles >= 0 ? `, ${returnDriveMiles} mi` : ""})</span>
               </div>
             )}
-            {drivingTimes && (
-              <div className="flex items-center gap-1.5 px-1 py-0.5">
-                <Home className="h-3 w-3 text-muted-foreground shrink-0" />
-                <span className="text-[10px] text-muted-foreground">Return home</span>
-              </div>
-            )}
-            {totalMileage != null && (
-              <div className="flex items-center justify-center px-1 py-1 mt-1 border-t">
-                <span className="text-[10px] font-medium text-muted-foreground">{isMileagePartial ? "~" : ""}{totalMileage} mi total</span>
-              </div>
-            )}
-          </div>
+          </>
         )}
-      </div>
-
-      <div className="p-2 border-t">
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full text-xs"
-          onClick={() => onOpenDialog(dateStr)}
-          data-testid={`button-add-appointment-${dateStr}`}
-        >
-          <Plus className="h-3 w-3 mr-1" />
-          Add Appointment
-        </Button>
       </div>
     </div>
   );
 }
 
+interface BudgetItem {
+  /** Schedule C category label (must match SCHEDULE_C_CATEGORIES). Falls back to "Other". */
+  category: string;
+  /** Optional date the expense was incurred (MM/DD/YYYY) */
+  date: string;
+  /** Vendor / payee — useful for the audit trail */
+  vendor: string;
+  /** Pre-trip budget estimate */
+  expected: string;
+  /** Actual amount spent */
+  actual: string;
+  /** Free-form notes (receipt location, business purpose, etc.) */
+  notes: string;
+}
+
+interface TripBudgetData {
+  taxRate: string;       // marginal/effective tax rate (income + SE) for required-income calc
+  tuningRate: string;    // per-tuning revenue used in break-even
+  mileageMethod: "standard" | "actual"; // Schedule C Part IV vehicle deduction method
+  items: BudgetItem[];
+}
+
+const DEFAULT_BUDGET_ITEMS: BudgetItem[] = TRIP_DEFAULT_CATEGORIES.map(category => ({
+  category,
+  date: "",
+  vendor: "",
+  expected: "",
+  actual: "",
+  notes: "",
+}));
+
+function migrateBudgetItem(raw: unknown): BudgetItem {
+  // Old shape only had category/expected/actual/notes — preserve those.
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const oldCat = typeof r.category === "string" ? r.category : "";
+  // If old default category names slipped through, map them to Schedule C labels.
+  const remap: Record<string, string> = {
+    "Flight": "Travel",
+    "Hotel": "Travel",
+    "Car Rental": "Car & Truck (Actual)",
+    "Gas": "Car & Truck (Actual)",
+    "Meals": "Meals (50%)",
+  };
+  return {
+    category: remap[oldCat] ?? oldCat ?? "Other",
+    date: typeof r.date === "string" ? r.date : "",
+    vendor: typeof r.vendor === "string" ? r.vendor : "",
+    expected: typeof r.expected === "string" ? r.expected : "",
+    actual: typeof r.actual === "string" ? r.actual : "",
+    notes: typeof r.notes === "string" ? r.notes : "",
+  };
+}
+
+function parseTripBudget(tripNotesJson: string | null | undefined): TripBudgetData {
+  try {
+    const parsed = JSON.parse(tripNotesJson ?? "{}");
+    const b = parsed.budget;
+    if (!b) {
+      return {
+        taxRate: "28",
+        tuningRate: "120",
+        mileageMethod: "standard",
+        items: DEFAULT_BUDGET_ITEMS.map(i => ({ ...i })),
+      };
+    }
+    return {
+      taxRate: b.taxRate ?? "28",
+      tuningRate: b.tuningRate ?? "120",
+      mileageMethod: b.mileageMethod === "actual" ? "actual" : "standard",
+      items: Array.isArray(b.items)
+        ? b.items.map(migrateBudgetItem)
+        : DEFAULT_BUDGET_ITEMS.map(i => ({ ...i })),
+    };
+  } catch {
+    return {
+      taxRate: "28",
+      tuningRate: "120",
+      mileageMethod: "standard",
+      items: DEFAULT_BUDGET_ITEMS.map(i => ({ ...i })),
+    };
+  }
+}
+
+function parseBudgetNum(str: string | undefined): number {
+  const n = parseFloat((str ?? "").replace(/[^0-9.]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+// ── Flight Info ──────────────────────────────────────────────────────────────
+interface TripFlightInfo {
+  added: boolean;          // booked/confirmed checkbox
+  flightNumber: string;   // "DL 5692"
+  from: string;            // "BOS"
+  to: string;              // "DCA"
+  date: string;            // "Jul 20, 2026"
+  total: string;           // "$178.40"
+  confirmation: string;    // "F83M5U"
+  filename: string;        // original PDF filename
+}
+
+const DEFAULT_FLIGHT_INFO: TripFlightInfo = {
+  added: false,
+  flightNumber: "",
+  from: "",
+  to: "",
+  date: "",
+  total: "",
+  confirmation: "",
+  filename: "",
+};
+
+function parseTripFlightInfo(tripNotesJson: string | null | undefined): TripFlightInfo {
+  try {
+    const parsed = JSON.parse(tripNotesJson ?? "{}");
+    const f = parsed.flight;
+    if (!f) return { ...DEFAULT_FLIGHT_INFO };
+    // Support both old (outbound/returnLeg) and new flat shape
+    const flightNumber = f.flightNumber ?? f.outbound?.flightNumber ?? "";
+    const from = f.from ?? f.outbound?.from ?? "";
+    const to = f.to ?? f.outbound?.to ?? "";
+    const date = f.date ?? f.outbound?.date ?? "";
+    const total = f.total ?? f.roundTripTotal ?? "";
+    return {
+      added: !!f.added,
+      flightNumber,
+      from,
+      to,
+      date,
+      total,
+      confirmation: f.confirmation ?? "",
+      filename: f.filename ?? f.documentFilename ?? "",
+    };
+  } catch {
+    return { ...DEFAULT_FLIGHT_INFO };
+  }
+}
 
 interface TripPanelProps {
   trip: Trip;
@@ -520,6 +778,7 @@ interface TripPanelProps {
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) => void;
   onDeleteTrip: (id: number) => void;
   deleteIsPending: boolean;
+  onReorderAppointments: (updates: { id: number; time: string }[]) => void;
 }
 
 function TripPanel({
@@ -535,6 +794,7 @@ function TripPanel({
   onConfirmAppointment,
   onDeleteTrip,
   deleteIsPending,
+  onReorderAppointments,
 }: TripPanelProps) {
   const { data: tripAppointments } = useQuery<TripAppointment[]>({
     queryKey: ["/api/trips", trip.id, "appointments"],
@@ -614,6 +874,175 @@ function TripPanel({
     return Math.round(values.reduce((sum, m) => sum + m, 0) * 10) / 10;
   }, [dayMileages]);
 
+  // ── Day extend / shrink ──────────────────────────────────────────────────────
+  function adjustTripDates(action: "extend-start" | "shrink-start" | "extend-end" | "shrink-end") {
+    const start = parseDateStr(trip.startDate);
+    const end = parseDateStr(trip.endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) return;
+    const newStart = new Date(start);
+    const newEnd = new Date(end);
+    if (action === "extend-start") {
+      newStart.setDate(newStart.getDate() - 1);
+    } else if (action === "shrink-start") {
+      if (newStart >= newEnd) return;
+      newStart.setDate(newStart.getDate() + 1);
+    } else if (action === "extend-end") {
+      newEnd.setDate(newEnd.getDate() + 1);
+    } else if (action === "shrink-end") {
+      if (newEnd <= newStart) return;
+      newEnd.setDate(newEnd.getDate() - 1);
+    }
+    apiRequest("PATCH", `/api/trips/${trip.id}`, {
+      startDate: formatDateStr(newStart),
+      endDate: formatDateStr(newEnd),
+    }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/trips"] }));
+  }
+
+  // ── Flight Info ──────────────────────────────────────────────────────────────
+  const [flightOpen, setFlightOpen] = useState(false);
+  const [flightInfo, setFlightInfo] = useState<TripFlightInfo>(() => parseTripFlightInfo(trip.notes));
+  const [flightEditOpen, setFlightEditOpen] = useState(false);
+  const [flightEditDraft, setFlightEditDraft] = useState<TripFlightInfo>(DEFAULT_FLIGHT_INFO);
+  const [flightUploading, setFlightUploading] = useState(false);
+
+  function saveFlightInfo(f: TripFlightInfo, b?: TripBudgetData) {
+    let existing: Record<string, unknown> = {};
+    try { existing = JSON.parse(trip.notes ?? "{}"); } catch { /* ignore */ }
+    const nextBudget = b ?? budget;
+    apiRequest("PATCH", `/api/trips/${trip.id}`, {
+      notes: JSON.stringify({ ...existing, flight: f, budget: nextBudget }),
+    }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/trips"] }));
+  }
+
+  /** Upload a PDF to /api/parse-flight-pdf, auto-fill flightInfo, and update the Travel budget row */
+  async function handleFlightPdfUpload(file: File) {
+    setFlightUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const resp = await fetch("/api/parse-flight-pdf", { method: "POST", body: formData });
+      if (!resp.ok) throw new Error(await resp.text());
+      const parsed = await resp.json() as {
+        flightNumber: string; from: string; to: string;
+        date: string; total: string; confirmation: string;
+      };
+      const next: TripFlightInfo = {
+        ...flightInfo,
+        flightNumber: parsed.flightNumber || flightInfo.flightNumber,
+        from: parsed.from || flightInfo.from,
+        to: parsed.to || flightInfo.to,
+        date: parsed.date || flightInfo.date,
+        total: parsed.total || flightInfo.total,
+        confirmation: parsed.confirmation || flightInfo.confirmation,
+        filename: file.name,
+      };
+      // Auto-populate "Travel" row in budget with the flight total
+      const totalNum = parseFloat((parsed.total ?? "").replace(/[^0-9.]/g, ""));
+      let nextBudget = budget;
+      if (!isNaN(totalNum) && totalNum > 0) {
+        const travelIdx = budget.items.findIndex(it => it.category === "Travel");
+        if (travelIdx >= 0) {
+          const newItems = budget.items.map((it, i) =>
+            i === travelIdx ? { ...it, actual: totalNum.toFixed(2) } : it
+          );
+          nextBudget = { ...budget, items: newItems };
+          setBudget(nextBudget);
+        }
+      }
+      setFlightInfo(next);
+      saveFlightInfo(next, nextBudget);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      console.error("Flight PDF parse error:", msg);
+    } finally {
+      setFlightUploading(false);
+    }
+  }
+
+  // ── Trip Budget ─────────────────────────────────────────────────────────────
+  const [budgetOpen, setBudgetOpen] = useState(false);
+  const [budget, setBudget] = useState<TripBudgetData>(() => parseTripBudget(trip.notes));
+
+  function saveBudget(b: TripBudgetData) {
+    let existing: Record<string, unknown> = {};
+    try { existing = JSON.parse(trip.notes ?? "{}"); } catch { /* ignore */ }
+    apiRequest("PATCH", `/api/trips/${trip.id}`, {
+      notes: JSON.stringify({ ...existing, budget: b }),
+    }).then(() => queryClient.invalidateQueries({ queryKey: ["/api/trips"] }));
+  }
+
+  function updateBudgetItem(idx: number, field: keyof BudgetItem, value: string) {
+    const newItems = budget.items.map((item, i) =>
+      i === idx ? { ...item, [field]: value } : item
+    );
+    setBudget(prev => ({ ...prev, items: newItems }));
+  }
+
+  function addBudgetItem() {
+    const next = {
+      ...budget,
+      items: [...budget.items, { category: "Other", date: "", vendor: "", expected: "", actual: "", notes: "" }],
+    };
+    setBudget(next);
+    saveBudget(next);
+  }
+
+  function removeBudgetItem(idx: number) {
+    const next = { ...budget, items: budget.items.filter((_, i) => i !== idx) };
+    setBudget(next);
+    saveBudget(next);
+  }
+
+  // ── Schedule C calculations ──
+  const totalExpected = budget.items.reduce((s, i) => s + parseBudgetNum(i.expected), 0);
+  const totalActual = budget.items.reduce((s, i) => s + parseBudgetNum(i.actual), 0);
+
+  // Roll up actual spend by Schedule C line label (e.g. "Line 24a: Travel").
+  type LineSummary = { line: string; label: string; total: number; deductible: number; deductPct: number };
+  const lineSummaries: LineSummary[] = useMemo(() => {
+    const map = new Map<string, LineSummary>();
+    budget.items.forEach(item => {
+      const amount = parseBudgetNum(item.actual);
+      if (amount <= 0) return;
+      const info = getCatInfo(item.category || "Other");
+      const key = `${info.line}|${item.category || info.label}`;
+      const cur = map.get(key) ?? {
+        line: info.line,
+        label: item.category || info.label,
+        total: 0,
+        deductible: 0,
+        deductPct: info.deductPct,
+      };
+      cur.total += amount;
+      cur.deductible += amount * (info.deductPct / 100);
+      map.set(key, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => a.line.localeCompare(b.line));
+  }, [budget.items]);
+
+  // Mileage deduction (Schedule C Line 9 if standard method).
+  const tripMiles = tripTotalMileage ?? 0;
+  const mileageDeduction = budget.mileageMethod === "standard" ? tripMiles * IRS_MILEAGE_RATE : 0;
+
+  const totalDeductible = lineSummaries.reduce((s, r) => s + r.deductible, 0) + mileageDeduction;
+
+  const taxRateNum = parseBudgetNum(budget.taxRate) / 100;
+  const tuningRateNum = parseBudgetNum(budget.tuningRate);
+
+  // "Required income" is the gross revenue you'd need to net `totalActual` after tax
+  // on (revenue − deductible expenses). Approximation: required ≈ deductible + actual_out_of_pocket / (1-tax),
+  // but our existing UX has always treated it as: gross needed so that (gross − tax × gross) >= expenses.
+  // Keep that simple model.
+  const requiredIncome = taxRateNum < 1 && totalActual > 0 ? totalActual / (1 - taxRateNum) : totalActual;
+  const breakEvenTunings = tuningRateNum > 0 ? Math.ceil(requiredIncome / tuningRateNum) : 0;
+  const progressPct = requiredIncome > 0 ? Math.min(100, (totalRevenue / requiredIncome) * 100) : 0;
+  const surplus = totalRevenue - requiredIncome;
+
+  // Net effect on tax: deductible expenses save (incomeTax + SE) × deductible.
+  // Approximate combined federal rate by adding SE; user's `taxRate` already includes it for the planning model,
+  // so we expose the raw deductible for reference rather than re-stacking.
+  const estimatedTaxSavings = totalDeductible * Math.min(taxRateNum, 0.45);
+
   return (
     <Collapsible open={isExpanded} onOpenChange={onToggle}>
       <div className="border rounded-lg bg-card overflow-hidden">
@@ -675,42 +1104,691 @@ function TripPanel({
         </CollapsibleTrigger>
 
         <CollapsibleContent>
-          <div className="border-t p-3 pb-4 overflow-x-auto">
-            <div className="flex flex-nowrap gap-3" style={{ minWidth: "max-content" }}>
-              {dates.map((dateStr) => {
-                const dayDate = parseDateStr(dateStr);
-                const dayAppts = appointmentsByDate.get(dateStr) ?? [];
-                const dayArea = getDayServiceArea(dateStr);
-                const dayRevenue = dayAppts.reduce((s, a) => s + parsePrice(a.priceEstimate), 0);
-                return (
-                  <DayScheduleColumn
-                    key={dateStr}
-                    dateStr={dateStr}
-                    dayDate={dayDate}
-                    dayAppts={dayAppts}
-                    dayArea={dayArea}
-                    dayRevenue={dayRevenue}
-                    customerMap={customerMap}
-                    pianoMap={pianoMap}
-                    onOpenDialog={handleOpenDialog}
-                    onOpenEditDialog={(appt) => {
-                      const dayAppts = appointmentsByDate.get(appt.date) ?? [];
-                      const dayExisting: ExistingAppointment[] = dayAppts.filter(a => a.id !== appt.id).map(a => ({
-                        time: a.time,
-                        duration: a.duration || "2 hours",
-                        city: customerMap.get(a.customerId)?.city || a.serviceArea || "",
-                      }));
-                      onOpenEditDialog(appt, trip.id, dayExisting);
-                    }}
-                    onCompleteAppointment={(appt) => onCompleteAppointment(appt, trip.id)}
-                    onDeleteAppointment={(id) => {
-                      if (confirm("Delete this appointment?")) onDeleteAppointment(id, trip.id);
-                    }}
-                    onConfirmAppointment={(appt, cust, piano) => onConfirmAppointment(appt, cust, piano, trip.id)}
-                    onMileageReported={handleMileageReported}
-                  />
-                );
-              })}
+          <div className="border-t">
+            {/* ── Day range controls ──────────────────────────────────────── */}
+            <div className="flex items-center gap-2 px-4 py-1.5 bg-muted/20 border-b text-xs text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => adjustTripDates("extend-start")}
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent hover:text-foreground transition-colors"
+                  title="Add day before trip"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="font-medium text-foreground tabular-nums">{trip.startDate}</span>
+                <button
+                  type="button"
+                  onClick={() => adjustTripDates("shrink-start")}
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent hover:text-foreground transition-colors"
+                  title="Remove first day"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+              <span className="text-[10px] text-muted-foreground/50">{dates.length}d</span>
+              <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => adjustTripDates("shrink-end")}
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent hover:text-foreground transition-colors"
+                  title="Remove last day"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="font-medium text-foreground tabular-nums">{trip.endDate}</span>
+                <button
+                  type="button"
+                  onClick={() => adjustTripDates("extend-end")}
+                  className="h-6 w-6 flex items-center justify-center rounded hover:bg-accent hover:text-foreground transition-colors"
+                  title="Add day after trip"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+
+            {/* ── Day columns (horizontal layout) ─────────────────────────── */}
+            <div className="overflow-x-auto pb-3 pt-3 px-3">
+              <div className="flex gap-3 items-stretch" style={{ minWidth: "fit-content" }}>
+                {dates.map((dateStr) => {
+                  const dayDate = parseDateStr(dateStr);
+                  const dayAppts = appointmentsByDate.get(dateStr) ?? [];
+                  return (
+                    <div
+                      key={dateStr}
+                      className="flex-shrink-0 w-[260px] sm:w-[280px] border rounded-lg bg-card/30 flex flex-col self-stretch"
+                      data-testid={`column-day-${dateStr}`}
+                    >
+                      <DayItinerarySection
+                        dateStr={dateStr}
+                        dayDate={dayDate}
+                        dayAppts={dayAppts}
+                        customerMap={customerMap}
+                        pianoMap={pianoMap}
+                        onOpenAddDialog={handleOpenDialog}
+                        onOpenEditDialog={(appt) => {
+                          const apptList = appointmentsByDate.get(appt.date) ?? [];
+                          const dayExisting: ExistingAppointment[] = apptList.filter(a => a.id !== appt.id).map(a => ({
+                            time: a.time,
+                            duration: a.duration || "2 hours",
+                            city: customerMap.get(a.customerId)?.city || a.serviceArea || "",
+                          }));
+                          onOpenEditDialog(appt, trip.id, dayExisting);
+                        }}
+                        onCompleteAppointment={(appt) => onCompleteAppointment(appt, trip.id)}
+                        onDeleteAppointment={(id) => onDeleteAppointment(id, trip.id)}
+                        onConfirmAppointment={(appt, cust, piano) => onConfirmAppointment(appt, cust, piano, trip.id)}
+                        onReorderAppointments={onReorderAppointments}
+                        onMileageReported={handleMileageReported}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── Flight Info Section ─────────────────────────────────────── */}
+            <div className="border-t">
+              {/* Collapsible header */}
+              <button
+                className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium hover:bg-muted/30 transition-colors"
+                onClick={() => setFlightOpen(o => !o)}
+                type="button"
+              >
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Plane className="h-3.5 w-3.5" />
+                  Flight
+                  {flightInfo.flightNumber ? (
+                    <span className="text-[10px] font-semibold text-green-600 dark:text-green-400">
+                      {flightInfo.added ? "● Booked" : "● Receipt loaded"}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground/50">○ No receipt</span>
+                  )}
+                </span>
+                {flightOpen
+                  ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+              </button>
+
+              {flightOpen && (
+                <div className="px-4 pb-4 space-y-3">
+                  {flightInfo.flightNumber ? (
+                    /* ── Loaded state: compact one-liner + controls ── */
+                    <div className="space-y-2.5">
+                      {/* One-liner summary */}
+                      <div className="flex items-center gap-2 py-2 px-3 bg-muted/30 rounded-md">
+                        <Plane className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-sm font-medium tabular-nums flex-1 min-w-0 truncate">
+                          {[
+                            flightInfo.flightNumber,
+                            flightInfo.from && flightInfo.to ? `${flightInfo.from} → ${flightInfo.to}` : "",
+                            flightInfo.date,
+                            flightInfo.total,
+                          ].filter(Boolean).join(" · ")}
+                        </span>
+                      </div>
+
+                      {/* Controls row: Booked checkbox + Edit + Clear */}
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-1.5 flex-1">
+                          <Checkbox
+                            id={`flight-added-${trip.id}`}
+                            checked={flightInfo.added}
+                            onCheckedChange={(checked) => {
+                              const next = { ...flightInfo, added: !!checked };
+                              setFlightInfo(next);
+                              saveFlightInfo(next);
+                            }}
+                          />
+                          <label htmlFor={`flight-added-${trip.id}`} className="text-xs cursor-pointer text-muted-foreground">
+                            Booked / confirmed
+                          </label>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs px-2.5"
+                          onClick={() => {
+                            setFlightEditDraft({ ...flightInfo });
+                            setFlightEditOpen(true);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                        <button
+                          type="button"
+                          title="Clear flight"
+                          className="h-7 w-7 flex items-center justify-center rounded hover:bg-destructive/10 hover:text-destructive text-muted-foreground transition-colors"
+                          onClick={() => {
+                            const next = { ...DEFAULT_FLIGHT_INFO };
+                            setFlightInfo(next);
+                            saveFlightInfo(next);
+                          }}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Filename badge */}
+                      {flightInfo.filename && (
+                        <p className="text-[10px] text-muted-foreground/60 truncate">
+                          {flightInfo.filename}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    /* ── Empty state: upload button ── */
+                    <div className="pt-1">
+                      <label
+                        htmlFor={`flight-pdf-${trip.id}`}
+                        className={`flex items-center gap-2 h-9 px-3 text-sm border rounded-md cursor-pointer transition-colors w-full justify-center
+                          ${flightUploading
+                            ? "opacity-60 pointer-events-none bg-muted/30"
+                            : "hover:bg-muted/40 text-muted-foreground"}`}
+                      >
+                        {flightUploading ? (
+                          <>
+                            <span className="h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                            Parsing receipt…
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="h-3.5 w-3.5" />
+                            Upload flight receipt (PDF)
+                          </>
+                        )}
+                      </label>
+                      <input
+                        id={`flight-pdf-${trip.id}`}
+                        type="file"
+                        accept=".pdf"
+                        className="sr-only"
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFlightPdfUpload(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ── Flight Edit Dialog ─────────────────────────────── */}
+              <Dialog open={flightEditOpen} onOpenChange={setFlightEditOpen}>
+                <DialogContent className="w-[calc(100%-2rem)] max-w-sm rounded-lg">
+                  <DialogHeader>
+                    <DialogTitle className="text-base">Edit Flight Info</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3 py-1">
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">Flight #</label>
+                        <Input
+                          className="h-9 text-base md:text-sm"
+                          value={flightEditDraft.flightNumber}
+                          onChange={e => setFlightEditDraft(p => ({ ...p, flightNumber: e.target.value }))}
+                          placeholder="DL 5692"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">Date</label>
+                        <Input
+                          className="h-9 text-base md:text-sm"
+                          value={flightEditDraft.date}
+                          onChange={e => setFlightEditDraft(p => ({ ...p, date: e.target.value }))}
+                          placeholder="Jul 20, 2026"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">From</label>
+                        <Input
+                          className="h-9 text-base md:text-sm uppercase"
+                          value={flightEditDraft.from}
+                          onChange={e => setFlightEditDraft(p => ({ ...p, from: e.target.value.toUpperCase() }))}
+                          placeholder="BOS"
+                          maxLength={4}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">To</label>
+                        <Input
+                          className="h-9 text-base md:text-sm uppercase"
+                          value={flightEditDraft.to}
+                          onChange={e => setFlightEditDraft(p => ({ ...p, to: e.target.value.toUpperCase() }))}
+                          placeholder="DCA"
+                          maxLength={4}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-xs text-muted-foreground">Total</label>
+                        <Input
+                          className="h-9 text-base md:text-sm tabular-nums"
+                          value={flightEditDraft.total}
+                          onChange={e => setFlightEditDraft(p => ({ ...p, total: e.target.value }))}
+                          placeholder="$178.40"
+                          inputMode="decimal"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted-foreground">Confirmation #</label>
+                      <Input
+                        className="h-9 text-base md:text-sm uppercase"
+                        value={flightEditDraft.confirmation}
+                        onChange={e => setFlightEditDraft(p => ({ ...p, confirmation: e.target.value.toUpperCase() }))}
+                        placeholder="F83M5U"
+                      />
+                    </div>
+                    {/* Upload replacement */}
+                    <div className="pt-1">
+                      <label
+                        htmlFor={`flight-pdf-edit-${trip.id}`}
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors"
+                      >
+                        <Upload className="h-3 w-3" />
+                        {flightEditDraft.filename ? `Replace: ${flightEditDraft.filename}` : "Upload a different receipt PDF"}
+                      </label>
+                      <input
+                        id={`flight-pdf-edit-${trip.id}`}
+                        type="file"
+                        accept=".pdf"
+                        className="sr-only"
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setFlightEditOpen(false);
+                          handleFlightPdfUpload(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter className="gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setFlightEditOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={() => {
+                      setFlightInfo(flightEditDraft);
+                      saveFlightInfo(flightEditDraft);
+                      setFlightEditOpen(false);
+                    }}>
+                      Save
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+
+            {/* ── Trip Budget Module ──────────────────────────────────────── */}
+            <div className="border-t mt-1">
+              <button
+                className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium hover:bg-muted/30 transition-colors"
+                onClick={() => setBudgetOpen(o => !o)}
+                type="button"
+              >
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <DollarSign className="h-3.5 w-3.5" />
+                  Trip Budget
+                </span>
+                {budgetOpen
+                  ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+              </button>
+
+              {budgetOpen && (
+                <div className="px-4 pb-4 space-y-4">
+                  {/* Config row */}
+                  <div className="flex flex-wrap gap-3 pt-1">
+                    <div className="flex-1 min-w-[120px] space-y-1">
+                      <label className="text-xs text-muted-foreground">Tax bracket</label>
+                      <div className="relative">
+                        <Input
+                          className="h-8 text-sm tabular-nums pr-7"
+                          value={budget.taxRate}
+                          onChange={e => setBudget(prev => ({ ...prev, taxRate: e.target.value }))}
+                          onBlur={() => saveBudget(budget)}
+                          placeholder="28"
+                          inputMode="decimal"
+                        />
+                        <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">%</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-[120px] space-y-1">
+                      <label className="text-xs text-muted-foreground">Per tuning</label>
+                      <div className="relative">
+                        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">$</span>
+                        <Input
+                          className="h-8 text-sm tabular-nums pl-6"
+                          value={budget.tuningRate}
+                          onChange={e => setBudget(prev => ({ ...prev, tuningRate: e.target.value }))}
+                          onBlur={() => saveBudget(budget)}
+                          placeholder="120"
+                          inputMode="decimal"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-[160px] space-y-1">
+                      <label className="text-xs text-muted-foreground">Vehicle method</label>
+                      <Select
+                        value={budget.mileageMethod}
+                        onValueChange={(v) => {
+                          const next = { ...budget, mileageMethod: v as "standard" | "actual" };
+                          setBudget(next);
+                          saveBudget(next);
+                        }}
+                      >
+                        <SelectTrigger className="h-8 text-xs" data-testid="select-vehicle-method">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="standard">Standard mileage (${IRS_MILEAGE_RATE}/mi)</SelectItem>
+                          <SelectItem value="actual">Actual expenses</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Expense table — Schedule C aware */}
+                  <div className="rounded-md border overflow-hidden text-sm">
+                    <div className="grid grid-cols-[68px_minmax(140px,1.3fr)_minmax(110px,1fr)_72px_72px_28px] bg-muted/40 border-b text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <div className="px-2 py-1.5 font-medium">Date</div>
+                      <div className="px-2 py-1.5 font-medium">Schedule C category</div>
+                      <div className="px-2 py-1.5 font-medium">Vendor</div>
+                      <div className="px-2 py-1.5 text-right font-medium">Expected</div>
+                      <div className="px-2 py-1.5 text-right font-medium">Actual</div>
+                      <div />
+                    </div>
+                    {budget.items.length === 0 ? (
+                      <div className="px-4 py-6 text-xs text-muted-foreground text-center">
+                        No expenses yet — tap "Add expense" below to start.
+                      </div>
+                    ) : (
+                      budget.items.map((item, idx) => {
+                        const info = getCatInfo(item.category || "Other");
+                        return (
+                          <div key={idx} className="border-b last:border-0 hover:bg-muted/20 transition-colors group">
+                            <div className="grid grid-cols-[68px_minmax(140px,1.3fr)_minmax(110px,1fr)_72px_72px_28px] items-center">
+                              <div className="px-1 py-1">
+                                <Input
+                                  className="h-7 text-xs tabular-nums px-2 border-0 bg-transparent focus:bg-background focus:border focus:border-input"
+                                  value={item.date}
+                                  onChange={e => updateBudgetItem(idx, "date", e.target.value)}
+                                  onBlur={() => saveBudget(budget)}
+                                  placeholder="M/D"
+                                />
+                              </div>
+                              <div className="px-1 py-1">
+                                <Select
+                                  value={item.category || "Other"}
+                                  onValueChange={(v) => {
+                                    updateBudgetItem(idx, "category", v);
+                                    // Persist immediately for selects (no blur event).
+                                    queueMicrotask(() => saveBudget({
+                                      ...budget,
+                                      items: budget.items.map((it, i) => i === idx ? { ...it, category: v } : it),
+                                    }));
+                                  }}
+                                >
+                                  <SelectTrigger
+                                    className="h-7 text-xs border-0 bg-transparent focus:bg-background focus:border focus:border-input px-2"
+                                    data-testid={`select-budget-cat-${idx}`}
+                                  >
+                                    <SelectValue placeholder="Pick a line…" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {SCHEDULE_C_CATEGORIES.map(c => (
+                                      <SelectItem key={c.label} value={c.label}>
+                                        <span className="flex items-baseline gap-2">
+                                          <span className="text-muted-foreground text-[10px] w-12 shrink-0">{c.line}</span>
+                                          <span>{c.label}</span>
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="px-1 py-1">
+                                <Input
+                                  className="h-7 text-xs px-2 border-0 bg-transparent focus:bg-background focus:border focus:border-input"
+                                  value={item.vendor}
+                                  onChange={e => updateBudgetItem(idx, "vendor", e.target.value)}
+                                  onBlur={() => saveBudget(budget)}
+                                  placeholder="e.g. Delta, Marriott"
+                                />
+                              </div>
+                              <div className="px-1 py-1">
+                                <Input
+                                  className="h-7 text-xs tabular-nums text-right px-2 border-0 bg-transparent focus:bg-background focus:border focus:border-input"
+                                  value={item.expected}
+                                  onChange={e => updateBudgetItem(idx, "expected", e.target.value)}
+                                  onBlur={() => saveBudget(budget)}
+                                  placeholder="—"
+                                  inputMode="decimal"
+                                />
+                              </div>
+                              <div className="px-1 py-1">
+                                <Input
+                                  className="h-7 text-xs tabular-nums text-right px-2 border-0 bg-transparent focus:bg-background focus:border focus:border-input"
+                                  value={item.actual}
+                                  onChange={e => updateBudgetItem(idx, "actual", e.target.value)}
+                                  onBlur={() => saveBudget(budget)}
+                                  placeholder="—"
+                                  inputMode="decimal"
+                                />
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeBudgetItem(idx)}
+                                className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 flex items-center justify-center text-muted-foreground/60 hover:text-destructive rounded"
+                                aria-label="Remove row"
+                                title="Remove row"
+                                data-testid={`button-remove-budget-row-${idx}`}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </div>
+                            {/* Sub-row: schedule C line tag + notes */}
+                            <div className="grid grid-cols-[68px_1fr_28px] items-center pb-1.5">
+                              <div className="px-2 text-[10px] text-muted-foreground/70 tabular-nums">
+                                {info.line}
+                                {info.deductPct < 100 && (
+                                  <span className="ml-1 text-amber-600 dark:text-amber-400">
+                                    · {info.deductPct}% ded.
+                                  </span>
+                                )}
+                              </div>
+                              <div className="px-1">
+                                <Input
+                                  className="h-6 text-[11px] px-2 border-0 bg-transparent focus:bg-background focus:border focus:border-input text-muted-foreground"
+                                  value={item.notes}
+                                  onChange={e => updateBudgetItem(idx, "notes", e.target.value)}
+                                  onBlur={() => saveBudget(budget)}
+                                  placeholder="business purpose / receipt #"
+                                />
+                              </div>
+                              <div />
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                    {/* Totals row */}
+                    <div className="grid grid-cols-[68px_minmax(140px,1.3fr)_minmax(110px,1fr)_72px_72px_28px] bg-muted/30 text-xs font-semibold border-t">
+                      <div className="px-2 py-2" />
+                      <div className="px-2 py-2">Total</div>
+                      <div className="px-2 py-2" />
+                      <div className="px-2 py-2 text-right tabular-nums">
+                        {totalExpected > 0 ? `$${totalExpected.toFixed(0)}` : "—"}
+                      </div>
+                      <div className="px-2 py-2 text-right tabular-nums">
+                        {totalActual > 0 ? `$${totalActual.toFixed(0)}` : "—"}
+                      </div>
+                      <div />
+                    </div>
+                  </div>
+
+                  {/* Add row button */}
+                  <div className="-mt-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                      onClick={addBudgetItem}
+                      data-testid="button-add-budget-row"
+                    >
+                      <Plus className="h-3 w-3" /> Add expense
+                    </Button>
+                  </div>
+
+                  {/* ── Schedule C Tax Summary ─────────────────────────────── */}
+                  {(totalActual > 0 || tripMiles > 0) && (
+                    <div className="rounded-md border bg-card">
+                      <div className="px-4 py-2.5 border-b bg-muted/30 flex items-center justify-between">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5" />
+                          Schedule C summary
+                        </span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {budget.mileageMethod === "standard" ? "Standard mileage" : "Actual vehicle"} method
+                        </span>
+                      </div>
+
+                      <div className="px-4 py-3 space-y-2 text-sm">
+                        {/* Per-line breakdown */}
+                        {lineSummaries.length > 0 && (
+                          <div className="space-y-1">
+                            {lineSummaries.map(row => (
+                              <div key={`${row.line}-${row.label}`} className="flex items-baseline gap-2 text-xs">
+                                <span className="text-muted-foreground tabular-nums w-16 shrink-0">{row.line}</span>
+                                <span className="text-foreground/80 flex-1 truncate">{row.label}</span>
+                                <span className="text-muted-foreground tabular-nums">
+                                  ${row.total.toFixed(0)}
+                                </span>
+                                {row.deductPct < 100 ? (
+                                  <span className="font-medium tabular-nums text-amber-600 dark:text-amber-400 w-20 text-right">
+                                    ${row.deductible.toFixed(0)} ded.
+                                  </span>
+                                ) : (
+                                  <span className="font-medium tabular-nums w-20 text-right">
+                                    ${row.deductible.toFixed(0)}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Mileage row (Schedule C Line 9, if standard method) */}
+                        {budget.mileageMethod === "standard" && tripMiles > 0 && (
+                          <div className="flex items-baseline gap-2 text-xs pt-1 border-t">
+                            <span className="text-muted-foreground tabular-nums w-16 shrink-0">Line 9</span>
+                            <span className="text-foreground/80 flex-1 truncate flex items-center gap-1">
+                              <Car className="h-3 w-3" />
+                              Mileage <span className="text-muted-foreground">({tripMiles.toFixed(1)} mi × ${IRS_MILEAGE_RATE})</span>
+                            </span>
+                            <span className="text-muted-foreground tabular-nums">—</span>
+                            <span className="font-medium tabular-nums w-20 text-right">
+                              ${mileageDeduction.toFixed(0)}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Total deductible */}
+                        <div className="flex items-baseline justify-between pt-2 border-t text-sm">
+                          <span className="font-semibold">Total deductible</span>
+                          <span className="font-bold tabular-nums text-green-600 dark:text-green-400">
+                            ${totalDeductible.toFixed(2)}
+                          </span>
+                        </div>
+
+                        {taxRateNum > 0 && totalDeductible > 0 && (
+                          <div className="flex items-baseline justify-between text-xs text-muted-foreground">
+                            <span>Estimated tax savings <span className="opacity-70">(@ {budget.taxRate}%)</span></span>
+                            <span className="font-semibold tabular-nums text-green-600 dark:text-green-400">
+                              ${estimatedTaxSavings.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+
+                        <p className="text-[11px] text-muted-foreground pt-1 leading-relaxed">
+                          Logged expenses also surface on the Finances tab Schedule C export. Keep receipts
+                          for any expense ≥ $75 and any lodging receipt regardless of amount.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ── Income / break-even ────────────────────────────────── */}
+                  {totalActual > 0 && (
+                    <div className="space-y-2">
+                      <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-4 py-3 space-y-1.5">
+                        <div className="flex justify-between items-baseline text-sm">
+                          <span className="text-muted-foreground">Out-of-pocket</span>
+                          <span className="font-semibold tabular-nums">${totalActual.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between items-baseline text-sm">
+                          <span className="text-muted-foreground flex items-baseline gap-1">
+                            Required revenue
+                            <span className="text-[11px] opacity-60 whitespace-nowrap">to net after {budget.taxRate}% tax</span>
+                          </span>
+                          <span className="font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                            ${requiredIncome.toFixed(2)}
+                          </span>
+                        </div>
+                        {breakEvenTunings > 0 && (
+                          <div className="flex justify-between items-baseline text-xs text-muted-foreground pt-1 border-t border-amber-200 dark:border-amber-800">
+                            <span>Break even</span>
+                            <span className="tabular-nums">
+                              <span className="font-semibold text-foreground/80">{breakEvenTunings}</span> tuning{breakEvenTunings === 1 ? "" : "s"} @ ${budget.tuningRate}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Revenue progress */}
+                      <div className="rounded-md bg-muted/40 border px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="flex items-center gap-1.5 text-muted-foreground">
+                            <TrendingUp className="h-3.5 w-3.5" />
+                            Booked revenue
+                          </span>
+                          <span className="font-semibold tabular-nums">
+                            ${totalRevenue.toFixed(2)}
+                            <span className="text-muted-foreground font-normal"> / ${requiredIncome.toFixed(2)}</span>
+                          </span>
+                        </div>
+                        <div className="h-2 rounded-full bg-muted overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${progressPct >= 100 ? "bg-green-500" : progressPct >= 75 ? "bg-blue-500" : "bg-amber-500"}`}
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-right">
+                          {progressPct >= 100 ? (
+                            <span className="text-green-600 dark:text-green-400 font-medium">
+                              ✓ Covered{surplus > 0 ? ` · +$${surplus.toFixed(0)} profit` : ""}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">
+                              {progressPct.toFixed(0)}% of break-even
+                              {tuningRateNum > 0 && (
+                                <> · need ${(requiredIncome - totalRevenue).toFixed(0)} more</>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </CollapsibleContent>
@@ -742,8 +1820,8 @@ export default function SlcSchedule() {
   // Trip creation dialog
   const [createTripDialogOpen, setCreateTripDialogOpen] = useState(false);
   const [tripName, setTripName] = useState("");
-  const [tripStart, setTripStart] = useState("");
-  const [tripEnd, setTripEnd] = useState("");
+  const [tripDateRange, setTripDateRange] = useState<DateRange | undefined>();
+  const [tripNameAutoFilled, setTripNameAutoFilled] = useState(false);
   const [tripNotes, setTripNotes] = useState("");
 
   // Collapsible expand state (trip IDs)
@@ -807,13 +1885,26 @@ export default function SlcSchedule() {
     enabled: completeDialogOpen,
   });
 
-  // Sort trips chronologically
+  // Sort trips: current/upcoming first (soonest start date first), past trips at bottom (most recent past first)
   const sortedTrips = useMemo(() => {
     if (!trips) return [];
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayMs = today.getTime();
     return [...trips].sort((a, b) => {
       const da = parseDateStr(a.startDate);
       const db = parseDateStr(b.startDate);
-      return da.getTime() - db.getTime();
+      const endA = parseDateStr(a.endDate);
+      const endB = parseDateStr(b.endDate);
+      const aPast = !isNaN(endA.getTime()) && endA.getTime() < todayMs;
+      const bPast = !isNaN(endB.getTime()) && endB.getTime() < todayMs;
+      // Upcoming/active before past
+      if (!aPast && bPast) return -1;
+      if (aPast && !bPast) return 1;
+      // Both upcoming: soonest start first
+      if (!aPast && !bPast) return da.getTime() - db.getTime();
+      // Both past: most recent first
+      return db.getTime() - da.getTime();
     });
   }, [trips]);
 
@@ -837,19 +1928,25 @@ export default function SlcSchedule() {
     [allPianos]
   );
 
-  const customersWithAllInactivePianos = useMemo(() => {
+  const { customersWithAllInactivePianos, pianosByCustomer } = useMemo(() => {
     const inactive = new Set<number>();
-    if (!allPianos) return inactive;
-    const byCustomer = new Map<number, Piano[]>();
+    const byCustomer = new Map<number, Piano>();
+    if (!allPianos) return { customersWithAllInactivePianos: inactive, pianosByCustomer: byCustomer };
+    const customerPianoMap = new Map<number, Piano[]>();
     allPianos.forEach((p) => {
-      if (!byCustomer.has(p.customerId)) byCustomer.set(p.customerId, []);
-      byCustomer.get(p.customerId)!.push(p);
+      if (!customerPianoMap.has(p.customerId)) customerPianoMap.set(p.customerId, []);
+      customerPianoMap.get(p.customerId)!.push(p);
     });
-    byCustomer.forEach((pianosArr, custId) => {
-      const hasActive = pianosArr.some((p) => p.isActive !== false);
-      if (!hasActive) inactive.add(custId);
+    customerPianoMap.forEach((pianosArr, custId) => {
+      const activePiano = pianosArr.find(p => p.isActive !== false);
+      if (activePiano) {
+        byCustomer.set(custId, activePiano);
+      } else if (pianosArr.length > 0) {
+        inactive.add(custId);
+        byCustomer.set(custId, pianosArr[0]);
+      }
     });
-    return inactive;
+    return { customersWithAllInactivePianos: inactive, pianosByCustomer: byCustomer };
   }, [allPianos]);
 
   // Pianos for the selected customer — fetched per-customer when dialog is open
@@ -873,8 +1970,8 @@ export default function SlcSchedule() {
       await queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
       toast({ title: "Trip created" });
       setTripName("");
-      setTripStart("");
-      setTripEnd("");
+      setTripDateRange(undefined);
+      setTripNameAutoFilled(false);
       setTripNotes("");
       setCreateTripDialogOpen(false);
       setExpandedTripIds(prev => { const s = new Set(Array.from(prev)); s.add(newTrip.id); return s; });
@@ -914,6 +2011,16 @@ export default function SlcSchedule() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", variables.tripId, "appointments"] });
       toast({ title: "Appointment deleted" });
     },
+  });
+
+  const reorderApptsMutation = useMutation({
+    mutationFn: async (updates: { id: number; time: string }[]) => {
+      await Promise.all(updates.map(u => apiRequest("PATCH", `/api/trip-appointments/${u.id}`, { time: u.time })));
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+    },
+    onError: () => toast({ title: "Failed to reorder", variant: "destructive" }),
   });
 
   const editAppointmentMutation = useMutation({
@@ -1174,11 +2281,11 @@ export default function SlcSchedule() {
 
   function handleCreateTrip(e: React.FormEvent) {
     e.preventDefault();
-    if (!tripName || !tripStart || !tripEnd) return;
+    if (!tripName || !tripDateRange?.from || !tripDateRange?.to) return;
     createTripMutation.mutate({
       name: tripName,
-      startDate: tripStart,
-      endDate: tripEnd,
+      startDate: formatDateStr(tripDateRange.from),
+      endDate: formatDateStr(tripDateRange.to),
       notes: tripNotes || undefined,
     });
   }
@@ -1257,6 +2364,15 @@ export default function SlcSchedule() {
         </Button>
       </div>
 
+      {/* Overdue SLC Clients */}
+      {customers && (
+        <OverdueSLCClients
+          customers={customers}
+          pianosByCustomer={pianosByCustomer}
+          customersWithAllInactivePianos={customersWithAllInactivePianos}
+        />
+      )}
+
       {/* Trip list */}
       {sortedTrips.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
@@ -1281,6 +2397,7 @@ export default function SlcSchedule() {
               onConfirmAppointment={handleConfirmAppointment}
               onDeleteTrip={(id) => deleteTripMutation.mutate(id)}
               deleteIsPending={deleteTripMutation.isPending}
+              onReorderAppointments={(updates) => reorderApptsMutation.mutate(updates)}
             />
           ))}
         </div>
@@ -1289,9 +2406,14 @@ export default function SlcSchedule() {
       {/* ── Create Trip Dialog ──────────────────────────────────────────────── */}
       <Dialog open={createTripDialogOpen} onOpenChange={(open) => {
         setCreateTripDialogOpen(open);
-        if (!open) { setTripName(""); setTripStart(""); setTripEnd(""); setTripNotes(""); }
+        if (!open) {
+          setTripName("");
+          setTripDateRange(undefined);
+          setTripNameAutoFilled(false);
+          setTripNotes("");
+        }
       }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-sm w-[calc(100%-2rem)]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Calendar className="h-5 w-5" />
@@ -1299,56 +2421,77 @@ export default function SlcSchedule() {
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCreateTrip} className="space-y-4">
-            <div className="space-y-2">
+            {/* Date Range Calendar */}
+            <div className="space-y-1.5">
+              <Label>Select dates</Label>
+              <div className="flex justify-center border rounded-lg bg-muted/20 py-1">
+                <CalendarPicker
+                  mode="range"
+                  selected={tripDateRange}
+                  onSelect={(range) => {
+                    setTripDateRange(range);
+                    // Auto-fill trip name from start month if name is empty or was auto-filled
+                    if (range?.from && (!tripName || tripNameAutoFilled)) {
+                      const suggested = `SLC ${range.from.toLocaleDateString("en-US", { month: "long", year: "numeric" })} Trip`;
+                      setTripName(suggested);
+                      setTripNameAutoFilled(true);
+                    }
+                  }}
+                  numberOfMonths={1}
+                  className="p-0"
+                />
+              </div>
+              {tripDateRange?.from && tripDateRange?.to ? (
+                <p className="text-xs text-center text-muted-foreground">
+                  {tripDateRange.from.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                  {" → "}
+                  {tripDateRange.to.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+                  {" · "}
+                  <span className="font-medium text-foreground">
+                    {Math.round((tripDateRange.to.getTime() - tripDateRange.from.getTime()) / (1000 * 60 * 60 * 24)) + 1} days
+                  </span>
+                </p>
+              ) : (
+                <p className="text-xs text-center text-muted-foreground/60">
+                  {tripDateRange?.from ? "Now tap an end date" : "Tap a start date"}
+                </p>
+              )}
+            </div>
+
+            {/* Trip name */}
+            <div className="space-y-1.5">
               <Label htmlFor="trip-name">Trip Name</Label>
               <Input
                 id="trip-name"
                 value={tripName}
-                onChange={(e) => setTripName(e.target.value)}
-                placeholder="e.g., Salt Lake City June Trip"
+                onChange={(e) => { setTripName(e.target.value); setTripNameAutoFilled(false); }}
+                placeholder="e.g., SLC June 2026 Trip"
+                className="text-base md:text-sm"
                 data-testid="input-trip-name"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="trip-start">Start Date (M/D/YY)</Label>
-                <Input
-                  id="trip-start"
-                  value={tripStart}
-                  onChange={(e) => setTripStart(e.target.value)}
-                  placeholder="5/8/26"
-                  data-testid="input-trip-start"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="trip-end">End Date (M/D/YY)</Label>
-                <Input
-                  id="trip-end"
-                  value={tripEnd}
-                  onChange={(e) => setTripEnd(e.target.value)}
-                  placeholder="5/13/26"
-                  data-testid="input-trip-end"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="trip-notes">Notes (optional)</Label>
+
+            {/* Notes */}
+            <div className="space-y-1.5">
+              <Label htmlFor="trip-notes">Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
               <Textarea
                 id="trip-notes"
                 value={tripNotes}
                 onChange={(e) => setTripNotes(e.target.value)}
                 placeholder="Any trip notes..."
                 rows={2}
+                className="text-base md:text-sm resize-none"
                 data-testid="input-trip-notes"
               />
             </div>
+
             <DialogFooter>
               <Button variant="ghost" type="button" onClick={() => setCreateTripDialogOpen(false)}>
                 Cancel
               </Button>
               <Button
                 type="submit"
-                disabled={createTripMutation.isPending || !tripName || !tripStart || !tripEnd}
+                disabled={createTripMutation.isPending || !tripName || !tripDateRange?.from || !tripDateRange?.to}
                 data-testid="button-create-trip"
               >
                 <Plus className="h-4 w-4 mr-2" />

@@ -10,6 +10,7 @@ import { ArrowLeft } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { PhoneInput } from "@/components/phone-input";
 
 export default function CustomerForm() {
   const [, navigate] = useLocation();
@@ -112,10 +113,9 @@ export default function CustomerForm() {
               </div>
               <div className="space-y-2">
                 <Label>Phone</Label>
-                <Input
+                <PhoneInput
                   value={form.phone}
-                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                  placeholder="801-555-1234"
+                  onChange={(v) => setForm({ ...form, phone: v })}
                   data-testid="input-phone"
                 />
               </div>

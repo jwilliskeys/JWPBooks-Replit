@@ -61,24 +61,28 @@ export function EnterPaymentDialog({
 
   const [method, setMethod] = useState("");
   const [amount, setAmount] = useState(invoiceTotal ?? "$0.00");
+  const [tip, setTip] = useState("0");
 
   useEffect(() => {
     if (open) {
       setMethod("");
       setAmount(invoiceTotal ?? "$0.00");
+      setTip("0");
     }
   }, [open, invoiceTotal]);
 
   const amountNum = parseDollar(amount);
+  const tipNum = parseDollar(tip) || 0;
+  const totalWithTip = amountNum + tipNum;
   const isVenmo = method === "Venmo";
-  const netReceived = isVenmo ? venmoNet(amountNum) : null;
+  const netReceived = isVenmo ? venmoNet(totalWithTip) : null;
 
   const mutation = useMutation({
     mutationFn: () =>
       apiRequest("PATCH", `/api/invoices/${invoiceId}`, {
         status: "paid",
         paymentMethod: method || null,
-        paidAmount: formatDollar(amountNum),
+        paidAmount: formatDollar(totalWithTip),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
@@ -135,12 +139,33 @@ export function EnterPaymentDialog({
             </div>
           </div>
 
+          <div className="space-y-1.5">
+            <Label className="text-xs">Tip (optional)</Label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+              <Input
+                className="pl-7 tabular-nums"
+                value={tip}
+                onChange={e => setTip(e.target.value)}
+                placeholder="0"
+                data-testid="input-payment-tip"
+              />
+            </div>
+          </div>
+
+          {tipNum > 0 && (
+            <div className="rounded-lg bg-muted/50 px-4 py-2.5 flex items-center justify-between text-sm">
+              <span className="text-muted-foreground">Total collected</span>
+              <span className="font-semibold tabular-nums">{formatDollar(totalWithTip)}</span>
+            </div>
+          )}
+
           {isVenmo && netReceived !== null && (
             <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/30 dark:border-blue-800 px-4 py-3 text-sm">
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">Venmo fee (1.9% + $0.10)</span>
                 <span className="text-destructive tabular-nums">
-                  −{formatDollar(amountNum - netReceived)}
+                  −{formatDollar(totalWithTip - netReceived)}
                 </span>
               </div>
               <div className="flex justify-between items-center mt-1.5 font-semibold">

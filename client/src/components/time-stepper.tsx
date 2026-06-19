@@ -1,5 +1,5 @@
-import { useState, useMemo, useEffect } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
 
 export const DEFAULT_TIME_MINUTES = 9 * 60;
 export const DEFAULT_DURATION_MINUTES = 90;
@@ -10,6 +10,17 @@ const MONTH_ABBR = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+
+const MONTH_FULL = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+export function formatMDYYLong(mdyy: string): string {
+  const d = parseMDYY(mdyy);
+  if (!d) return mdyy;
+  return `${MONTH_FULL[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+}
 const DAY_ABBR = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
 export function parseMDYY(dateStr: string): Date | null {
@@ -88,7 +99,7 @@ export function TimeStepperWidget({
         <button
           type="button"
           onClick={() => onChange(wrap(minutes + 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-plus-hour`}
         >
           +1h
@@ -96,7 +107,7 @@ export function TimeStepperWidget({
         <button
           type="button"
           onClick={() => onChange(wrap(minutes - 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-minus-hour`}
         >
           −1h
@@ -109,7 +120,7 @@ export function TimeStepperWidget({
         <button
           type="button"
           onClick={() => onChange(wrap(minutes + 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-plus-five`}
         >
           +5m
@@ -117,7 +128,7 @@ export function TimeStepperWidget({
         <button
           type="button"
           onClick={() => onChange(wrap(minutes - 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-minus-five`}
         >
           −5m
@@ -145,7 +156,7 @@ export function DurationStepperWidget({
         <button
           type="button"
           onClick={() => onChange(clamp(minutes + 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-plus-hour`}
         >
           +1h
@@ -153,7 +164,7 @@ export function DurationStepperWidget({
         <button
           type="button"
           onClick={() => onChange(clamp(minutes - 60))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-minus-hour`}
         >
           −1h
@@ -166,7 +177,7 @@ export function DurationStepperWidget({
         <button
           type="button"
           onClick={() => onChange(clamp(minutes + 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-plus-five`}
         >
           +5m
@@ -174,7 +185,7 @@ export function DurationStepperWidget({
         <button
           type="button"
           onClick={() => onChange(clamp(minutes - 5))}
-          className="text-[11px] font-semibold rounded px-2 py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
+          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
           data-testid={`${testIdPrefix}-minus-five`}
         >
           −5m
@@ -241,10 +252,10 @@ export function MiniCalendar({ value, onChange, "data-testid": testId }: MiniCal
         <button
           type="button"
           onClick={prevMonth}
-          className="p-1 rounded hover:bg-muted transition-colors"
+          className="p-2 sm:p-1 rounded hover:bg-muted transition-colors"
           data-testid="mini-cal-prev"
         >
-          <ChevronLeft className="h-3.5 w-3.5" />
+          <ChevronLeft className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
         </button>
         <span className="text-xs font-semibold" data-testid="mini-cal-month-label">
           {MONTH_ABBR[viewMonth]} {viewYear}
@@ -252,7 +263,7 @@ export function MiniCalendar({ value, onChange, "data-testid": testId }: MiniCal
         <button
           type="button"
           onClick={nextMonth}
-          className="p-1 rounded hover:bg-muted transition-colors"
+          className="p-2 sm:p-1 rounded hover:bg-muted transition-colors"
           data-testid="mini-cal-next"
         >
           <ChevronRight className="h-3.5 w-3.5" />
@@ -278,7 +289,7 @@ export function MiniCalendar({ value, onChange, "data-testid": testId }: MiniCal
               type="button"
               onClick={() => onChange(dateStr)}
               className={[
-                "text-center text-[11px] rounded py-1 transition-colors leading-tight w-full",
+                "text-center text-[11px] rounded py-2 sm:py-1 transition-colors leading-tight w-full",
                 isSelected
                   ? "bg-primary text-primary-foreground font-bold"
                   : isToday
@@ -292,6 +303,59 @@ export function MiniCalendar({ value, onChange, "data-testid": testId }: MiniCal
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ─── DatePickerPopover ───────────────────────────────────────────────────────
+// Button showing the selected date; clicking opens a MiniCalendar popup.
+// value / onChange use M/D/YY format (same as the rest of the app).
+
+interface DatePickerPopoverProps {
+  value: string;
+  onChange: (dateStr: string) => void;
+  readOnly?: boolean;
+  className?: string;
+}
+
+export function DatePickerPopover({ value, onChange, readOnly = false, className = "" }: DatePickerPopoverProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const display = value ? formatMDYYLong(value) : "Select date";
+
+  return (
+    <div className={`relative ${className}`} ref={ref}>
+      <button
+        type="button"
+        disabled={readOnly}
+        onClick={() => setOpen(o => !o)}
+        className={[
+          "h-9 px-3 rounded-md border border-input bg-background text-sm font-medium flex items-center gap-1.5 transition-colors",
+          readOnly ? "cursor-default opacity-70" : "hover:bg-muted/50 cursor-pointer",
+        ].join(" ")}
+      >
+        {display}
+        {!readOnly && <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+      </button>
+
+      {open && !readOnly && (
+        <div className="absolute top-full left-0 z-50 mt-1 shadow-xl rounded-lg overflow-hidden">
+          <MiniCalendar
+            value={value}
+            onChange={d => { onChange(d); setOpen(false); }}
+          />
+        </div>
+      )}
     </div>
   );
 }

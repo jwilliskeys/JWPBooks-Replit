@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -36,8 +37,10 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Pencil, Trash2, Search, Settings, ClipboardList, Music,
-  ChevronUp, ChevronDown, FolderPlus, Minus, GripVertical, CreditCard,
+  ChevronUp, ChevronDown, FolderPlus, GripVertical, CreditCard,
+  Copy, ExternalLink, CalendarCheck,
 } from "lucide-react";
+import { DurationStepperWidget, formatDurationMinutes } from "@/components/time-stepper";
 import {
   DndContext,
   closestCenter,
@@ -53,20 +56,62 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { ServiceCatalogItem, ServiceGroup, UserSettings } from "@shared/schema";
+import type { ServiceCatalogItem, ServiceGroup, UserSettings, SchedulerSettings } from "@shared/schema";
 
-function parseDurationHours(s: string): number {
-  if (!s) return 1.0;
-  const numMatch = s.match(/(\d+(?:\.\d+)?)/);
-  if (!numMatch) return 1.0;
-  const val = parseFloat(numMatch[1]);
-  const isMin = /min/i.test(s);
-  const hours = isMin ? val / 60 : val;
-  return Math.max(0.5, Math.round(hours * 2) / 2);
+// ── Service type helpers ─────────────────────────────────────────────────────
+
+export type ServiceItemType = "fixed-rate-labor" | "hourly-labor" | "parts" | "travel-fee" | "other" | "";
+
+export const SERVICE_TYPE_LABELS: Record<string, string> = {
+  "fixed-rate-labor": "Fixed Rate Labor",
+  "hourly-labor": "Hourly Labor",
+  "parts": "Parts",
+  "travel-fee": "Travel Fee",
+  "other": "Other",
+  "": "Fixed Rate Labor", // default display
+};
+
+// Encode serviceType + plain text into the description field (no schema migration needed)
+function encodeDescription(serviceType: ServiceItemType, text: string): string {
+  if (!serviceType && !text) return "";
+  return JSON.stringify({ t: serviceType || "", d: text });
 }
 
-function formatDurationHours(h: number): string {
-  return `${h.toFixed(1)} hr`;
+function decodeDescription(raw: string | null | undefined): { serviceType: ServiceItemType; text: string } {
+  if (!raw) return { serviceType: "", text: "" };
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && ("t" in parsed || "d" in parsed)) {
+      return { serviceType: (parsed.t ?? "") as ServiceItemType, text: parsed.d ?? "" };
+    }
+  } catch { /* not JSON, treat as plain text */ }
+  return { serviceType: "", text: raw };
+}
+
+// Format cost as "$X.00"
+function formatCostDisplay(cost: string | null | undefined): string {
+  if (!cost) return "";
+  const n = parseFloat(cost.replace(/[^0-9.]/g, ""));
+  if (isNaN(n)) return cost;
+  return `$${n.toFixed(2)}`;
+}
+
+function parseDurationHours(s: string): number {
+  if (!s) return 0;
+  const numMatch = s.match(/(\d+(?:\.\d+)?)/);
+  if (!numMatch) return 0;
+  const val = parseFloat(numMatch[1]);
+  const isMin = /min/i.test(s);
+  return isMin ? val / 60 : val;
+}
+
+function durationHoursToMinutes(h: number): number {
+  return Math.round(h * 60);
+}
+
+function minutesToDurationStr(m: number): string {
+  if (m <= 0) return "0 hr";
+  return `${(m / 60).toFixed(1)} hr`;
 }
 
 interface CatalogForm {
@@ -74,10 +119,11 @@ interface CatalogForm {
   category: string;
   defaultCost: string;
   defaultDuration: string;
-  durationHours: number;
+  durationMinutes: number;
   isTuning: boolean;
   isDefault: boolean;
-  description: string;
+  serviceType: ServiceItemType;
+  descriptionText: string;
   sortOrder: number;
 }
 
@@ -85,11 +131,12 @@ const emptyCatalogForm = (category = "", sortOrder = 0): CatalogForm => ({
   name: "",
   category,
   defaultCost: "",
-  defaultDuration: "1.0 hr",
-  durationHours: 1.0,
+  defaultDuration: "0 hr",
+  durationMinutes: 0,
   isTuning: false,
   isDefault: false,
-  description: "",
+  serviceType: "fixed-rate-labor",
+  descriptionText: "",
   sortOrder,
 });
 
@@ -115,15 +162,17 @@ function ServiceDialog({
   function buildForm(): CatalogForm {
     if (item) {
       const hours = parseDurationHours(item.defaultDuration || "");
+      const { serviceType, text } = decodeDescription(item.description);
       return {
         name: item.name,
         category: item.category || groupName || "__uncategorized__",
-        defaultCost: item.defaultCost || "",
-        defaultDuration: formatDurationHours(hours),
-        durationHours: hours,
+        defaultCost: item.defaultCost ? item.defaultCost.replace(/[^0-9.]/g, "") : "",
+        defaultDuration: item.defaultDuration || "0 hr",
+        durationMinutes: durationHoursToMinutes(hours),
         isTuning: item.isTuning ?? false,
         isDefault: item.isDefault ?? false,
-        description: item.description || "",
+        serviceType: serviceType || "fixed-rate-labor",
+        descriptionText: text,
         sortOrder: item.sortOrder ?? 0,
       };
     }
@@ -137,127 +186,135 @@ function ServiceDialog({
     onOpenChange(v);
   }
 
-  function adjustDuration(delta: number) {
-    setForm(f => {
-      const next = Math.max(0.5, Math.round((f.durationHours + delta) * 2) / 2);
-      return { ...f, durationHours: next, defaultDuration: formatDurationHours(next) };
-    });
-  }
-
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
       <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto" data-testid="dialog-service-catalog">
         <DialogHeader>
-          <DialogTitle>{item ? "Edit Service" : "Add Service"}</DialogTitle>
+          <DialogTitle className="text-lg font-bold">{item ? "Edit Item" : "New Item"}</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className="space-y-5 py-1">
+
+          {/* Name */}
           <div className="space-y-1.5">
-            <Label htmlFor="svc-name">Name</Label>
+            <Label htmlFor="svc-name" className="font-semibold">Name</Label>
             <Input
               id="svc-name"
               value={form.name}
               onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. Standard Tuning"
+              className="text-base"
+              autoFocus
               data-testid="input-service-name"
             />
           </div>
 
+          {/* Description */}
           <div className="space-y-1.5">
-            <Label htmlFor="svc-group">Group</Label>
-            <Select
-              value={form.category}
-              onValueChange={v => setForm(f => ({ ...f, category: v }))}
-            >
-              <SelectTrigger id="svc-group" data-testid="select-service-group">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {groups.map(g => (
-                  <SelectItem key={g.id} value={g.name}>{g.name}</SelectItem>
-                ))}
-                <SelectItem value="__uncategorized__">Uncategorized</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="svc-cost">Default Cost</Label>
-              <Input
-                id="svc-cost"
-                value={form.defaultCost}
-                onChange={e => setForm(f => ({ ...f, defaultCost: e.target.value }))}
-                data-testid="input-service-cost"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Default Duration</Label>
-              <div className="flex items-center gap-1" data-testid="input-service-duration">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9 shrink-0"
-                  onClick={() => adjustDuration(-0.5)}
-                  disabled={form.durationHours <= 0.5}
-                  data-testid="button-duration-minus"
-                >
-                  <Minus className="h-3.5 w-3.5" />
-                </Button>
-                <div className="flex-1 h-9 flex items-center justify-center border rounded-md text-sm font-medium bg-background">
-                  {formatDurationHours(form.durationHours)}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-9 w-9 shrink-0"
-                  onClick={() => adjustDuration(0.5)}
-                  data-testid="button-duration-plus"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="svc-desc">Description</Label>
+            <Label htmlFor="svc-desc" className="font-semibold">Description</Label>
             <Textarea
               id="svc-desc"
-              value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              value={form.descriptionText}
+              onChange={e => setForm(f => ({ ...f, descriptionText: e.target.value }))}
+              placeholder="e.g. Our standard tuning includes…"
               rows={3}
               data-testid="input-service-description"
             />
           </div>
 
-          <label className="flex items-center gap-3 cursor-pointer pt-1">
-            <Checkbox
-              checked={form.isTuning}
-              onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
-              data-testid="checkbox-is-tuning"
-            />
-            <span className="text-sm">This item is a tuning</span>
-            {form.isTuning && (
-              <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px]">TUNING</Badge>
-            )}
-          </label>
+          {/* Type + Amount */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-type" className="font-semibold">Type</Label>
+              <Select
+                value={form.serviceType}
+                onValueChange={v => setForm(f => ({ ...f, serviceType: v as ServiceItemType }))}
+              >
+                <SelectTrigger id="svc-type" data-testid="select-service-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixed-rate-labor">Fixed Rate Labor</SelectItem>
+                  <SelectItem value="hourly-labor">Hourly Labor</SelectItem>
+                  <SelectItem value="parts">Parts</SelectItem>
+                  <SelectItem value="travel-fee">Travel Fee</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-cost" className="font-semibold">Each amount</Label>
+              <div className="flex items-center rounded-md border border-input overflow-hidden focus-within:ring-2 focus-within:ring-ring">
+                <span className="px-2.5 text-muted-foreground text-sm bg-muted border-r border-input h-9 flex items-center">$</span>
+                <input
+                  id="svc-cost"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.defaultCost}
+                  onChange={e => setForm(f => ({ ...f, defaultCost: e.target.value }))}
+                  placeholder="0.00"
+                  className="flex-1 h-9 px-2.5 text-sm bg-background outline-none"
+                  data-testid="input-service-cost"
+                />
+              </div>
+            </div>
+          </div>
 
-          <label className="flex items-center gap-3 cursor-pointer">
-            <Checkbox
-              checked={form.isDefault}
-              onCheckedChange={v => setForm(f => ({ ...f, isDefault: !!v }))}
-              data-testid="checkbox-is-default"
+          {/* Duration */}
+          <div className="space-y-1.5">
+            <Label className="font-semibold">Duration</Label>
+            <DurationStepperWidget
+              minutes={form.durationMinutes}
+              onChange={m => setForm(f => ({ ...f, durationMinutes: m, defaultDuration: minutesToDurationStr(m) }))}
+              testIdPrefix="svc-duration"
             />
-            <span className="text-sm">Mark as default service</span>
-            {form.isDefault && (
-              <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px]">DEFAULT</Badge>
-            )}
-          </label>
+          </div>
+
+          {/* Group (editing only — subtle) */}
+          {item && (
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-group" className="text-xs text-muted-foreground">Group</Label>
+              <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v }))}>
+                <SelectTrigger id="svc-group" className="h-8 text-sm" data-testid="select-service-group">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {groups.map(g => <SelectItem key={g.id} value={g.name}>{g.name}</SelectItem>)}
+                  <SelectItem value="__uncategorized__">Uncategorized</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Checkboxes */}
+          <div className="space-y-3 pt-1 border-t">
+            <label className="flex items-center gap-3 cursor-pointer pt-2">
+              <Checkbox
+                checked={form.isDefault}
+                onCheckedChange={v => setForm(f => ({ ...f, isDefault: !!v }))}
+                data-testid="checkbox-is-default"
+              />
+              <span className="text-sm">Select this service by default</span>
+              {form.isDefault && (
+                <Badge className="bg-primary text-primary-foreground hover:bg-primary text-[10px]">DEFAULT</Badge>
+              )}
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <Checkbox
+                checked={form.isTuning}
+                onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
+                data-testid="checkbox-is-tuning"
+              />
+              <span className="text-sm">This item is a tuning</span>
+              {form.isTuning && (
+                <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px]">TUNING</Badge>
+              )}
+            </label>
+          </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="pt-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-service-cancel">
             Cancel
           </Button>
@@ -381,10 +438,13 @@ function SortableItemRow({
             </Badge>
           )}
         </div>
-        <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
-          {item.defaultCost && <span data-testid={`service-cost-${item.id}`}>{item.defaultCost}</span>}
-          {item.defaultDuration && <span data-testid={`service-duration-${item.id}`}>{item.defaultDuration}</span>}
-        </div>
+        <p className="text-xs text-muted-foreground mt-0.5 truncate" data-testid={`service-subline-${item.id}`}>
+          {SERVICE_TYPE_LABELS[decodeDescription(item.description).serviceType || ""] ?? "Fixed Rate Labor"}
+          {item.defaultCost ? ` — ${formatCostDisplay(item.defaultCost)}` : ""}
+          {item.defaultDuration && item.defaultDuration !== "0 hr"
+            ? ` — ${item.defaultDuration}`
+            : " — No time added"}
+        </p>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <Button
@@ -495,7 +555,15 @@ export default function SettingsPage() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  type CatalogPayload = Omit<CatalogForm, "isDefault" | "durationHours">;
+  type CatalogPayload = {
+    name: string;
+    category: string;
+    defaultCost: string;
+    defaultDuration: string;
+    description: string;
+    isTuning: boolean;
+    sortOrder: number;
+  };
 
   const createItemMutation = useMutation({
     mutationFn: async (data: CatalogPayload): Promise<ServiceCatalogItem> => {
@@ -536,10 +604,19 @@ export default function SettingsPage() {
   });
 
   function handleSaveService(data: CatalogForm) {
-    const { isDefault, durationHours: _dh, ...rest } = data;
-    if (rest.category === "__uncategorized__") rest.category = "";
+    const { isDefault, durationMinutes, serviceType, descriptionText, ...fields } = data;
+    const costRaw = parseFloat(fields.defaultCost.replace(/[^0-9.]/g, ""));
+    const payload: CatalogPayload = {
+      name: fields.name,
+      category: fields.category === "__uncategorized__" ? "" : fields.category,
+      defaultCost: isNaN(costRaw) ? "" : costRaw.toFixed(2),
+      defaultDuration: minutesToDurationStr(durationMinutes),
+      description: encodeDescription(serviceType, descriptionText),
+      isTuning: fields.isTuning,
+      sortOrder: fields.sortOrder,
+    };
     if (editItem) {
-      updateItemMutation.mutate({ id: editItem.id, data: rest }, {
+      updateItemMutation.mutate({ id: editItem.id, data: payload }, {
         onSuccess: () => {
           setServiceDialogOpen(false);
           setEditItem(null);
@@ -547,7 +624,7 @@ export default function SettingsPage() {
         },
       });
     } else {
-      createItemMutation.mutate(rest, {
+      createItemMutation.mutate(payload, {
         onSuccess: (createdItem) => {
           setServiceDialogOpen(false);
           toast({ title: "Service added" });
@@ -635,297 +712,478 @@ export default function SettingsPage() {
   const isSavingItem = createItemMutation.isPending || updateItemMutation.isPending || setDefaultMutation.isPending;
   const isSavingGroup = createGroupMutation.isPending || updateGroupMutation.isPending;
 
-  return (
-    <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+  // ── Nav state ────────────────────────────────────────────────────────────────
+  type SettingsSection = "payment-methods" | "master-service-list" | "company-profile" | "scheduling" | "self-scheduler";
+  const [activeSection, setActiveSection] = useState<SettingsSection>("master-service-list");
+
+  const NAV_GROUPS: { heading: string; items: { id: SettingsSection; label: string }[] }[] = [
+    {
+      heading: "Your Business",
+      items: [
+        { id: "company-profile", label: "Company Profile" },
+        { id: "payment-methods", label: "Payment Methods" },
+      ],
+    },
+    {
+      heading: "Configuration",
+      items: [
+        { id: "master-service-list", label: "Master Service List" },
+        { id: "scheduling", label: "Scheduling" },
+        { id: "self-scheduler", label: "Self-Scheduler" },
+      ],
+    },
+  ];
+
+  // ── Content panels ────────────────────────────────────────────────────────
+  function PaymentMethodsPanel() {
+    return (
+      <div className="space-y-4">
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2" data-testid="text-settings-title">
-            <Settings className="h-6 w-6" /> Settings
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Configure your service catalog and preferences
+          <h2 className="text-lg font-semibold">Payment Methods</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">These appear on printed invoices so clients know how to pay you.</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="pay-zelle" className="text-sm">Zelle (phone or email)</Label>
+            <Input id="pay-zelle" placeholder="e.g. 555-555-5555" value={payForm.zelleHandle} onChange={e => setPayForm(f => ({ ...f, zelleHandle: e.target.value }))} data-testid="input-zelle-handle" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pay-venmo" className="text-sm">Venmo handle</Label>
+            <Input id="pay-venmo" placeholder="e.g. @JohnWillis" value={payForm.venmoHandle} onChange={e => setPayForm(f => ({ ...f, venmoHandle: e.target.value }))} data-testid="input-venmo-handle" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pay-cashapp" className="text-sm">Cash App $cashtag</Label>
+            <Input id="pay-cashapp" placeholder="e.g. $JohnWillis" value={payForm.cashAppHandle} onChange={e => setPayForm(f => ({ ...f, cashAppHandle: e.target.value }))} data-testid="input-cashapp-handle" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pay-paypal" className="text-sm">PayPal.me link</Label>
+            <Input id="pay-paypal" placeholder="e.g. paypal.me/johnwillis" value={payForm.paypalMe} onChange={e => setPayForm(f => ({ ...f, paypalMe: e.target.value }))} data-testid="input-paypal-me" />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="pay-stripe" className="text-sm">Stripe payment link (credit/debit card)</Label>
+            <Input id="pay-stripe" placeholder="e.g. https://buy.stripe.com/…" value={payForm.stripePaymentLink} onChange={e => setPayForm(f => ({ ...f, stripePaymentLink: e.target.value }))} data-testid="input-stripe-link" />
+            <p className="text-xs text-muted-foreground">Create a payment link in your Stripe dashboard (Dashboard → Payment Links → + New) and paste the URL here.</p>
+          </div>
+        </div>
+        <div className="flex justify-end pt-1">
+          <Button size="sm" onClick={() => savePaymentMutation.mutate(payForm)} disabled={savePaymentMutation.isPending} data-testid="button-save-payment-methods">
+            {savePaymentMutation.isPending ? "Saving…" : "Save Payment Methods"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  function MasterServiceListPanel() {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold">Master Service List</h2>
+            <p className="text-sm text-muted-foreground mt-0.5">Services available when scheduling appointments.</p>
+          </div>
+          <Button size="sm" variant="outline" className="gap-1.5 text-xs" onClick={() => { setEditGroup(null); setGroupDialogOpen(true); }} data-testid="button-add-group">
+            <FolderPlus className="h-3.5 w-3.5" /> Add Group
+          </Button>
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <Input className="pl-8 h-9 text-sm" placeholder="Search services…" value={search} onChange={e => setSearch(e.target.value)} data-testid="input-search-services" />
+        </div>
+
+        {isLoading ? (
+          <div className="space-y-3">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-24 w-full rounded-md" />)}</div>
+        ) : (
+          <div className="space-y-3">
+            {sortedGroups.map((group, groupIdx) => {
+              const groupItems = getGroupItems(group.name);
+              const allGroupItems = catalog.filter(i => i.category === group.name);
+              const isFirst = groupIdx === 0;
+              const isLast = groupIdx === sortedGroups.length - 1;
+              return (
+                <div key={group.id} className="rounded-md border overflow-hidden" data-testid={`group-${group.id}`}>
+                  <div className="flex items-center gap-2 px-3 py-2 bg-muted/40 border-b">
+                    <div className="flex flex-col -space-y-1">
+                      <button className="p-0.5 rounded hover:bg-accent disabled:opacity-30" disabled={isFirst || updateGroupMutation.isPending} onClick={() => moveGroup(group, "up")} data-testid={`button-group-up-${group.id}`}><ChevronUp className="h-3 w-3" /></button>
+                      <button className="p-0.5 rounded hover:bg-accent disabled:opacity-30" disabled={isLast || updateGroupMutation.isPending} onClick={() => moveGroup(group, "down")} data-testid={`button-group-down-${group.id}`}><ChevronDown className="h-3 w-3" /></button>
+                    </div>
+                    <span className="font-semibold text-sm flex-1" data-testid={`group-name-${group.id}`}>{group.name}</span>
+                    <span className="text-xs text-muted-foreground">{allGroupItems.length} {allGroupItems.length === 1 ? "item" : "items"}</span>
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditGroup(group); setGroupDialogOpen(true); }} data-testid={`button-rename-group-${group.id}`}><Pencil className="h-3 w-3" /></Button>
+                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteGroupId(group.id)} data-testid={`button-delete-group-${group.id}`}><Trash2 className="h-3 w-3" /></Button>
+                  </div>
+                  {groupItems.length === 0 && !search && <p className="text-xs text-muted-foreground text-center py-3">No services yet</p>}
+                  {groupItems.length > 0 && (
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => handleItemDragEnd(e, groupItems)}>
+                      <SortableContext items={groupItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                        <div className="divide-y">
+                          {groupItems.map((item) => (
+                            <SortableItemRow key={item.id} item={item} onEdit={openEditItem} onDelete={setDeleteItemId} dragDisabled={!!search} />
+                          ))}
+                        </div>
+                      </SortableContext>
+                    </DndContext>
+                  )}
+                  <div className="px-3 py-2 border-t bg-muted/20">
+                    <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground w-full justify-start" onClick={() => openAddItem(group.name, allGroupItems)} data-testid={`button-add-item-${group.id}`}>
+                      <Plus className="h-3 w-3" /> Add Item
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {filteredUncategorized.length > 0 && (
+              <div className="rounded-md border overflow-hidden opacity-80" data-testid="group-uncategorized">
+                <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b">
+                  <span className="font-semibold text-sm flex-1 text-muted-foreground">Uncategorized</span>
+                  <span className="text-xs text-muted-foreground">{filteredUncategorized.length} items</span>
+                </div>
+                <div className="divide-y">
+                  {filteredUncategorized.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)).map(item => (
+                    <div key={item.id} className="flex items-center gap-2 px-3 py-2" data-testid={`service-row-${item.id}`}>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>{item.name}</span>
+                          {item.isTuning && <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0 gap-0.5"><Music className="h-2.5 w-2.5" /> TUNING</Badge>}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                          {SERVICE_TYPE_LABELS[decodeDescription(item.description).serviceType || ""] ?? "Fixed Rate Labor"}
+                          {item.defaultCost ? ` — ${formatCostDisplay(item.defaultCost)}` : ""}
+                          {item.defaultDuration && item.defaultDuration !== "0 hr"
+                            ? ` — ${item.defaultDuration}`
+                            : " — No time added"}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditItem(item)} data-testid={`button-edit-service-${item.id}`}><Pencil className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeleteItemId(item.id)} data-testid={`button-delete-service-${item.id}`}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {groups.length === 0 && catalog.length === 0 && !isLoading && (
+              <div className="rounded-lg border border-dashed py-10 text-center">
+                <ClipboardList className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+                <p className="text-sm text-muted-foreground">No service groups yet.</p>
+                <Button size="sm" variant="outline" className="mt-3 text-xs gap-1.5" onClick={() => { setEditGroup(null); setGroupDialogOpen(true); }}>
+                  <FolderPlus className="h-3.5 w-3.5" /> Add Your First Group
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  function StubPanel({ title, description }: { title: string; description: string }) {
+    return (
+      <div className="space-y-2">
+        <h2 className="text-lg font-semibold">{title}</h2>
+        <p className="text-sm text-muted-foreground">{description}</p>
+        <div className="rounded-lg border border-dashed py-12 text-center mt-4">
+          <p className="text-sm text-muted-foreground">Coming soon</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Self-Scheduler Panel ─────────────────────────────────────────────────────
+  function SelfSchedulerPanel() {
+    const { data: schedulerData, isLoading: schedulerLoading } = useQuery<SchedulerSettings>({
+      queryKey: ["/api/scheduler-settings"],
+    });
+
+    const defaultForm = {
+      showServiceCost: false,
+      showServiceDuration: true,
+      completionRedirectUrl: "",
+      serviceAreaEnabled: false,
+      serviceAreaLat: "",
+      serviceAreaLng: "",
+      serviceAreaRadiusMiles: "40",
+      welcomeMessage: "",
+      reservationCompleteMessage: "",
+      outsideServiceAreaMessage: "",
+      privacyPolicyUrl: "",
+      termsOfServiceUrl: "",
+    };
+
+    const [form, setForm] = useState(defaultForm);
+    const [copied, setCopied] = useState(false);
+
+    useEffect(() => {
+      if (schedulerData) {
+        setForm({
+          showServiceCost: schedulerData.showServiceCost ?? false,
+          showServiceDuration: schedulerData.showServiceDuration ?? true,
+          completionRedirectUrl: schedulerData.completionRedirectUrl ?? "",
+          serviceAreaEnabled: schedulerData.serviceAreaEnabled ?? false,
+          serviceAreaLat: schedulerData.serviceAreaLat ?? "",
+          serviceAreaLng: schedulerData.serviceAreaLng ?? "",
+          serviceAreaRadiusMiles: schedulerData.serviceAreaRadiusMiles ?? "40",
+          welcomeMessage: schedulerData.welcomeMessage ?? "",
+          reservationCompleteMessage: schedulerData.reservationCompleteMessage ?? "",
+          outsideServiceAreaMessage: schedulerData.outsideServiceAreaMessage ?? "",
+          privacyPolicyUrl: schedulerData.privacyPolicyUrl ?? "",
+          termsOfServiceUrl: schedulerData.termsOfServiceUrl ?? "",
+        });
+      }
+    }, [schedulerData]);
+
+    const saveSchedulerMutation = useMutation({
+      mutationFn: (data: typeof form) => apiRequest("PUT", "/api/scheduler-settings", data),
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ["/api/scheduler-settings"] });
+        toast({ title: "Self-Scheduler settings saved" });
+      },
+      onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    });
+
+    const bookingUrl = `${window.location.origin}/book`;
+    const embedCode = `<iframe\n  src="${bookingUrl}?embed=true"\n  width="100%"\n  height="700"\n  frameborder="0"\n  style="border-radius:12px;"\n></iframe>`;
+
+    function handleCopy(text: string) {
+      navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    }
+
+    function toggle(key: keyof typeof form, val: boolean) {
+      setForm(f => ({ ...f, [key]: val }));
+    }
+    function set(key: keyof typeof form, val: string) {
+      setForm(f => ({ ...f, [key]: val }));
+    }
+
+    if (schedulerLoading) {
+      return <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}</div>;
+    }
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            <CalendarCheck className="h-5 w-5 text-primary" /> Self-Scheduler
+          </h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Configure the public booking page that clients use to request appointments.
           </p>
+        </div>
+
+        {/* ── Booking Link ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-3">
+          <p className="text-sm font-semibold">Your Booking Link</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-md truncate">{bookingUrl}</code>
+            <Button size="sm" variant="outline" className="gap-1.5 shrink-0" onClick={() => handleCopy(bookingUrl)}>
+              <Copy className="h-3.5 w-3.5" />{copied ? "Copied!" : "Copy"}
+            </Button>
+            <Button size="sm" variant="outline" className="gap-1.5 shrink-0" asChild>
+              <a href={bookingUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" />Open</a>
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Embed Widget ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-3">
+          <p className="text-sm font-semibold">Embed on johnwillispiano.com</p>
+          <p className="text-xs text-muted-foreground">Paste this snippet into your website's HTML to embed the booking form directly on your site.</p>
+          <div className="relative">
+            <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre">{embedCode}</pre>
+            <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(embedCode)}>
+              <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Behavior ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-4">
+          <p className="text-sm font-semibold">Behavior</p>
+
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Show service cost to clients</p>
+              <p className="text-xs text-muted-foreground">Display price estimates on the booking form</p>
+            </div>
+            <Switch checked={form.showServiceCost} onCheckedChange={v => toggle("showServiceCost", v)} />
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Show service duration to clients</p>
+              <p className="text-xs text-muted-foreground">Display estimated appointment length</p>
+            </div>
+            <Switch checked={form.showServiceDuration} onCheckedChange={v => toggle("showServiceDuration", v)} />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-sm font-medium">Completion redirect URL</Label>
+            <Input
+              placeholder="https://johnwillispiano.com/thank-you (leave blank to use built-in confirmation)"
+              value={form.completionRedirectUrl}
+              onChange={e => set("completionRedirectUrl", e.target.value)}
+            />
+          </div>
+        </div>
+
+        {/* ── Service Area ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Service Area Validation</p>
+              <p className="text-xs text-muted-foreground">Warn clients outside your travel radius</p>
+            </div>
+            <Switch checked={form.serviceAreaEnabled} onCheckedChange={v => toggle("serviceAreaEnabled", v)} />
+          </div>
+
+          {form.serviceAreaEnabled && (
+            <div className="space-y-3 pt-1 border-t">
+              <p className="text-xs text-muted-foreground">Set your home base coordinates and max travel radius. Use <a href="https://maps.google.com" target="_blank" rel="noopener noreferrer" className="underline">Google Maps</a> to find lat/lng (right-click a location → copy coordinates).</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Center Latitude</Label>
+                  <Input placeholder="e.g. 42.3601" value={form.serviceAreaLat} onChange={e => set("serviceAreaLat", e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Center Longitude</Label>
+                  <Input placeholder="e.g. -71.0589" value={form.serviceAreaLng} onChange={e => set("serviceAreaLng", e.target.value)} />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Radius (miles)</Label>
+                <Input placeholder="40" value={form.serviceAreaRadiusMiles} onChange={e => set("serviceAreaRadiusMiles", e.target.value)} className="w-32" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Outside service area message</Label>
+                <Textarea
+                  rows={3}
+                  placeholder="Unfortunately your address appears to be outside our normal service area. Please contact us directly to discuss options."
+                  value={form.outsideServiceAreaMessage}
+                  onChange={e => set("outsideServiceAreaMessage", e.target.value)}
+                  className="resize-none text-sm"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Page Content ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-4">
+          <p className="text-sm font-semibold">Page Content</p>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Welcome message</Label>
+            <Textarea
+              rows={3}
+              placeholder="e.g. Welcome! I'm John Willis, a piano technician serving Greater Boston. Fill out the form below and I'll be in touch within one business day."
+              value={form.welcomeMessage}
+              onChange={e => set("welcomeMessage", e.target.value)}
+              className="resize-none text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Reservation complete message</Label>
+            <Textarea
+              rows={3}
+              placeholder="e.g. Your request has been received! I'll review it and reach out shortly to confirm your appointment time."
+              value={form.reservationCompleteMessage}
+              onChange={e => set("reservationCompleteMessage", e.target.value)}
+              className="resize-none text-sm"
+            />
+          </div>
+        </div>
+
+        {/* ── Legal ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-4">
+          <p className="text-sm font-semibold">Legal Notices</p>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Privacy Policy URL</Label>
+            <Input placeholder="https://johnwillispiano.com/privacy" value={form.privacyPolicyUrl} onChange={e => set("privacyPolicyUrl", e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Terms of Service URL</Label>
+            <Input placeholder="https://johnwillispiano.com/terms" value={form.termsOfServiceUrl} onChange={e => set("termsOfServiceUrl", e.target.value)} />
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-1">
+          <Button onClick={() => saveSchedulerMutation.mutate(form)} disabled={saveSchedulerMutation.isPending}>
+            {saveSchedulerMutation.isPending ? "Saving…" : "Save Self-Scheduler Settings"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  function ActivePanel() {
+    if (activeSection === "payment-methods") return <PaymentMethodsPanel />;
+    if (activeSection === "master-service-list") return <MasterServiceListPanel />;
+    if (activeSection === "company-profile") return <StubPanel title="Company Profile" description="Your business name, address, and contact info shown on invoices." />;
+    if (activeSection === "scheduling") return <StubPanel title="Scheduling" description="Default appointment duration, buffer time, and calendar preferences." />;
+    if (activeSection === "self-scheduler") return <SelfSchedulerPanel />;
+    return null;
+  }
+
+  return (
+    <div className="flex min-h-0 h-full">
+      {/* ── Left nav ── */}
+      <aside className="hidden sm:flex flex-col w-52 shrink-0 border-r bg-muted/20 p-4 gap-6 overflow-y-auto">
+        <h1 className="text-base font-bold tracking-tight px-1" data-testid="text-settings-title">Settings</h1>
+        {NAV_GROUPS.map(group => (
+          <div key={group.heading}>
+            <p className="text-xs font-bold text-foreground px-1 mb-1">{group.heading}</p>
+            <div className="space-y-0.5">
+              {group.items.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveSection(item.id)}
+                  className={`w-full text-left text-sm px-2 py-1.5 rounded-md transition-colors ${
+                    activeSection === item.id
+                      ? "bg-accent text-accent-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </aside>
+
+      {/* ── Mobile: horizontal pill tabs ── */}
+      <div className="sm:hidden w-full">
+        <div className="flex overflow-x-auto gap-1 px-4 py-3 border-b bg-muted/20 no-scrollbar">
+          {NAV_GROUPS.flatMap(g => g.items).map(item => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveSection(item.id)}
+              className={`shrink-0 text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                activeSection === item.id
+                  ? "bg-foreground text-background border-foreground font-medium"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="p-4">
+          <ActivePanel />
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <CreditCard className="h-4 w-4" /> Payment Methods
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            These appear on printed invoices so customers know how to pay you
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="pay-zelle" className="text-sm">Zelle (phone or email)</Label>
-              <Input
-                id="pay-zelle"
-                placeholder="e.g. 555-555-5555"
-                value={payForm.zelleHandle}
-                onChange={e => setPayForm(f => ({ ...f, zelleHandle: e.target.value }))}
-                data-testid="input-zelle-handle"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pay-venmo" className="text-sm">Venmo handle</Label>
-              <Input
-                id="pay-venmo"
-                placeholder="e.g. @JohnWillis"
-                value={payForm.venmoHandle}
-                onChange={e => setPayForm(f => ({ ...f, venmoHandle: e.target.value }))}
-                data-testid="input-venmo-handle"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pay-cashapp" className="text-sm">Cash App $cashtag</Label>
-              <Input
-                id="pay-cashapp"
-                placeholder="e.g. $JohnWillis"
-                value={payForm.cashAppHandle}
-                onChange={e => setPayForm(f => ({ ...f, cashAppHandle: e.target.value }))}
-                data-testid="input-cashapp-handle"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="pay-paypal" className="text-sm">PayPal.me link</Label>
-              <Input
-                id="pay-paypal"
-                placeholder="e.g. paypal.me/johnwillis"
-                value={payForm.paypalMe}
-                onChange={e => setPayForm(f => ({ ...f, paypalMe: e.target.value }))}
-                data-testid="input-paypal-me"
-              />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="pay-stripe" className="text-sm">Stripe payment link (credit/debit card)</Label>
-              <Input
-                id="pay-stripe"
-                placeholder="e.g. https://buy.stripe.com/…"
-                value={payForm.stripePaymentLink}
-                onChange={e => setPayForm(f => ({ ...f, stripePaymentLink: e.target.value }))}
-                data-testid="input-stripe-link"
-              />
-              <p className="text-xs text-muted-foreground">
-                Create a payment link in your Stripe dashboard (Dashboard → Payment Links → + New) and paste the URL here.
-              </p>
-            </div>
-          </div>
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              onClick={() => savePaymentMutation.mutate(payForm)}
-              disabled={savePaymentMutation.isPending}
-              data-testid="button-save-payment-methods"
-            >
-              {savePaymentMutation.isPending ? "Saving…" : "Save Payment Methods"}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <ClipboardList className="h-4 w-4" /> Service Catalog
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Services available in the appointment completion workflow
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-48">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                className="pl-8 h-9 text-sm"
-                placeholder="Search services…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                data-testid="input-search-services"
-              />
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-9 gap-1.5 text-xs"
-              onClick={() => { setEditGroup(null); setGroupDialogOpen(true); }}
-              data-testid="button-add-group"
-            >
-              <FolderPlus className="h-3.5 w-3.5" /> Add Service Group
-            </Button>
-          </div>
-
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-24 w-full rounded-md" />
-              ))}
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {sortedGroups.map((group, groupIdx) => {
-                const groupItems = getGroupItems(group.name);
-                const allGroupItems = catalog.filter(i => i.category === group.name);
-                const isFirst = groupIdx === 0;
-                const isLast = groupIdx === sortedGroups.length - 1;
-
-                return (
-                  <div
-                    key={group.id}
-                    className="rounded-md border overflow-hidden"
-                    data-testid={`group-${group.id}`}
-                  >
-                    <div className="flex items-center gap-2 px-3 py-2 bg-muted/40 border-b">
-                      <div className="flex flex-col -space-y-1">
-                        <button
-                          className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
-                          disabled={isFirst || updateGroupMutation.isPending}
-                          onClick={() => moveGroup(group, "up")}
-                          data-testid={`button-group-up-${group.id}`}
-                        >
-                          <ChevronUp className="h-3 w-3" />
-                        </button>
-                        <button
-                          className="p-0.5 rounded hover:bg-accent disabled:opacity-30"
-                          disabled={isLast || updateGroupMutation.isPending}
-                          onClick={() => moveGroup(group, "down")}
-                          data-testid={`button-group-down-${group.id}`}
-                        >
-                          <ChevronDown className="h-3 w-3" />
-                        </button>
-                      </div>
-                      <span className="font-semibold text-sm flex-1" data-testid={`group-name-${group.id}`}>
-                        {group.name}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {allGroupItems.length} {allGroupItems.length === 1 ? "item" : "items"}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
-                        onClick={() => { setEditGroup(group); setGroupDialogOpen(true); }}
-                        data-testid={`button-rename-group-${group.id}`}
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => setDeleteGroupId(group.id)}
-                        data-testid={`button-delete-group-${group.id}`}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-
-                    {groupItems.length === 0 && !search && (
-                      <p className="text-xs text-muted-foreground text-center py-3">
-                        No services yet
-                      </p>
-                    )}
-                    {search && groupItems.length === 0 ? null : groupItems.length > 0 && (
-                      <DndContext
-                        sensors={sensors}
-                        collisionDetection={closestCenter}
-                        onDragEnd={(e) => handleItemDragEnd(e, groupItems)}
-                      >
-                        <SortableContext
-                          items={groupItems.map(i => i.id)}
-                          strategy={verticalListSortingStrategy}
-                        >
-                          <div className="divide-y">
-                            {groupItems.map((item) => (
-                              <SortableItemRow
-                                key={item.id}
-                                item={item}
-                                onEdit={openEditItem}
-                                onDelete={setDeleteItemId}
-                                dragDisabled={!!search}
-                              />
-                            ))}
-                          </div>
-                        </SortableContext>
-                      </DndContext>
-                    )}
-
-                    <div className="px-3 py-2 border-t bg-muted/20">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground w-full justify-start"
-                        onClick={() => openAddItem(group.name, allGroupItems)}
-                        data-testid={`button-add-item-${group.id}`}
-                      >
-                        <Plus className="h-3 w-3" /> Add Item
-                      </Button>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {filteredUncategorized.length > 0 && (
-                <div className="rounded-md border overflow-hidden opacity-80" data-testid="group-uncategorized">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b">
-                    <span className="font-semibold text-sm flex-1 text-muted-foreground">Uncategorized</span>
-                    <span className="text-xs text-muted-foreground">{filteredUncategorized.length} items</span>
-                  </div>
-                  <div className="divide-y">
-                    {filteredUncategorized.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)).map(item => (
-                      <div key={item.id} className="flex items-center gap-2 px-3 py-2" data-testid={`service-row-${item.id}`}>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-medium text-sm" data-testid={`service-name-${item.id}`}>{item.name}</span>
-                            {item.isTuning && (
-                              <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px] px-1.5 py-0 gap-0.5">
-                                <Music className="h-2.5 w-2.5" /> TUNING
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
-                            {item.defaultCost && <span>{item.defaultCost}</span>}
-                            {item.defaultDuration && <span>{item.defaultDuration}</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => openEditItem(item)}
-                            data-testid={`button-edit-service-${item.id}`}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7 text-destructive hover:text-destructive hover:bg-destructive/10"
-                            onClick={() => setDeleteItemId(item.id)}
-                            data-testid={`button-delete-service-${item.id}`}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {groups.length === 0 && catalog.length === 0 && !isLoading && (
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  No service groups yet. Click "Add Service Group" to get started.
-                </p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* ── Right content ── */}
+      <main className="hidden sm:block flex-1 overflow-y-auto p-6 max-w-3xl">
+        <ActivePanel />
+      </main>
 
       <ServiceDialog
         key={editItem?.id ?? "new"}

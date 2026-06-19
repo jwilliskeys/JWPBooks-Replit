@@ -206,8 +206,8 @@ export function CompleteAppointmentDialog({
   });
 
   const completeMutation = useMutation({
-    mutationFn: () =>
-      apiRequest("POST", `/api/appointments/${appointment.id}/complete`, {
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/appointments/${appointment.id}/complete`, {
         result,
         clientNotes,
         pianoRecords: pianoRecords.map(r => ({
@@ -221,22 +221,33 @@ export function CompleteAppointmentDialog({
         miscServices: JSON.stringify(miscServices),
         paymentMethod: paymentMethod && paymentMethod !== "none" ? paymentMethod : null,
         paymentAmount: paymentMethod && paymentMethod !== "none" ? (paymentAmount || null) : null,
-      }),
-    onSuccess: async () => {
+      });
+      return res.json() as Promise<{ success: boolean; invoice: Invoice | null }>;
+    },
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+      // The server may have auto-created a draft invoice from the itemized services
+      // picked above. Surface it immediately and make sure any invoice list/badge
+      // elsewhere in the app picks it up without waiting for a manual refresh.
+      queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+      if (data?.invoice) {
+        setLocalCreatedInvoice(data.invoice);
+      }
 
       let invoiceUpdateFailed = false;
-      if (paymentMethod && paymentMethod !== "none" && linkedInvoice && linkedInvoice.status !== "paid") {
+      const invoiceToMarkPaid = data?.invoice ?? linkedInvoice;
+      if (paymentMethod && paymentMethod !== "none" && invoiceToMarkPaid && invoiceToMarkPaid.status !== "paid") {
         try {
-          const paidAmount = paymentAmount || linkedInvoice.total || "$0.00";
-          const existingNotes = linkedInvoice.notes ? `${linkedInvoice.notes}\n` : "";
-          await apiRequest("PATCH", `/api/invoices/${linkedInvoice.id}`, {
+          const paidAmount = paymentAmount || invoiceToMarkPaid.total || "$0.00";
+          const existingNotes = invoiceToMarkPaid.notes ? `${invoiceToMarkPaid.notes}\n` : "";
+          const updated = await apiRequest("PATCH", `/api/invoices/${invoiceToMarkPaid.id}`, {
             status: "paid",
             paidAmount,
             paymentMethod,
             notes: `${existingNotes}Paid via ${paymentMethod}`,
           });
+          setLocalCreatedInvoice(await updated.json());
           queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
         } catch {
           invoiceUpdateFailed = true;

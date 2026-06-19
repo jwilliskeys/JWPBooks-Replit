@@ -18,7 +18,8 @@ import {
   Calendar, Clock, Music, Pencil, FileText, CheckCircle,
   Trash2, ExternalLink, MapPin, User, X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Checkbox } from "@/components/ui/checkbox";
+import { cn, formatPhone } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Customer, Piano, Invoice } from "@shared/schema";
@@ -38,6 +39,8 @@ type FormState = {
   priceEstimate: string;
   notes: string;
   status: string;
+  pianoId: number | null;
+  isTuning: boolean;
 };
 
 function invoiceStatusBadge(status: string | null | undefined) {
@@ -61,6 +64,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const [form, setForm] = useState<FormState>({
     date: "", time: "", duration: "",
     servicesRequested: "", priceEstimate: "", notes: "", status: "scheduled",
+    pianoId: null, isTuning: false,
   });
   const { toast } = useToast();
 
@@ -75,6 +79,8 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
         priceEstimate: appointment.priceEstimate ?? "",
         notes: appointment.notes ?? "",
         status: appointment.status ?? "scheduled",
+        pianoId: appointment.pianoId ?? null,
+        isTuning: appointment.isTuning ?? false,
       });
       setEditMode(false);
       setLocalCreatedInvoice(null);
@@ -89,6 +95,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const customer = customers?.find(c => c.id === displayed?.customerId);
   const piano = allPianos?.find(p => p.id === displayed?.pianoId);
   const pianoLabel = piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : null;
+  const customerPianos = allPianos?.filter(p => p.customerId === displayed?.customerId && p.isActive !== false) ?? [];
 
   const linkedInvoice = localCreatedInvoice
     ?? allInvoices?.find(inv => inv.appointmentId === displayed?.id)
@@ -190,6 +197,9 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   async function handleCompleteSuccess() {
     await queryClient.refetchQueries({ queryKey: ["/api/appointments"] });
     queryClient.invalidateQueries({ queryKey: ["/api/customers", String(displayed?.customerId), "appointments"] });
+    // Completion may have auto-created a draft invoice server-side; make sure this
+    // dialog's own linkedInvoice lookup picks it up right away.
+    queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
     const refreshed = queryClient.getQueryData<Appointment[]>(["/api/appointments"]);
     const fresh = refreshed?.find(a => a.id === displayed?.id);
     if (fresh) setLocalAppt(fresh);
@@ -236,6 +246,8 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                             priceEstimate: displayed.priceEstimate ?? "",
                             notes: displayed.notes ?? "",
                             status: displayed.status ?? "scheduled",
+                            pianoId: displayed.pianoId ?? null,
+                            isTuning: displayed.isTuning ?? false,
                           });
                           setEditMode(false);
                         }}
@@ -319,6 +331,38 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                       placeholder="Services..."
                       data-testid="input-appt-services"
                     />
+                  </div>
+                  {customerPianos.length > 0 && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Piano</Label>
+                      <Select
+                        value={form.pianoId ? String(form.pianoId) : "none"}
+                        onValueChange={v => setForm(f => ({ ...f, pianoId: v === "none" ? null : parseInt(v) }))}
+                      >
+                        <SelectTrigger className="h-8 text-sm" data-testid="select-appt-piano">
+                          <SelectValue placeholder="No specific piano" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No specific piano</SelectItem>
+                          {customerPianos.map(p => (
+                            <SelectItem key={p.id} value={String(p.id)}>
+                              {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 pt-1">
+                    <Checkbox
+                      id="edit-is-tuning"
+                      checked={form.isTuning}
+                      onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
+                      data-testid="checkbox-edit-is-tuning"
+                    />
+                    <label htmlFor="edit-is-tuning" className="text-sm cursor-pointer select-none">
+                      This appointment includes a tuning
+                    </label>
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Notes</Label>
@@ -474,7 +518,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                           </div>
                           <div>
                             <p className="text-sm font-semibold">{customer.firstName} {customer.lastName}</p>
-                            {customer.phone && <p className="text-xs text-muted-foreground">{customer.phone}</p>}
+                            {customer.phone && <p className="text-xs text-muted-foreground">{formatPhone(customer.phone)}</p>}
                           </div>
                           <ExternalLink className="h-3.5 w-3.5 text-muted-foreground ml-auto shrink-0" />
                         </div>
