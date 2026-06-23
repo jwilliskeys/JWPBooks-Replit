@@ -185,6 +185,10 @@ export const invoices = pgTable("invoices", {
   customerPhone: text("customer_phone"),
   pianoDescription: text("piano_description"),
   assignedTo: text("assigned_to").default("John Willis"),
+  // "client" = regular piano-service billing (default). "falcetti" = the
+  // biweekly Falcetti Pianos / BU paycheck — shown on income tracking but
+  // completely excluded from SE-tax, income-tax, and sales-tax calculations.
+  incomeSource: text("income_source").default("client"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

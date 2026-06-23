@@ -47,12 +47,15 @@ import {
   parseDurationToMinutes,
 } from "@/lib/scheduling";
 
-const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
+// Primary home base (Somerville). Only swaps to the Centerville, UT base
+// below during SLC trip days — see isSLCDay in TodayItinerary.
+const HOME_ADDRESS_BOSTON = "14 Murdock St Apt #3-4, Somerville, MA";
+const HOME_ADDRESS_SLC = "868 S 700 E, Centerville, UT 84014";
 
-function buildAddress(cust: Customer | undefined): string {
-  if (!cust) return HOME_ADDRESS;
+function buildAddress(cust: Customer | undefined, homeFallback: string = HOME_ADDRESS_BOSTON): string {
+  if (!cust) return homeFallback;
   const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean);
-  return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
+  return parts.length > 0 ? parts.join(", ") : homeFallback;
 }
 
 function parseDate(dateStr: string | null | undefined): Date | null {
@@ -305,7 +308,12 @@ function TodayItinerary({
     const cust = todayAppointments.map((a) =>
       customers?.find((c) => c.id === a.customerId)
     );
-    return [HOME_ADDRESS, ...cust.map(buildAddress), HOME_ADDRESS];
+    // Today counts as an SLC trip day (home base = Centerville, UT) only if
+    // every appointment on the books today is in the SLC area. Otherwise
+    // default to the Somerville home base.
+    const isSLCDay = cust.length > 0 && cust.every((c) => c && classifyCustomer(c) === "slc");
+    const home = isSLCDay ? HOME_ADDRESS_SLC : HOME_ADDRESS_BOSTON;
+    return [home, ...cust.map((c) => buildAddress(c, home)), home];
   }, [todayAppointments, customers]);
 
   const { data: drivingData } = useQuery<{
@@ -472,16 +480,22 @@ function TodayItinerary({
 
 // ── Revenue Chart ─────────────────────────────────────────────────────────────
 
-type RevenueFilter = "all" | "boston" | "slc" | "other";
+type RevenueFilter = "all" | "boston" | "slc" | "falcetti" | "other";
+
+// Brand color for Falcetti Pianos income — matches the rose accent already
+// used for the "BU · Falcetti Pianos" work block on the calendar page.
+const FALCETTI_COLOR = "hsl(142 71% 45%)";
 
 interface MonthlyIncomeData {
   month: string;
   monthKey: string;
   bostonPaid: number;
   slcPaid: number;
+  falcettiPaid: number;
   otherPaid: number;
   bostonTotal: number;
   slcTotal: number;
+  falcettiTotal: number;
   otherTotal: number;
 }
 
@@ -503,12 +517,15 @@ function CustomTooltip({ active, payload, label, filter, monthData }: CustomTool
       ? [
           { label: "Boston", total: d.bostonTotal, paid: d.bostonPaid, color: "hsl(221 83% 53%)" },
           { label: "SLC", total: d.slcTotal, paid: d.slcPaid, color: "hsl(38 92% 50%)" },
+          { label: "Falcetti", total: d.falcettiTotal, paid: d.falcettiPaid, color: FALCETTI_COLOR },
           { label: "Other", total: d.otherTotal, paid: d.otherPaid, color: "hsl(var(--muted-foreground))" },
         ]
       : filter === "boston"
       ? [{ label: "Boston", total: d.bostonTotal, paid: d.bostonPaid, color: "hsl(221 83% 53%)" }]
       : filter === "slc"
       ? [{ label: "SLC", total: d.slcTotal, paid: d.slcPaid, color: "hsl(38 92% 50%)" }]
+      : filter === "falcetti"
+      ? [{ label: "Falcetti", total: d.falcettiTotal, paid: d.falcettiPaid, color: FALCETTI_COLOR }]
       : [{ label: "Other", total: d.otherTotal, paid: d.otherPaid, color: "hsl(var(--muted-foreground))" }];
 
   return (
@@ -535,6 +552,7 @@ const FILTER_PILLS: { key: RevenueFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "boston", label: "Boston" },
   { key: "slc", label: "SLC" },
+  { key: "falcetti", label: "Falcetti" },
   { key: "other", label: "Other" },
 ];
 
@@ -565,9 +583,11 @@ function MonthlyIncomeChart({
         month: `${MONTH_NAMES[d.getMonth()]} ${String(d.getFullYear()).slice(-2)}`,
         bostonPaid: 0,
         slcPaid: 0,
+        falcettiPaid: 0,
         otherPaid: 0,
         bostonTotal: 0,
         slcTotal: 0,
+        falcettiTotal: 0,
         otherTotal: 0,
       });
     }
@@ -580,6 +600,13 @@ function MonthlyIncomeChart({
       if (!entry) return;
       const total = parseDollar(inv.total);
       const paid = inv.status === "paid" ? parseDollar(inv.paidAmount ?? inv.total) : 0;
+      // Falcetti paychecks are their own bucket regardless of customer
+      // address — it's payroll income, not regional client billing.
+      if (inv.incomeSource === "falcetti") {
+        entry.falcettiTotal += total;
+        entry.falcettiPaid += paid;
+        return;
+      }
       const cust = inv.customerId != null ? customerMap.get(inv.customerId) : undefined;
       const bucket = cust ? classifyCustomer(cust) : "other";
       if (bucket === "boston") {
@@ -605,9 +632,11 @@ function MonthlyIncomeChart({
           month: d.month,
           Boston: d.bostonPaid,
           SLC: d.slcPaid,
+          Falcetti: d.falcettiPaid,
           Other: d.otherPaid,
           bostonTotal: d.bostonTotal,
           slcTotal: d.slcTotal,
+          falcettiTotal: d.falcettiTotal,
           otherTotal: d.otherTotal,
         };
       }
@@ -615,6 +644,8 @@ function MonthlyIncomeChart({
         return { month: d.month, Paid: d.bostonPaid, Total: d.bostonTotal };
       if (filter === "slc")
         return { month: d.month, Paid: d.slcPaid, Total: d.slcTotal };
+      if (filter === "falcetti")
+        return { month: d.month, Paid: d.falcettiPaid, Total: d.falcettiTotal };
       return { month: d.month, Paid: d.otherPaid, Total: d.otherTotal };
     });
   }, [monthlyData, filter]);
@@ -686,6 +717,12 @@ function MonthlyIncomeChart({
                     radius={[0, 0, 0, 0]}
                   />
                   <Bar
+                    dataKey="Falcetti"
+                    stackId="paid"
+                    fill={FALCETTI_COLOR}
+                    radius={[0, 0, 0, 0]}
+                  />
+                  <Bar
                     dataKey="Other"
                     stackId="paid"
                     fill="hsl(var(--muted-foreground) / 0.4)"
@@ -701,6 +738,8 @@ function MonthlyIncomeChart({
                         ? "hsl(221 83% 53% / 0.25)"
                         : filter === "slc"
                         ? "hsl(38 92% 50% / 0.25)"
+                        : filter === "falcetti"
+                        ? "hsl(142 71% 45% / 0.25)"
                         : "hsl(var(--muted-foreground) / 0.2)"
                     }
                     radius={[3, 3, 0, 0]}
@@ -712,6 +751,8 @@ function MonthlyIncomeChart({
                         ? "hsl(221 83% 53%)"
                         : filter === "slc"
                         ? "hsl(38 92% 50%)"
+                        : filter === "falcetti"
+                        ? FALCETTI_COLOR
                         : "hsl(var(--muted-foreground))"
                     }
                     radius={[3, 3, 0, 0]}
@@ -737,6 +778,13 @@ function MonthlyIncomeChart({
                   style={{ background: "hsl(38 92% 50%)" }}
                 />
                 SLC
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-sm"
+                  style={{ background: FALCETTI_COLOR }}
+                />
+                Falcetti
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className="inline-block h-2.5 w-2.5 rounded-sm bg-muted-foreground/40" />

@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Phone, Mail, Plus, Trash2, Pencil, Church, Music, Mic, Building2,
+  Phone, Mail, MailPlus, Plus, Trash2, Pencil, Church, Music, Mic, Building2,
   GraduationCap, MapPin, PhoneCall, Globe, Star, Search, Compass, CheckCircle2,
   CalendarClock,
 } from "lucide-react";
@@ -115,6 +115,21 @@ const todayMDY = () => {
 };
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// First-touch outreach email — generic enough to fit churches, schools,
+// studios, and venues alike since they're all "organizations" with pianos.
+function buildOutreachEmail(lead: OutreachLead): { subject: string; body: string } {
+  const subject = "Piano tuning & repair services";
+  const orgName = lead.name || "your organization";
+  const body =
+    `Hello,\n\n` +
+    `My name is Willis Krammer, a registered piano technician with 7 years of full-time experience tuning, repairing, and rebuilding pianos. I'm reaching out to the music director or whoever oversees piano care at ${orgName} to see if you have a piano in use that is in need of a tuning or repairs.\n\n` +
+    `I'm based in Somerville and serve as the Head Technician at Boston University during the week, which leaves me with some open availability on weekends if that's helpful for scheduling.\n\n` +
+    `Happy to answer any questions, and I'm looking forward to hearing from you.\n\n` +
+    `Best,\nWillis Krammer\nJohn Willis Piano\n\n` +
+    `johnwillispiano.com\nj.willis.keys@gmail.com\n435-275-5959`;
+  return { subject, body };
+}
 
 const EMPTY_FORM: Partial<InsertOutreachLead> = {
   leadType: "church",
@@ -297,6 +312,17 @@ export default function OutreachPage() {
     toast({ title: method === "phone" ? "Call logged" : "Email logged", description: l.name });
   }
 
+  // Opens a pre-filled first-touch outreach email in the user's mail client.
+  // Doesn't send anything or change status — that's still "Log an email".
+  function draftEmail(l: OutreachLead) {
+    if (!l.email) {
+      toast({ title: "No email on file", description: `Add an email for ${l.name} first.`, variant: "destructive" });
+      return;
+    }
+    const { subject, body } = buildOutreachEmail(l);
+    window.location.href = `mailto:${l.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -435,6 +461,7 @@ export default function OutreachPage() {
                     onStatusChange={(status) => updateMutation.mutate({ id: l.id, data: { status } })}
                     onLogCall={() => logContact(l, "phone")}
                     onLogEmail={() => logContact(l, "email")}
+                    onDraftEmail={() => draftEmail(l)}
                     onEdit={() => openEdit(l)}
                     onDelete={() => setDeleteId(l.id)}
                   />
@@ -613,12 +640,13 @@ function StatCard({ label, value, icon: Icon }: { label: string; value: number; 
 }
 
 function LeadRow({
-  lead, onStatusChange, onLogCall, onLogEmail, onEdit, onDelete,
+  lead, onStatusChange, onLogCall, onLogEmail, onDraftEmail, onEdit, onDelete,
 }: {
   lead: OutreachLead;
   onStatusChange: (status: string) => void;
   onLogCall: () => void;
   onLogEmail: () => void;
+  onDraftEmail: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -706,6 +734,16 @@ function LeadRow({
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8" title="Log an email" onClick={onLogEmail} data-testid={`button-logemail-${lead.id}`}>
               <Mail className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              title={lead.email ? `Draft outreach email to ${lead.email}` : "Add an email to draft outreach"}
+              onClick={onDraftEmail}
+              data-testid={`button-draftemail-${lead.id}`}
+            >
+              <MailPlus className="h-4 w-4" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8" title="Edit" onClick={onEdit} data-testid={`button-edit-${lead.id}`}>
               <Pencil className="h-4 w-4" />

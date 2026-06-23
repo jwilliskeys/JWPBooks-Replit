@@ -122,6 +122,8 @@ import {
   type ExistingAppointment,
 } from "@/lib/scheduling";
 
+// Trip Planner is SLC-trip-specific, so home base here is always the
+// Centerville, UT address (vs. the Somerville home base used everywhere else).
 const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
 
 function buildCustomerAddress(cust: { address?: string | null; city?: string | null; state?: string | null; zipCode?: string | null } | undefined): string {

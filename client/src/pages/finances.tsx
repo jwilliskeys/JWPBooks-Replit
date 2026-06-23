@@ -31,7 +31,7 @@ import type { Invoice, MileageLog, BusinessExpense, Appointment, Customer, BankA
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const STANDARD_DEDUCTION = 15000; // 2026 single filer
-const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014"; // SLC home base (customer fallback)
+const HOME_ADDRESS = "14 Murdock St Apt #3-4, Somerville, MA"; // Boston home base (customer fallback)
 const MILEAGE_ORIGIN = "Somerville, MA"; // Boston mileage start point
 
 function buildCustomerAddress(cust: Customer | undefined): string {
@@ -199,6 +199,9 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
   const ytdCollected = useMemo(() => {
     let total = 0;
     invoices?.forEach(inv => {
+      // Falcetti is W-9 payroll income, not self-employment billing — fully
+      // excluded from tax calculations (SE tax, income tax, safe harbor).
+      if (inv.incomeSource === "falcetti") return;
       if (inv.status !== "paid") return;
       const date = parseDate(inv.invoiceDate);
       if (!date || date.getFullYear() !== currentYear) return;
@@ -211,6 +214,7 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
   const ytdOutstanding = useMemo(() => {
     let total = 0;
     invoices?.forEach(inv => {
+      if (inv.incomeSource === "falcetti") return;
       if (inv.status === "paid") return;
       const date = parseDate(inv.invoiceDate);
       if (!date || date.getFullYear() !== currentYear) return;
@@ -225,6 +229,7 @@ function TaxPanel({ invoices, loading }: { invoices: Invoice[] | undefined; load
   const quarterlyData = useMemo(() => {
     const quarters: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0 };
     invoices?.forEach(inv => {
+      if (inv.incomeSource === "falcetti") return;
       if (inv.status !== "paid") return;
       const date = parseDate(inv.invoiceDate);
       if (!date || date.getFullYear() !== currentYear) return;
@@ -1429,6 +1434,9 @@ function SalesTaxTab({ invoices }: { invoices: Invoice[] | undefined }) {
 
   const yearInvoices = useMemo(() =>
     (invoices ?? []).filter(inv => {
+      // Falcetti payroll income isn't piano-service billing — exclude from
+      // sales-tax revenue tracking (labor/parts/untagged).
+      if (inv.incomeSource === "falcetti") return false;
       const d = parseDate(inv.invoiceDate);
       return d && String(d.getFullYear()) === yearFilter && inv.status === "paid";
     }),
