@@ -184,6 +184,9 @@ export async function registerRoutes(
     if (req.path === "/scheduler-settings/public" && req.method === "GET") return next();
     if (req.path === "/booking/available-slots" && req.method === "GET") return next();
     if (req.path === "/booking/services" && req.method === "GET") return next();
+    // Address autocomplete for the public booking page (server-side Google key)
+    if (req.path === "/places/autocomplete" && req.method === "GET") return next();
+    if (req.path === "/places/details" && req.method === "GET") return next();
     return isAuthenticated(req, res, next);
   });
 
@@ -1737,7 +1740,7 @@ export async function registerRoutes(
 
       const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
       url.searchParams.set("place_id", placeId);
-      url.searchParams.set("fields", "address_components,formatted_address");
+      url.searchParams.set("fields", "address_components,formatted_address,geometry");
       url.searchParams.set("key", key);
 
       const resp = await fetch(url.toString());
@@ -1745,6 +1748,7 @@ export async function registerRoutes(
         result?: {
           address_components?: Array<{ types: string[]; long_name: string; short_name: string }>;
           formatted_address?: string;
+          geometry?: { location?: { lat: number; lng: number } };
         };
         status?: string;
       };
@@ -1767,8 +1771,17 @@ export async function registerRoutes(
         pick("locality") || pick("sublocality") || pick("neighborhood");
       const state = pick("administrative_area_level_1", true);
       const zipCode = pick("postal_code");
+      const loc = data.result?.geometry?.location;
 
-      return res.json({ street, city, state, zipCode });
+      return res.json({
+        street,
+        city,
+        state,
+        zipCode,
+        formattedAddress: data.result?.formatted_address ?? "",
+        lat: loc ? String(loc.lat) : "",
+        lng: loc ? String(loc.lng) : "",
+      });
     } catch (err: any) {
       console.error("Places details fetch failed:", err);
       return res.status(500).json({ error: "Fetch failed" });

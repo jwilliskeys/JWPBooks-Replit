@@ -97,48 +97,9 @@ function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) 
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// ── Google Places autocomplete ───────────────────────────────────────────────
-
-declare global {
-  interface Window { google?: any; _gPlacesReady?: boolean; }
-}
-
-function useGooglePlaces(
-  inputRef: React.RefObject<HTMLInputElement>,
-  onSelect: (address: string, lat: string, lng: string) => void,
-) {
-  useEffect(() => {
-    const apiKey = (import.meta as any).env?.VITE_GOOGLE_MAPS_API_KEY;
-    if (!apiKey || !inputRef.current) return;
-
-    function init() {
-      if (!inputRef.current) return;
-      const ac = new window.google.maps.places.Autocomplete(inputRef.current, {
-        types: ["address"],
-        componentRestrictions: { country: "us" },
-      });
-      ac.addListener("place_changed", () => {
-        const place = ac.getPlace();
-        if (!place.geometry) return;
-        const lat = place.geometry.location.lat().toString();
-        const lng = place.geometry.location.lng().toString();
-        onSelect(place.formatted_address || "", lat, lng);
-      });
-    }
-
-    if (window.google?.maps?.places) { init(); return; }
-    if (document.querySelector("#gplaces-script")) {
-      window.addEventListener("gplaces_ready", init, { once: true });
-      return;
-    }
-    const s = document.createElement("script");
-    s.id = "gplaces-script";
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
-    s.async = true;
-    s.onload = () => { window.dispatchEvent(new Event("gplaces_ready")); init(); };
-    document.head.appendChild(s);
-  }, [inputRef, onSelect]);
-}
+// Address autocomplete is handled server-side via /api/places/autocomplete and
+// /api/places/details (see StepLocation) — no in-browser Google widget or
+// browser-exposed Maps key is needed.
 
 // ── Step nav (sidebar on desktop, pills on mobile) ────────────────────────────
 
@@ -295,6 +256,65 @@ export default function BookPage() {
     }
   }, [settings]);
 
+  // ── Step 1 location state ──────────────────────────────────────────────────
+  // These live at the top level of BookPage (not inside StepLocation) on purpose.
+  // The step "components" are rendered inline as function calls, so their hooks
+  // must be declared here to keep hook order stable across renders. Previously
+  // these lived inside StepLocation, which was mounted as <StepLocation /> and
+  // got torn down/rebuilt on every keystroke — stealing focus from the inputs.
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [tab, setTab] = useState<"address" | "map">("address");
+  const [localAddress, setLocalAddress] = useState(form.streetAddress);
+  const [coordLat, setCoordLat] = useState(form.addressLat);
+  const [coordLng, setCoordLng] = useState(form.addressLng);
+
+  // ── Address autocomplete via our own backend (uses the server-side Google
+  //     key — no browser key, no fragile widget, full control over the dropdown)
+  type AddrPrediction = { description: string; place_id: string };
+  const [predictions, setPredictions] = useState<AddrPrediction[]>([]);
+  const [showPredictions, setShowPredictions] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+  const suppressSearchRef = useRef(false);
+
+  // Debounced prediction fetch as the user types.
+  useEffect(() => {
+    if (suppressSearchRef.current) { suppressSearchRef.current = false; return; }
+    const q = localAddress.trim();
+    if (q.length < 3) { setPredictions([]); setShowPredictions(false); return; }
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(q)}`);
+        const d = await r.json();
+        setPredictions(Array.isArray(d.predictions) ? d.predictions : []);
+        setShowPredictions(true);
+      } catch {
+        setPredictions([]);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [localAddress]);
+
+  // User clicked a suggestion → fetch full details (formatted address + lat/lng).
+  const pickPrediction = useCallback(async (p: AddrPrediction) => {
+    suppressSearchRef.current = true;
+    setLocalAddress(p.description);
+    setShowPredictions(false);
+    setPredictions([]);
+    setLoadingDetails(true);
+    try {
+      const r = await fetch(`/api/places/details?place_id=${encodeURIComponent(p.place_id)}`);
+      const d = await r.json();
+      const addr = d.formattedAddress || p.description;
+      suppressSearchRef.current = true;
+      setLocalAddress(addr);
+      handleAddressSelect(addr, d.lat ?? "", d.lng ?? "");
+    } catch {
+      handleAddressSelect(p.description, "", "");
+    } finally {
+      setLoadingDetails(false);
+    }
+  }, [handleAddressSelect]);
+
   // ── Submit ───────────────────────────────────────────────────────────────
   const mutation = useMutation({
     mutationFn: async (data: BookingPayload) => {
@@ -449,19 +469,9 @@ export default function BookPage() {
 
   // ── Step 1: Location ─────────────────────────────────────────────────────
   function StepLocation() {
-    const inputRef = useRef<HTMLInputElement>(null);
-    const [tab, setTab] = useState<"address" | "map">("address");
-    const [localAddress, setLocalAddress] = useState(form.streetAddress);
-    const [coordLat, setCoordLat] = useState(form.addressLat);
-    const [coordLng, setCoordLng] = useState(form.addressLng);
-
-    const handleSelect = useCallback((addr: string, lat: string, lng: string) => {
-      setLocalAddress(addr);
-      handleAddressSelect(addr, lat, lng);
-    }, []);
-
-    useGooglePlaces(inputRef, handleSelect);
-
+    // Hooks for this step are declared at the top level of BookPage (see above),
+    // because this is rendered inline via StepLocation() rather than as a mounted
+    // component. Keep this function hook-free.
     const verified = !!(form.addressLat && form.addressLng);
     const mapSrc = verified
       ? `https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(form.addressLng) - 0.008},${parseFloat(form.addressLat) - 0.005},${parseFloat(form.addressLng) + 0.008},${parseFloat(form.addressLat) + 0.005}&layer=mapnik&marker=${form.addressLat},${form.addressLng}`
@@ -499,14 +509,46 @@ export default function BookPage() {
               <input
                 ref={inputRef}
                 type="text"
-                autoComplete="street-address"
+                autoComplete="off"
                 placeholder="Start typing your address…"
                 value={localAddress}
-                onChange={e => { setLocalAddress(e.target.value); setF("streetAddress", e.target.value); }}
+                onChange={e => {
+                  const v = e.target.value;
+                  setLocalAddress(v);
+                  setF("streetAddress", v);
+                  // Editing the text invalidates any previously-picked coordinates;
+                  // the visitor must choose a suggestion again to set lat/lng.
+                  if (form.addressLat || form.addressLng) {
+                    setF("addressLat", "");
+                    setF("addressLng", "");
+                  }
+                }}
+                onFocus={() => { if (predictions.length) setShowPredictions(true); }}
+                onBlur={() => { setTimeout(() => setShowPredictions(false), 150); }}
                 className={`w-full h-12 pl-9 pr-4 border rounded-lg text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400 ${
                   errors.streetAddress ? "border-red-400" : "border-slate-300"
                 }`}
               />
+              {showPredictions && predictions.length > 0 && (
+                <ul className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-72 overflow-y-auto">
+                  {predictions.map(p => (
+                    <li key={p.place_id}>
+                      <button
+                        type="button"
+                        // onMouseDown fires before the input's onBlur, so the click registers
+                        onMouseDown={e => { e.preventDefault(); pickPrediction(p); }}
+                        className="w-full text-left px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 flex items-start gap-2"
+                      >
+                        <MapPin className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <span>{p.description}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {loadingDetails && (
+                <p className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">Loading…</p>
+              )}
             </div>
             {errors.streetAddress && <p className="text-xs text-red-500">{errors.streetAddress}</p>}
             <p className="text-xs text-slate-400 flex items-center gap-1">
@@ -1046,11 +1088,11 @@ export default function BookPage() {
           {/* Content card */}
           <div className="flex-1 min-w-0">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-6">
-              {step === 1 && <StepLocation />}
-              {step === 2 && <StepPianoService />}
-              {step === 3 && <StepDate />}
-              {step === 4 && <StepTime />}
-              {step === 5 && <StepContact />}
+              {step === 1 && StepLocation()}
+              {step === 2 && StepPianoService()}
+              {step === 3 && StepDate()}
+              {step === 4 && StepTime()}
+              {step === 5 && StepContact()}
             </div>
 
             {/* Error from server */}
