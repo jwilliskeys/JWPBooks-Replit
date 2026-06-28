@@ -9,9 +9,17 @@ const PopoverTrigger = PopoverPrimitive.Trigger
 
 const PopoverContent = React.forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(({ className, align = "center", sideOffset = 4, ...props }, ref) => (
-  <PopoverPrimitive.Portal>
+  React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content> & {
+    /**
+     * When false, the content is rendered inline instead of in a portal on
+     * document.body. Use this for popovers opened inside a Dialog so the
+     * content lives within the dialog's DOM subtree and is not blocked by the
+     * dialog's touch scroll-lock (lets the dropdown scroll on mobile).
+     */
+    portalled?: boolean
+  }
+>(({ className, align = "center", sideOffset = 4, portalled = true, ...props }, ref) => {
+  const content = (
     <PopoverPrimitive.Content
       ref={ref}
       align={align}
@@ -22,8 +30,12 @@ const PopoverContent = React.forwardRef<
       )}
       {...props}
     />
-  </PopoverPrimitive.Portal>
-))
+  )
+
+  if (!portalled) return content
+
+  return <PopoverPrimitive.Portal>{content}</PopoverPrimitive.Portal>
+})
 PopoverContent.displayName = PopoverPrimitive.Content.displayName
 
 export { Popover, PopoverTrigger, PopoverContent }

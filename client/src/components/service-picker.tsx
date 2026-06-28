@@ -141,8 +141,15 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
             </Button>
           </PopoverTrigger>
           <PopoverContent
-            className="w-64 p-2 max-h-64 overflow-y-auto"
+            portalled={false}
+            className="w-64 p-2 overflow-y-auto overscroll-contain"
+            style={{
+              maxHeight:
+                "min(16rem, var(--radix-popover-content-available-height))",
+              WebkitOverflowScrolling: "touch",
+            }}
             align="start"
+            collisionPadding={12}
           >
             {sections.map(({ label, items }) => (
               <div key={label} className="mb-1.5 last:mb-0">
