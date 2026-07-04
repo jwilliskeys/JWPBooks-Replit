@@ -593,7 +593,8 @@ export async function registerRoutes(
     }
   });
 
-  app.use("/uploads", (await import("express")).default.static(path.join(process.cwd(), "uploads")));
+  // Piano/receipt photos contain client info — require auth like the rest of the app.
+  app.use("/uploads", isAuthenticated, (await import("express")).default.static(path.join(process.cwd(), "uploads")));
 
   // ── Inventory (stored as JSON file on disk) ────────────────────────────────
   const inventoryFilePath = path.join(process.cwd(), "data", "inventory.json");
@@ -1430,6 +1431,43 @@ export async function registerRoutes(
       if (!parsed.success) return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       const lead = await storage.createOutreachLead(parsed.data, userId);
       res.status(201).json(lead);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Geocodes every lead that's missing lat/lng so it can appear on the map view.
+  // Registered before "/:id" so the path isn't swallowed by the param route.
+  app.post("/api/outreach-leads/geocode-missing", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const key = process.env.GOOGLE_MAPS_API_KEY;
+      if (!key) return res.status(503).json({ message: "GOOGLE_MAPS_API_KEY not configured" });
+      const leads = await storage.getOutreachLeads(userId);
+      const missing = leads.filter((l) => !l.lat || !l.lng);
+      let geocoded = 0;
+      let failed = 0;
+      for (const lead of missing) {
+        const q = [lead.name, lead.address, lead.city, "MA"].filter(Boolean).join(", ");
+        try {
+          const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+          url.searchParams.set("address", q);
+          url.searchParams.set("key", key);
+          const resp = await fetch(url.toString());
+          const data = (await resp.json()) as any;
+          const loc = data?.results?.[0]?.geometry?.location;
+          if (loc) {
+            await storage.updateOutreachLead(lead.id, userId, { lat: String(loc.lat), lng: String(loc.lng) });
+            geocoded++;
+          } else {
+            failed++;
+          }
+          await new Promise((r) => setTimeout(r, 60)); // gentle rate limit
+        } catch {
+          failed++;
+        }
+      }
+      res.json({ geocoded, failed, remaining: failed });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

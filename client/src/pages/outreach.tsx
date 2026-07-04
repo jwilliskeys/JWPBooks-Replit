@@ -22,8 +22,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Phone, Mail, MailPlus, Plus, Trash2, Pencil, Church, Music, Mic, Building2,
   GraduationCap, MapPin, PhoneCall, Globe, Star, Search, Compass, CheckCircle2,
-  CalendarClock,
+  CalendarClock, Armchair, List as ListIcon, Map as MapIcon, Lightbulb,
 } from "lucide-react";
+import { OutreachMap } from "@/components/outreach-map";
 import type { OutreachLead, InsertOutreachLead } from "@shared/schema";
 
 // ── Lead types ──────────────────────────────────────────────────────────────
@@ -33,11 +34,12 @@ const LEAD_TYPES = [
   { value: "recording_studio", label: "Recording studio", icon: Mic },
   { value: "hotel_venue", label: "Hotel / venue", icon: Building2 },
   { value: "school", label: "School", icon: GraduationCap },
+  { value: "senior_living", label: "Senior living", icon: Armchair },
   { value: "other", label: "Other", icon: MapPin },
 ] as const;
 
 function typeInfo(t: string | null | undefined) {
-  return LEAD_TYPES.find((x) => x.value === t) ?? LEAD_TYPES[5];
+  return LEAD_TYPES.find((x) => x.value === t) ?? LEAD_TYPES[LEAD_TYPES.length - 1];
 }
 
 // ── Status presets + colors ──────────────────────────────────────────────────
@@ -116,19 +118,82 @@ const todayMDY = () => {
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
-// First-touch outreach email — generic enough to fit churches, schools,
-// studios, and venues alike since they're all "organizations" with pianos.
+// First-touch outreach email, tailored per venue type so it reads like it was
+// written for them — not a blast. Short on purpose: easy to answer, easy to ignore
+// without guilt, and it invites a reply rather than pushing a sale.
 function buildOutreachEmail(lead: OutreachLead): { subject: string; body: string } {
-  const subject = "Piano tuning & repair services";
   const orgName = lead.name || "your organization";
-  const body =
-    `Hello,\n\n` +
-    `My name is Willis Krammer, a registered piano technician with 7 years of full-time experience tuning, repairing, and rebuilding pianos. I'm reaching out to the music director or whoever oversees piano care at ${orgName} to see if you have a piano in use that is in need of a tuning or repairs.\n\n` +
-    `I'm based in Somerville and serve as the Head Technician at Boston University during the week, which leaves me with some open availability on weekends if that's helpful for scheduling.\n\n` +
-    `Happy to answer any questions, and I'm looking forward to hearing from you.\n\n` +
+  const signature =
     `Best,\nWillis Krammer\nJohn Willis Piano\n\n` +
     `johnwillispiano.com\nj.willis.keys@gmail.com\n435-275-5959`;
+
+  const intro = `My name is Willis Krammer — I'm a registered piano technician based in Somerville with 7 years of full-time experience, and I serve as the Head Technician at Boston University during the week.`;
+
+  let subject = "Piano tuning & repair services";
+  let middle = "";
+
+  switch (lead.leadType) {
+    case "church":
+      subject = `A local piano technician for ${orgName}`;
+      middle =
+        `I'm writing to whoever oversees music at ${orgName}. Sanctuary and fellowship-hall pianos work hard on Sundays and often go years between tunings — if yours is due (or has a note or two acting up), I'd be glad to stop by, take a look, and give you an honest read on what it needs. No obligation either way.`;
+      break;
+    case "teaching_studio":
+      subject = "Fellow piano person in Somerville — tuning for you & your students";
+      middle =
+        `I'm reaching out teacher-to-technician: I take care of studio instruments, and I'm also the person a lot of families ask their teacher to recommend when their home piano needs work. If it would be useful to have a local tech you can confidently point students to — or your own instruments are due — I'd love to connect.`;
+      break;
+    case "recording_studio":
+      subject = `Session-ready piano prep for ${orgName}`;
+      middle =
+        `I do concert- and session-level tuning and voicing, including same-week touch-ups before tracking dates. If your house piano could use a regular tech — or you'd like someone on call for sessions — I'd be glad to come by, meet you, and look the instrument over.`;
+      break;
+    case "hotel_venue":
+      subject = `Keeping the piano at ${orgName} performance-ready`;
+      middle =
+        `Lobby, bar, and event pianos take a beating and are usually the last thing on the maintenance list. I keep instruments like these on a simple seasonal schedule so they're always guest-ready, and I can also do pre-event touch-ups. Happy to stop in and give yours a quick, free assessment.`;
+      break;
+    case "school":
+      subject = `Piano care for ${orgName}`;
+      middle =
+        `I maintain the pianos at Boston University during the week, so classroom and performance instruments are my daily work. If your music rooms have pianos due for tuning or repair — or you'd like a once-a-year maintenance plan that fits the school calendar — I'd be glad to help.`;
+      break;
+    case "senior_living":
+      subject = `The piano in your common room — a friendly offer`;
+      middle =
+        `Common-room pianos do a lot of good — singalongs, visiting performers, residents who've played all their lives — and they're often long overdue for care. I'd be happy to stop by, check yours over for free, and let your activities team know exactly where it stands.`;
+      break;
+    default:
+      middle =
+        `I'm reaching out to whoever oversees piano care at ${orgName} to see if you have an instrument that's due for tuning or repairs. I'd be glad to take a look and give you an honest read on what it needs.`;
+  }
+
+  const availability = `Weekends and late afternoons are usually easiest for me to schedule, and I'm close by in Somerville.`;
+
+  const body = `Hello,\n\n${intro}\n\n${middle}\n\n${availability}\n\nHappy to answer any questions.\n\n${signature}`;
   return { subject, body };
+}
+
+// Suggests the next human touch based on where things stand. The point:
+// vary the channel (email → call → drop-in) instead of repeat-emailing,
+// which is why outreach starts to feel like pestering.
+function nextStepHint(lead: OutreachLead): string | null {
+  const s = (lead.status || "").toLowerCase();
+  if (s.includes("client") || s.includes("not interested") || s.includes("not in service")) return null;
+  if (!lead.contactedDate) {
+    if (lead.leadType === "church") return "First touch: call Tue–Thu mid-morning — church offices rarely answer email from strangers.";
+    if (lead.leadType === "senior_living") return "First touch: call and ask for the Activities Director by title.";
+    if (lead.leadType === "teaching_studio") return "First touch: short personal email, then say hi in person — teachers value the human connection.";
+    return "First touch: a call beats an email for venues — ask who handles the piano.";
+  }
+  if (s.includes("emailed") && s.includes("no reply"))
+    return "Don't re-email — switch channels: one phone call, or drop by in person. It reads as friendly, not pushy.";
+  if (s.includes("voicemail"))
+    return "Follow the voicemail with a short email so they can reply on their own time.";
+  if (s.includes("conversation") || s.includes("interested"))
+    return "Warm — offer a specific time window for a free assessment to make saying yes easy.";
+  if (s.includes("callback")) return "Callback promised — set the follow-up date so it doesn't slip.";
+  return null;
 }
 
 const EMPTY_FORM: Partial<InsertOutreachLead> = {
@@ -158,6 +223,7 @@ export default function OutreachPage() {
   const [cityFilter, setCityFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [view, setView] = useState<"list" | "map">("list");
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -183,6 +249,19 @@ export default function OutreachPage() {
       (await apiRequest("PATCH", `/api/outreach-leads/${id}`, data)).json(),
     onSuccess: () => invalidate(),
     onError: (e: any) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
+  });
+
+  const geocodeMutation = useMutation({
+    mutationFn: async () =>
+      (await apiRequest("POST", "/api/outreach-leads/geocode-missing")).json(),
+    onSuccess: (r: { geocoded: number; failed: number }) => {
+      invalidate();
+      toast({
+        title: `Located ${r.geocoded} lead${r.geocoded === 1 ? "" : "s"} on the map`,
+        description: r.failed ? `${r.failed} couldn't be found — add a street address and retry.` : undefined,
+      });
+    },
+    onError: (e: any) => toast({ title: "Geocoding failed", description: e.message, variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -429,10 +508,39 @@ export default function OutreachPage() {
             ))}
           </SelectContent>
         </Select>
+        <div className="flex rounded-md border overflow-hidden">
+          <Button
+            variant={view === "list" ? "secondary" : "ghost"}
+            size="sm"
+            className="rounded-none"
+            onClick={() => setView("list")}
+            data-testid="button-view-list"
+          >
+            <ListIcon className="h-4 w-4 mr-1" /> List
+          </Button>
+          <Button
+            variant={view === "map" ? "secondary" : "ghost"}
+            size="sm"
+            className="rounded-none"
+            onClick={() => setView("map")}
+            data-testid="button-view-map"
+          >
+            <MapIcon className="h-4 w-4 mr-1" /> Map
+          </Button>
+        </div>
       </div>
 
+      {/* Map view — shows the same filtered set as the list */}
+      {view === "map" && !isLoading && (
+        <OutreachMap
+          leads={filtered}
+          onGeocodeMissing={() => geocodeMutation.mutate()}
+          isGeocoding={geocodeMutation.isPending}
+        />
+      )}
+
       {/* List */}
-      {isLoading ? (
+      {view === "map" ? null : isLoading ? (
         <div className="space-y-3">
           {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-20 w-full" />)}
         </div>
@@ -691,6 +799,12 @@ function LeadRow({
               {lead.notes && <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{lead.notes}</p>}
               {lead.currentTechnician && lead.currentTechnician !== "-" && (
                 <p className="text-xs text-muted-foreground mt-0.5">Current tech: {lead.currentTechnician}</p>
+              )}
+              {nextStepHint(lead) && (
+                <p className="text-xs mt-1 inline-flex items-start gap-1 text-amber-700 dark:text-amber-400" data-testid={`hint-nextstep-${lead.id}`}>
+                  <Lightbulb className="h-3.5 w-3.5 shrink-0 mt-[1px]" />
+                  <span>{nextStepHint(lead)}</span>
+                </p>
               )}
             </div>
           </div>

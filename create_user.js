@@ -1,6 +1,12 @@
 const pg = require('pg');
 
-const dbUrl = 'postgresql://neondb_owner:npg_PN0cXzRHtQh2@ep-twilight-hat-apxn7qn0.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require';
+// SECURITY: never hardcode credentials here — this file is tracked in git.
+// Run with: set -a && source .env && set +a && node create_user.js
+const dbUrl = process.env.DATABASE_URL;
+if (!dbUrl) {
+  console.error('DATABASE_URL is not set. Source your .env first.');
+  process.exit(1);
+}
 const client = new pg.Client(dbUrl);
 
 (async () => {

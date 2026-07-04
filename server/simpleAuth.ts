@@ -1,13 +1,18 @@
 /**
- * simpleAuth.ts — Single-owner auto-auth
+ * simpleAuth.ts — Single-owner passcode auth
  *
- * No login screen. Every request is automatically the owner.
- * The owner user is looked up (or created) once on startup and
- * injected into every session transparently.
+ * If OWNER_PASSCODE is set in .env, every /api route (except the public
+ * booking endpoints whitelisted in routes.ts) requires a session that was
+ * established via POST /api/login with the correct passcode. The session
+ * cookie lasts 1 year, so Willis logs in roughly once per device per year.
+ *
+ * If OWNER_PASSCODE is NOT set, the app falls back to the old behavior:
+ * every request is automatically the owner (safe only for local-only use).
  */
 
 import session from "express-session";
 import connectPg from "connect-pg-simple";
+import { timingSafeEqual } from "crypto";
 import type { Express, RequestHandler } from "express";
 
 declare module "express-session" {
@@ -19,6 +24,32 @@ declare module "express-session" {
     userLastName: string | null;
     profileImageUrl: string | null;
   }
+}
+
+const PASSCODE = process.env.OWNER_PASSCODE?.trim() || "";
+const passcodeModeEnabled = PASSCODE.length > 0;
+
+function passcodeMatches(candidate: string): boolean {
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(PASSCODE);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+// --- Simple in-memory login rate limit: 10 attempts / 15 min per IP ---
+const attempts = new Map<string, { count: number; resetAt: number }>();
+const MAX_ATTEMPTS = 10;
+const WINDOW_MS = 15 * 60 * 1000;
+
+function rateLimited(ip: string): boolean {
+  const now = Date.now();
+  const entry = attempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    attempts.set(ip, { count: 1, resetAt: now + WINDOW_MS });
+    return false;
+  }
+  entry.count++;
+  return entry.count > MAX_ATTEMPTS;
 }
 
 export function getSession() {
@@ -36,7 +67,8 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: false, // local dev — no HTTPS needed
+      // Secure cookies in production (Replit serves HTTPS; trust proxy is set).
+      secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: sessionTtl,
     },
@@ -78,39 +110,68 @@ async function getOwner() {
   return cachedOwner;
 }
 
+type SessionRequest = { session: session.Session & Partial<session.SessionData> };
+
+async function attachOwnerToSession(req: SessionRequest) {
+  const owner = await getOwner();
+  req.session.authenticated = true;
+  req.session.userId = owner.id;
+  req.session.userEmail = owner.email;
+  req.session.userFirstName = owner.firstName;
+  req.session.userLastName = owner.lastName;
+  req.session.profileImageUrl = null;
+}
+
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   app.use(getSession());
 
-  // Auto-inject owner session on every request that doesn't already have one
-  app.use(async (req, _res, next) => {
-    if (!req.session.authenticated) {
-      try {
-        const owner = await getOwner();
-        req.session.authenticated = true;
-        req.session.userId = owner.id;
-        req.session.userEmail = owner.email;
-        req.session.userFirstName = owner.firstName;
-        req.session.userLastName = owner.lastName;
-        req.session.profileImageUrl = null;
-      } catch {
-        // If DB isn't ready yet, just continue — will retry next request
+  if (!passcodeModeEnabled) {
+    // Legacy auto-auth: every request becomes the owner. Local-only safety net.
+    app.use(async (req, _res, next) => {
+      if (!req.session.authenticated) {
+        try {
+          await attachOwnerToSession(req);
+        } catch {
+          // If DB isn't ready yet, just continue — will retry next request
+        }
       }
+      next();
+    });
+  }
+
+  app.post("/api/login", async (req, res) => {
+    if (!passcodeModeEnabled) {
+      return res.json({ ok: true });
     }
-    next();
+    const ip = req.ip ?? "unknown";
+    if (rateLimited(ip)) {
+      return res.status(429).json({ message: "Too many attempts. Try again in 15 minutes." });
+    }
+    const passcode = typeof req.body?.passcode === "string" ? req.body.passcode : "";
+    if (!passcodeMatches(passcode)) {
+      return res.status(401).json({ message: "Incorrect passcode." });
+    }
+    try {
+      await attachOwnerToSession(req);
+      attempts.delete(ip); // reset rate limit on success
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Login failed:", err);
+      res.status(500).json({ message: "Could not establish session." });
+    }
   });
 
-  // Keep these routes for compatibility but they're effectively no-ops now
-  app.post("/api/login", (_req, res) => {
-    res.json({ ok: true });
-  });
-
-  app.get("/api/logout", (_req, res) => {
-    // No-op — nothing to log out of
-    res.redirect("/");
+  app.get("/api/logout", (req, res) => {
+    req.session.destroy(() => {
+      res.redirect("/");
+    });
   });
 
   app.get("/api/auth/user", async (req, res) => {
+    if (passcodeModeEnabled && !req.session.authenticated) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
     const owner = await getOwner();
     res.json({
       id: req.session.userId ?? owner.id,
@@ -124,7 +185,10 @@ export async function setupAuth(app: Express) {
   });
 }
 
-// All requests pass — owner is always authenticated
-export const isAuthenticated: RequestHandler = (_req, _res, next) => {
-  next();
+// Requires a passcode-established session when passcode mode is on;
+// passes everything through when it's off (legacy local-only mode).
+export const isAuthenticated: RequestHandler = (req, res, next) => {
+  if (!passcodeModeEnabled) return next();
+  if (req.session?.authenticated) return next();
+  res.status(401).json({ message: "Not authenticated" });
 };

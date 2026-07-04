@@ -26,7 +26,9 @@
   --popover: 30 15% 94%;
   --popover-foreground: 20 15% 12%;
   --popover-border: 30 10% 87%;
-  --primary: 219.13deg 70.31% 44.9%;
+  /* Signature warm bronze — matches the sidebar + dark mode so the whole app
+     has one identity (was an out-of-place blue). */
+  --primary: 24 70% 42%;
   --primary-foreground: 30 20% 98%;
   --secondary: 30 10% 87%;
   --secondary-foreground: 20 15% 12%;
@@ -37,8 +39,8 @@
   --destructive: 0 84% 48%;
   --destructive-foreground: 0 84% 98%;
   --input: 30 10% 72%;
-  --ring: 225.09deg 70.31% 44.9%;
-  --chart-1: 225.84deg 70.31% 44.9%;
+  --ring: 24 70% 42%;
+  --chart-1: 24 70% 48%;
   --chart-2: 197 55% 42%;
   --chart-3: 152 50% 38%;
   --chart-4: 271 55% 48%;
@@ -158,6 +160,15 @@
 
   button, a, [role="button"] {
     touch-action: manipulation;
+  }
+
+  /* Page titles in the brand serif (Libre Baskerville) — gives every screen a
+     quiet "printed letterhead" feel without touching dialogs or cards, which
+     use h2/h3/divs. */
+  main h1 {
+    font-family: var(--font-serif);
+    letter-spacing: -0.01em;
+    font-weight: 700;
   }
 }
 
