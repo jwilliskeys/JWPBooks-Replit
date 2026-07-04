@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useRoute, useLocation, Link } from "wouter";
+import { useRoute, useLocation, useSearch, Link } from "wouter";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,8 @@ import {
   MoreHorizontal,
   Pencil,
   CheckCircle,
+  FileText,
+  ClipboardList,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -52,6 +55,8 @@ import type {
   ServiceRecord,
   Appointment,
   CustomerContact,
+  Invoice,
+  Inspection,
 } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServiceTimeline } from "@/components/service-timeline";
@@ -287,28 +292,167 @@ function PianosInventoryCard({
   );
 }
 
-// ── Appointments Card ─────────────────────────────────────────────────────────
+// ── Invoices list (per-customer) ─────────────────────────────────────────────
 
-function AppointmentsCard({
-  appointments,
-  serviceRecords,
-  pianos,
+function parseDollarLocal(str: string | null | undefined): number {
+  if (!str) return 0;
+  const n = parseFloat(str.replace(/[^0-9.]/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+
+function invoiceStatusBadge(status: string | null) {
+  const base = "no-default-active-elevate uppercase text-[10px] font-semibold tracking-wide px-1.5 py-0 border-0";
+  switch (status) {
+    case "paid":
+      return <Badge className={`${base} bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200`}>Paid</Badge>;
+    case "open":
+      return <Badge className={`${base} bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200`}>Open</Badge>;
+    case "cancelled":
+      return <Badge className={`${base} bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200`}>Cancelled</Badge>;
+    default:
+      return <Badge variant="secondary" className={base}>Draft</Badge>;
+  }
+}
+
+function CustomerInvoicesList({
+  invoices,
+  customerId,
 }: {
-  appointments: Appointment[] | undefined;
-  serviceRecords: ServiceRecord[] | undefined;
-  pianos: Piano[] | undefined;
+  invoices: Invoice[] | undefined;
+  customerId: number;
 }) {
+  const sorted = [...(invoices ?? [])].sort(
+    (a, b) => (parseInt(b.invoiceNumber, 10) || 0) - (parseInt(a.invoiceNumber, 10) || 0)
+  );
+
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-sm font-semibold">Appointments</CardTitle>
-      </CardHeader>
-      <CardContent className="pt-0">
-        <ServiceTimeline
-          appointments={appointments ?? []}
-          serviceRecords={serviceRecords ?? []}
-          pianos={pianos ?? []}
+        <SectionHeader
+          title={sorted.length > 0 ? `Invoices (${sorted.length})` : "Invoices"}
+          action={
+            <Link href={`/invoices/new?customerId=${customerId}`}>
+              <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-new-invoice-for-customer">
+                <Plus className="h-3 w-3 mr-1" /> New Invoice
+              </Button>
+            </Link>
+          }
         />
+      </CardHeader>
+      <CardContent className="pt-0 space-y-2">
+        {sorted.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <FileText className="h-8 w-8 text-muted-foreground/30 mb-2" />
+            <p className="text-sm text-muted-foreground">No invoices for this client yet</p>
+          </div>
+        ) : (
+          sorted.map((inv) => {
+            const due = Math.max(0, parseDollarLocal(inv.total) - parseDollarLocal(inv.paidAmount));
+            return (
+              <Link key={inv.id} href={`/invoices/${inv.id}`}>
+                <div
+                  className="p-3 rounded-lg border bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors flex items-center gap-3"
+                  data-testid={`customer-invoice-${inv.id}`}
+                >
+                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold tabular-nums">#{inv.invoiceNumber}</span>
+                      {invoiceStatusBadge(inv.status)}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {inv.invoiceDate}
+                      {inv.pianoDescription ? ` · ${inv.pianoDescription}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-medium tabular-nums">{inv.total ?? "$0.00"}</p>
+                    {due > 0 && inv.status !== "cancelled" && (
+                      <p className="text-xs text-orange-600 dark:text-orange-400 tabular-nums">
+                        ${due.toFixed(2)} due
+                      </p>
+                    )}
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                </div>
+              </Link>
+            );
+          })
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ── Estimates / inspections list (per-customer) ──────────────────────────────
+
+function CustomerEstimatesList({ inspections }: { inspections: Inspection[] | undefined }) {
+  const sorted = [...(inspections ?? [])].sort((a, b) =>
+    (b.inspectionDate ?? "").localeCompare(a.inspectionDate ?? "")
+  );
+
+  const statusColors: Record<string, string> = {
+    pending: "bg-yellow-50 text-yellow-700 dark:bg-yellow-950 dark:text-yellow-300",
+    approved: "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300",
+    declined: "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300",
+    converted: "bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <SectionHeader
+          title={sorted.length > 0 ? `Estimates & Inspections (${sorted.length})` : "Estimates & Inspections"}
+          action={
+            <Link href="/inspections">
+              <Button size="sm" variant="outline" className="h-7 text-xs" data-testid="button-open-inspections">
+                Open Inspections
+              </Button>
+            </Link>
+          }
+        />
+      </CardHeader>
+      <CardContent className="pt-0 space-y-2">
+        {sorted.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <ClipboardList className="h-8 w-8 text-muted-foreground/30 mb-2" />
+            <p className="text-sm text-muted-foreground">No estimates or inspections yet</p>
+          </div>
+        ) : (
+          sorted.map((ins) => {
+            const statusColor = statusColors[ins.status ?? "pending"] ?? statusColors.pending;
+            return (
+              <Link key={ins.id} href="/inspections">
+                <div
+                  className="p-3 rounded-lg border bg-muted/20 cursor-pointer hover:bg-muted/40 transition-colors flex items-center gap-3"
+                  data-testid={`customer-inspection-${ins.id}`}
+                >
+                  <ClipboardList className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold">
+                        {ins.type === "estimate" ? "Estimate" : "Inspection"}
+                      </span>
+                      <Badge className={`text-[10px] px-1.5 py-0 border-0 capitalize ${statusColor}`}>
+                        {ins.status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                      {ins.inspectionDate}
+                      {ins.summary ? ` · ${ins.summary}` : ""}
+                    </p>
+                  </div>
+                  {ins.estimatedTotal && (
+                    <span className="text-sm font-medium tabular-nums shrink-0">
+                      {ins.estimatedTotal}
+                    </span>
+                  )}
+                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                </div>
+              </Link>
+            );
+          })
+        )}
       </CardContent>
     </Card>
   );
@@ -487,11 +631,37 @@ const BLANK_PIANO: NewPianoFormState = {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
+type HubTab = "pianos" | "history" | "appointments" | "estimates" | "invoices";
+const HUB_TABS: { key: HubTab; label: string }[] = [
+  { key: "pianos", label: "Pianos" },
+  { key: "history", label: "History" },
+  { key: "appointments", label: "Appointments" },
+  { key: "estimates", label: "Estimates" },
+  { key: "invoices", label: "Invoices" },
+];
+
 export default function CustomerDetail() {
   const [, params] = useRoute("/customers/:id");
   const [, navigate] = useLocation();
+  const rawSearch = useSearch();
   const { toast } = useToast();
   const customerId = params?.id;
+
+  // Active tab lives in the URL (?tab=…) so back/forward navigation and
+  // page refreshes keep your place.
+  const searchParams = new URLSearchParams(rawSearch);
+  const tabParam = searchParams.get("tab") as HubTab | null;
+  const activeTab: HubTab = HUB_TABS.some((t) => t.key === tabParam!)
+    ? (tabParam as HubTab)
+    : "pianos";
+
+  function setActiveTab(tab: string) {
+    const p = new URLSearchParams(rawSearch);
+    if (tab === "pianos") p.delete("tab");
+    else p.set("tab", tab);
+    const qs = p.toString();
+    navigate(`/customers/${customerId}${qs ? `?${qs}` : ""}`, { replace: true });
+  }
 
   // UI state
   const [editClientOpen, setEditClientOpen] = useState(false);
@@ -526,6 +696,16 @@ export default function CustomerDetail() {
 
   const { data: serviceRecords } = useQuery<ServiceRecord[]>({
     queryKey: ["/api/customers", customerId, "services"],
+    enabled: !!customerId,
+  });
+
+  const { data: invoices } = useQuery<Invoice[]>({
+    queryKey: ["/api/customers", customerId, "invoices"],
+    enabled: !!customerId,
+  });
+
+  const { data: inspections } = useQuery<Inspection[]>({
+    queryKey: ["/api/customers", customerId, "inspections"],
     enabled: !!customerId,
   });
 
@@ -693,7 +873,7 @@ export default function CustomerDetail() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto">
 
       {/* Breadcrumb */}
       <nav className="flex items-center gap-1 text-sm text-muted-foreground mb-4">
@@ -770,91 +950,146 @@ export default function CustomerDetail() {
         </div>
       </div>
 
-      {/* ── Two-column body ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 sm:gap-6 items-start">
+      {/* ── Body: contacts on top, then tabbed sections ── */}
+      <div className="space-y-4 min-w-0">
 
-        {/* ── LEFT column ── */}
-        <div className="space-y-4 min-w-0">
+        {/* Contacts */}
+        <ContactManager customerId={customer.id} contacts={sortedContacts} />
 
-          {/* Contacts (replaces old ContactsCard) */}
-          <ContactManager customerId={customer.id} contacts={sortedContacts} />
+        {/* Tabbed hub: Pianos / History / Appointments / Estimates / Invoices */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <TabsList className="w-full sm:w-auto justify-start" data-testid="customer-hub-tabs">
+              {HUB_TABS.map(({ key, label }) => {
+                const count =
+                  key === "pianos" ? customerPianos?.length
+                  : key === "invoices" ? invoices?.length
+                  : key === "estimates" ? inspections?.length
+                  : key === "appointments"
+                  ? appointments?.filter((a) => (a.status ?? "scheduled") === "scheduled").length
+                  : undefined;
+                return (
+                  <TabsTrigger
+                    key={key}
+                    value={key}
+                    className="text-xs sm:text-sm"
+                    data-testid={`tab-${key}`}
+                  >
+                    {label}
+                    {count !== undefined && count > 0 && (
+                      <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground tabular-nums">
+                        {count}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </div>
 
-          {/* Pianos */}
-          <PianosInventoryCard
-            pianos={customerPianos}
-            onAddPiano={() => setShowAddPiano((v) => !v)}
-            showAddForm={showAddPiano}
-            newPianoForm={newPianoForm}
-            setNewPianoForm={setNewPianoForm}
-            onSave={() => addPianoMutation.mutate(newPianoForm)}
-            onCancel={() => setShowAddPiano(false)}
-            isSaving={addPianoMutation.isPending}
-          />
+          <TabsContent value="pianos" className="mt-3">
+            <PianosInventoryCard
+              pianos={customerPianos}
+              onAddPiano={() => setShowAddPiano((v) => !v)}
+              showAddForm={showAddPiano}
+              newPianoForm={newPianoForm}
+              setNewPianoForm={setNewPianoForm}
+              onSave={() => addPianoMutation.mutate(newPianoForm)}
+              onCancel={() => setShowAddPiano(false)}
+              isSaving={addPianoMutation.isPending}
+            />
+          </TabsContent>
 
-          {/* Appointments (upcoming + past) */}
-          <AppointmentsCard
-            appointments={appointments}
-            serviceRecords={serviceRecords}
-            pianos={customerPianos}
-          />
+          <TabsContent value="history" className="mt-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-semibold">Service History</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ServiceTimeline
+                  appointments={appointments ?? []}
+                  serviceRecords={serviceRecords ?? []}
+                  pianos={customerPianos ?? []}
+                  mode="past"
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-          {/* Additional Info (read-only) */}
-          <AdditionalInfoCard customer={customer} />
+          <TabsContent value="appointments" className="mt-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <SectionHeader
+                  title="Upcoming Appointments"
+                  action={
+                    <Button size="sm" variant="outline" className="h-7 text-xs"
+                      onClick={() => setShowAppointmentDialog(true)}
+                      data-testid="button-schedule-from-tab">
+                      <Plus className="h-3 w-3 mr-1" /> Schedule
+                    </Button>
+                  }
+                />
+              </CardHeader>
+              <CardContent className="pt-0">
+                <ServiceTimeline
+                  appointments={appointments ?? []}
+                  serviceRecords={serviceRecords ?? []}
+                  pianos={customerPianos ?? []}
+                  mode="upcoming"
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-          {/* Last contacted row */}
-          <Card>
-            <CardContent className="py-3 px-4">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <PhoneCall className="h-3.5 w-3.5 shrink-0" />
-                  <span>Last contacted:</span>
-                  <span className="font-medium text-foreground" data-testid="text-last-contacted">
-                    {(customer as any).lastContacted || customer.lastTuned || "Never"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 ml-auto flex-wrap">
-                  <Button variant="outline" size="sm" className="h-7 text-xs"
-                    onClick={() => markContactedMutation.mutate(todayStr())}
-                    disabled={markContactedMutation.isPending}
-                    data-testid="button-mark-contacted-today">
-                    <CheckCircle className="h-3 w-3 mr-1" /> Today
-                  </Button>
-                  <Input
-                    type="text"
-                    placeholder="M/D/YY"
-                    className="h-7 text-xs w-20 px-1.5"
-                    data-testid="input-last-contacted-date"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        const val = (e.target as HTMLInputElement).value.trim();
-                        if (val) {
-                          markContactedMutation.mutate(val);
-                          (e.target as HTMLInputElement).value = "";
-                        }
-                      }
-                    }}
-                  />
-                </div>
+          <TabsContent value="estimates" className="mt-3">
+            <CustomerEstimatesList inspections={inspections} />
+          </TabsContent>
+
+          <TabsContent value="invoices" className="mt-3">
+            <CustomerInvoicesList invoices={invoices} customerId={customer.id} />
+          </TabsContent>
+        </Tabs>
+
+        {/* Additional Info (read-only) */}
+        <AdditionalInfoCard customer={customer} />
+
+        {/* Last contacted row */}
+        <Card>
+          <CardContent className="py-3 px-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <PhoneCall className="h-3.5 w-3.5 shrink-0" />
+                <span>Last contacted:</span>
+                <span className="font-medium text-foreground" data-testid="text-last-contacted">
+                  {(customer as any).lastContacted || customer.lastTuned || "Never"}
+                </span>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* ── RIGHT column: sticky timeline ── */}
-        <div className="lg:sticky lg:top-4 min-w-0">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-semibold">Service Timeline</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 max-h-[calc(100vh-10rem)] overflow-y-auto pr-1">
-              <ServiceTimeline
-                appointments={appointments ?? []}
-                serviceRecords={serviceRecords ?? []}
-                pianos={customerPianos ?? []}
-              />
-            </CardContent>
-          </Card>
-        </div>
+              <div className="flex items-center gap-2 ml-auto flex-wrap">
+                <Button variant="outline" size="sm" className="h-7 text-xs"
+                  onClick={() => markContactedMutation.mutate(todayStr())}
+                  disabled={markContactedMutation.isPending}
+                  data-testid="button-mark-contacted-today">
+                  <CheckCircle className="h-3 w-3 mr-1" /> Today
+                </Button>
+                <Input
+                  type="text"
+                  placeholder="M/D/YY"
+                  className="h-7 text-xs w-20 px-1.5"
+                  data-testid="input-last-contacted-date"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const val = (e.target as HTMLInputElement).value.trim();
+                      if (val) {
+                        markContactedMutation.mutate(val);
+                        (e.target as HTMLInputElement).value = "";
+                      }
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Dialogs */}

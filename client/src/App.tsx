@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -7,6 +8,9 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
+import { CommandPalette } from "@/components/command-palette";
+import { useScrollRestoration } from "@/hooks/use-scroll-restoration";
+import { Search } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
@@ -26,6 +30,8 @@ import InspectionsPage from "@/pages/inspections";
 import BookPage from "@/pages/book";
 import OutreachPage from "@/pages/outreach";
 import InventoryPage from "@/pages/inventory";
+import LoginPage from "@/pages/login";
+import { useAuth } from "@/hooks/use-auth";
 
 function Router() {
   return (
@@ -57,6 +63,84 @@ const sidebarStyle = {
   "--sidebar-width-icon": "3rem",
 };
 
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
+
+  return <>{children}</>;
+}
+
+function AppShell() {
+  const [location] = useLocation();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const mainRef = useRef<HTMLElement | null>(null);
+
+  // Remember scroll position per page so going "back" doesn't reset to top.
+  useScrollRestoration(mainRef, location);
+
+  // Global Cmd/Ctrl-K shortcut for the search palette.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  return (
+    <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+      <div className="flex h-screen w-full">
+        <AppSidebar />
+        <div className="flex flex-col flex-1 min-w-0">
+          <header className="flex items-center justify-between gap-2 p-2 border-b h-14 sm:h-12 shrink-0">
+            <SidebarTrigger className="h-10 w-10 sm:h-8 sm:w-8" />
+            <button
+              onClick={() => setPaletteOpen(true)}
+              className="flex flex-1 max-w-sm items-center gap-2 rounded-md border bg-muted/40 px-3 h-9 sm:h-8 text-sm text-muted-foreground hover:bg-muted/70 hover:text-foreground transition-colors"
+              data-testid="button-global-search"
+            >
+              <Search className="h-3.5 w-3.5 shrink-0" />
+              <span className="flex-1 text-left truncate">Search…</span>
+              <kbd className="hidden sm:inline-flex items-center gap-0.5 rounded border bg-background px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                ⌘K
+              </kbd>
+            </button>
+            <ThemeToggle />
+          </header>
+          <main ref={mainRef} className="flex-1 overflow-auto">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={location}
+                initial={{ opacity: 0, y: 7 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+              >
+                <Router />
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
+      </div>
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+    </SidebarProvider>
+  );
+}
+
 function App() {
   const [location] = useLocation();
 
@@ -76,30 +160,9 @@ function App() {
     <ThemeProvider>
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-            <div className="flex h-screen w-full">
-              <AppSidebar />
-              <div className="flex flex-col flex-1 min-w-0">
-                <header className="flex items-center justify-between gap-1 p-2 border-b h-14 sm:h-12 shrink-0">
-                  <SidebarTrigger className="h-10 w-10 sm:h-8 sm:w-8" />
-                  <ThemeToggle />
-                </header>
-                <main className="flex-1 overflow-auto">
-                  <AnimatePresence mode="wait" initial={false}>
-                    <motion.div
-                      key={location}
-                      initial={{ opacity: 0, y: 7 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0 }}
-                      transition={{ duration: 0.18, ease: "easeOut" }}
-                    >
-                      <Router />
-                    </motion.div>
-                  </AnimatePresence>
-                </main>
-              </div>
-            </div>
-          </SidebarProvider>
+          <AuthGate>
+            <AppShell />
+          </AuthGate>
           <Toaster />
         </TooltipProvider>
       </QueryClientProvider>

@@ -113,17 +113,18 @@ export default function InvoicesPage() {
   }, [filtered]);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto">
+      <div className="flex items-center justify-between gap-2 mb-6">
         <div>
-          <h1 className="text-2xl font-bold">Invoices</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Invoices</h1>
           <p className="text-muted-foreground text-sm mt-0.5">
             {invoices ? `${invoices.length} invoice${invoices.length !== 1 ? "s" : ""}` : "Loading..."}
           </p>
         </div>
-        <Button onClick={() => navigate("/invoices/new")} data-testid="button-new-invoice">
+        <Button onClick={() => navigate("/invoices/new")} className="shrink-0" data-testid="button-new-invoice">
           <Plus className="h-4 w-4 mr-1.5" />
-          New Invoice
+          <span className="hidden sm:inline">New Invoice</span>
+          <span className="sm:hidden">New</span>
         </Button>
       </div>
 
@@ -145,13 +146,13 @@ export default function InvoicesPage() {
           ))}
         </div>
       ) : sorted.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
+        <div className="border rounded-lg text-center py-16 text-muted-foreground">
+          <FileText className="h-8 w-8 mx-auto mb-2 opacity-30" />
           {search ? (
-            <p>No invoices match your search.</p>
+            <p className="text-sm">No invoices match your search.</p>
           ) : (
             <>
-              <p className="font-medium mb-1">No invoices yet</p>
+              <p className="font-medium mb-1 text-sm">No invoices yet</p>
               <p className="text-sm">Create your first invoice from an appointment or manually.</p>
             </>
           )}
@@ -165,11 +166,11 @@ export default function InvoicesPage() {
                   <th className="text-left px-4 py-2.5 font-semibold text-foreground">Number</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-foreground">Status</th>
                   <th className="text-left px-4 py-2.5 font-semibold text-foreground">Client</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-foreground whitespace-nowrap">Invoice Date</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-foreground whitespace-nowrap">Due Date</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-foreground whitespace-nowrap">Assigned To</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-foreground whitespace-nowrap hidden sm:table-cell">Invoice Date</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-foreground whitespace-nowrap hidden lg:table-cell">Due Date</th>
+                  <th className="text-left px-4 py-2.5 font-semibold text-foreground whitespace-nowrap hidden lg:table-cell">Assigned To</th>
                   <th className="text-right px-4 py-2.5 font-semibold text-foreground">Total</th>
-                  <th className="text-right px-4 py-2.5 font-semibold text-foreground">Paid</th>
+                  <th className="text-right px-4 py-2.5 font-semibold text-foreground hidden md:table-cell">Paid</th>
                   <th className="text-right px-4 py-2.5 font-semibold text-foreground whitespace-nowrap">Amount Due</th>
                   <th className="px-2 py-2.5"></th>
                 </tr>
@@ -190,11 +191,11 @@ export default function InvoicesPage() {
                     </td>
                     <td className="px-4 py-3">{statusBadge(inv.status)}</td>
                     <td className="px-4 py-3 font-medium">{getCustomerName(inv)}</td>
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatDate(inv.invoiceDate)}</td>
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{formatDate(inv.dueDate)}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{inv.assignedTo ?? "John Willis"}</td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap hidden sm:table-cell">{formatDate(inv.invoiceDate)}</td>
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap hidden lg:table-cell">{formatDate(inv.dueDate)}</td>
+                    <td className="px-4 py-3 text-muted-foreground hidden lg:table-cell">{inv.assignedTo ?? "John Willis"}</td>
                     <td className="px-4 py-3 text-right font-medium tabular-nums">{inv.total ?? "$0.00"}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{inv.paidAmount ?? "$0.00"}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted-foreground hidden md:table-cell">{inv.paidAmount ?? "$0.00"}</td>
                     <td className="px-4 py-3 text-right font-medium tabular-nums">{amountDue(inv)}</td>
                     <td className="px-4 py-2 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">

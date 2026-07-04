@@ -512,14 +512,34 @@ export default function InvoiceDetailPage() {
 
       <div className="p-4 sm:p-6 max-w-4xl mx-auto">
         {/* Toolbar */}
-        <div className="flex items-center justify-between mb-5 no-print">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/invoices")} data-testid="button-back-invoices">
-              <ArrowLeft className="h-4 w-4 mr-1" />
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-5 no-print">
+          <nav className="flex items-center gap-1.5 text-sm min-w-0 flex-wrap">
+            <button
+              onClick={() => navigate("/invoices")}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1"
+              data-testid="button-back-invoices"
+            >
+              <ArrowLeft className="h-3.5 w-3.5 shrink-0" />
               Invoices
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
+            </button>
+            <span className="text-muted-foreground">›</span>
+            {!isNew && invoice?.customerId ? (
+              <>
+                <button
+                  onClick={() => navigate(`/customers/${invoice.customerId}`)}
+                  className="text-muted-foreground hover:text-foreground truncate max-w-[10rem] sm:max-w-none"
+                  data-testid="link-crumb-invoice-customer"
+                >
+                  {displayData.customerName || "Client"}
+                </button>
+                <span className="text-muted-foreground">›</span>
+              </>
+            ) : null}
+            <span className="font-medium truncate">
+              {isNew ? "New Invoice" : `#${displayData.invoiceNumber}`}
+            </span>
+          </nav>
+          <div className="flex flex-wrap items-center gap-2">
             {!isNew && !editMode && (
               <>
                 {invoice?.status !== "paid" && invoice?.status !== "cancelled" && (

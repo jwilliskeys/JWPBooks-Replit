@@ -1,6 +1,7 @@
-import { useState, useMemo } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
+import { useIncrementalList } from "@/hooks/use-incremental-list";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -119,12 +120,34 @@ const SORT_LABELS: Record<SortKey, string> = {
   type: "Piano Type",
 };
 
+// URL-persisted params (like the Clients page) so filters/sort/search survive
+// navigating into a piano and back.
+const PIANOS_PARAM_DEFAULTS: Record<string, string> = {
+  q: "", filter: "active", sort: "warm-leads", dir: "asc",
+};
+
 export default function PianosPage() {
   const [, navigate] = useLocation();
-  const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<FilterKey>("active");
-  const [sortKey, setSortKey] = useState<SortKey>("warm-leads");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const rawSearch = useSearch();
+  const params = useMemo(() => new URLSearchParams(rawSearch), [rawSearch]);
+
+  const search = params.get("q") ?? "";
+  const filter = (params.get("filter") ?? "active") as FilterKey;
+  const sortKey = (params.get("sort") ?? "warm-leads") as SortKey;
+  const sortDir = (params.get("dir") ?? "asc") as SortDir;
+
+  function setParams(updates: Record<string, string>) {
+    const p = new URLSearchParams(rawSearch);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === (PIANOS_PARAM_DEFAULTS[key] ?? "")) p.delete(key);
+      else p.set(key, value);
+    }
+    const qs = p.toString();
+    navigate(`/pianos${qs ? `?${qs}` : ""}`, { replace: true });
+  }
+
+  const setSearch = (q: string) => setParams({ q });
+  const setFilter = (f: FilterKey) => setParams({ filter: f });
 
   const { data: pianos, isLoading } = useQuery<Piano[]>({
     queryKey: ["/api/pianos"],
@@ -234,12 +257,15 @@ export default function PianosPage() {
     return result;
   }, [pianos, search, filter, sortKey, sortDir, customerMap]);
 
+  // Incremental rendering keeps big piano lists smooth.
+  const listKey = `${search}|${filter}|${sortKey}|${sortDir}`;
+  const { visible: visiblePianos, hasMore, sentinelRef } = useIncrementalList(filtered, listKey);
+
   function clickSort(key: SortKey) {
     if (sortKey === key) {
-      setSortDir(sortDir === "asc" ? "desc" : "asc");
+      setParams({ dir: sortDir === "asc" ? "desc" : "asc" });
     } else {
-      setSortKey(key);
-      setSortDir("asc");
+      setParams({ sort: key, dir: "asc" });
     }
   }
 
@@ -360,7 +386,7 @@ export default function PianosPage() {
               {(Object.entries(SORT_LABELS) as [SortKey, string][]).map(([key, label]) => (
                 <DropdownMenuItem
                   key={key}
-                  onClick={() => { setSortKey(key); setSortDir("asc"); }}
+                  onClick={() => setParams({ sort: key, dir: "asc" })}
                   className={sortKey === key ? "font-medium" : ""}
                   data-testid={`sort-pianos-${key}`}
                 >
@@ -373,7 +399,7 @@ export default function PianosPage() {
             variant="outline"
             size="icon"
             className="h-8 w-8"
-            onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")}
+            onClick={() => setParams({ dir: sortDir === "asc" ? "desc" : "asc" })}
             data-testid="button-sort-dir-pianos"
           >
             {sortDir === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
@@ -423,7 +449,7 @@ export default function PianosPage() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((piano) => {
+                visiblePianos.map((piano) => {
                   const customer = customerMap.get(piano.customerId);
                   const months = getMonthsSince(piano.lastTuned);
                   const tierClass = getRowTierClass(months, piano.isActive);
@@ -483,6 +509,9 @@ export default function PianosPage() {
           </table>
         </div>
       </div>
+
+      {/* Sentinel: when this scrolls into view, the next chunk of rows renders */}
+      {hasMore && <div ref={sentinelRef} className="h-8" aria-hidden="true" />}
     </div>
   );
 }

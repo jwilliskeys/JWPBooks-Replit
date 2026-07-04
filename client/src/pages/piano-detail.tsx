@@ -567,13 +567,23 @@ export default function PianoDetail() {
 
       {/* ── Top bar: breadcrumb + actions ── */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
-        <nav className="flex items-center gap-1.5 text-sm min-w-0 flex-1">
-          <Link href="/pianos" className="text-muted-foreground hover:text-foreground flex items-center gap-1" data-testid="link-back-pianos">
-            <Music className="h-3.5 w-3.5 shrink-0" />
-            <span>Pianos</span>
+        <nav className="flex items-center gap-1.5 text-sm min-w-0 flex-1 flex-wrap">
+          <Link href="/customers" className="text-muted-foreground hover:text-foreground" data-testid="link-crumb-clients">
+            Clients
+          </Link>
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <Link
+            href={`/customers/${customer.id}`}
+            className="text-muted-foreground hover:text-foreground truncate max-w-[10rem] sm:max-w-none"
+            data-testid="link-crumb-customer"
+          >
+            {customer.companyName?.trim() || `${customer.firstName} ${customer.lastName}`}
           </Link>
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="font-medium truncate">{pianoLabel}</span>
+          <Link href="/pianos" className="text-xs text-muted-foreground hover:text-foreground ml-2 hidden sm:inline" data-testid="link-back-pianos">
+            (all pianos)
+          </Link>
         </nav>
 
         {/* Action buttons */}

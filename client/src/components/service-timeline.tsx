@@ -259,23 +259,34 @@ export function ServiceTimeline({
   appointments,
   serviceRecords,
   pianos,
+  mode = "all",
 }: {
   appointments: Appointment[];
   serviceRecords: ServiceRecord[];
   pianos: Piano[];
+  /** "all" (default) shows upcoming + history; "upcoming" / "past" show one section only. */
+  mode?: "all" | "upcoming" | "past";
 }) {
-  const upcoming = [...appointments]
-    .filter((a) => (a.status ?? "scheduled") === "scheduled")
-    .sort((a, b) => a.date.localeCompare(b.date));
+  const upcoming =
+    mode === "past"
+      ? []
+      : [...appointments]
+          .filter((a) => (a.status ?? "scheduled") === "scheduled")
+          .sort((a, b) => a.date.localeCompare(b.date));
 
-  const past = [...appointments]
-    .filter((a) => (a.status ?? "scheduled") !== "scheduled")
-    .sort((a, b) => b.date.localeCompare(a.date));
+  const past =
+    mode === "upcoming"
+      ? []
+      : [...appointments]
+          .filter((a) => (a.status ?? "scheduled") !== "scheduled")
+          .sort((a, b) => b.date.localeCompare(a.date));
 
-  if (appointments.length === 0) {
+  if (upcoming.length === 0 && past.length === 0) {
     return (
       <p className="text-sm text-muted-foreground text-center py-10">
-        No service history yet.
+        {mode === "upcoming"
+          ? "No upcoming appointments."
+          : "No service history yet."}
       </p>
     );
   }

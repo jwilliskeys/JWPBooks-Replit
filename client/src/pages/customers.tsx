@@ -43,6 +43,7 @@ import { Label } from "@/components/ui/label";
 import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { SERVICE_AREA_CLUSTERS, getServiceArea } from "@/lib/scheduling";
+import { useIncrementalList } from "@/hooks/use-incremental-list";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
@@ -307,24 +308,43 @@ export default function Customers() {
     return map;
   }, [appointments]);
 
+  // Optimistic: flip the row instantly, roll back if the server rejects it.
   const markContactedMutation = useMutation({
     mutationFn: ({ id, date }: { id: number; date: string }) =>
       apiRequest("PATCH", `/api/customers/${id}`, { lastContacted: date }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-      toast({ title: "Marked as contacted" });
+    onMutate: async ({ id, date }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/customers"] });
+      const prev = queryClient.getQueryData<Customer[]>(["/api/customers"]);
+      queryClient.setQueryData<Customer[]>(["/api/customers"], (old) =>
+        old?.map((c) => (c.id === id ? { ...c, lastContacted: date } : c))
+      );
+      return { prev };
     },
-    onError: () => toast({ title: "Failed to update", variant: "destructive" }),
+    onSuccess: () => toast({ title: "Marked as contacted" }),
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["/api/customers"], ctx.prev);
+      toast({ title: "Failed to update", variant: "destructive" });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/customers"] }),
   });
 
   const saveNoteMutation = useMutation({
     mutationFn: ({ id, personalNotes }: { id: number; personalNotes: string }) =>
       apiRequest("PATCH", `/api/customers/${id}`, { personalNotes }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
-      toast({ title: "Note saved" });
+    onMutate: async ({ id, personalNotes }) => {
+      await queryClient.cancelQueries({ queryKey: ["/api/customers"] });
+      const prev = queryClient.getQueryData<Customer[]>(["/api/customers"]);
+      queryClient.setQueryData<Customer[]>(["/api/customers"], (old) =>
+        old?.map((c) => (c.id === id ? { ...c, personalNotes } : c))
+      );
+      return { prev };
     },
-    onError: () => toast({ title: "Failed to save note", variant: "destructive" }),
+    onSuccess: () => toast({ title: "Note saved" }),
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(["/api/customers"], ctx.prev);
+      toast({ title: "Failed to save note", variant: "destructive" });
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["/api/customers"] }),
   });
 
   const filtered = useMemo(() => {
@@ -415,6 +435,11 @@ export default function Customers() {
       return sortDir === "asc" ? cmp : -cmp;
     });
   }, [filtered, sortBy, sortDir, nextAppointmentMap, pianosByCustomer]);
+
+  // Incremental rendering: keeps the DOM small on big lists so scrolling
+  // stays smooth. Window resets when filters/sort/search change.
+  const listKey = `${stateTab}|${areaFilter}|${quickFiltersRaw}|${search}|${sortBy}|${sortDir}|${viewMode}`;
+  const { visible: visibleCustomers, hasMore, sentinelRef } = useIncrementalList(sorted, listKey);
 
   function handleSortChange(newSort: SortOption) {
     if (newSort === sortBy) {
@@ -660,7 +685,7 @@ export default function Customers() {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((customer) => {
+                {visibleCustomers.map((customer) => {
                   const primaryPiano = pianosByCustomer.get(customer.id);
                   const pianoLabel = primaryPiano && (primaryPiano.make || primaryPiano.pianoType)
                     ? [primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")
@@ -755,7 +780,7 @@ export default function Customers() {
       ) : (
         /* Card view */
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {sorted.map((customer) => {
+          {visibleCustomers.map((customer) => {
             const primaryPiano = pianosByCustomer.get(customer.id);
             const pianoLabel = primaryPiano && (primaryPiano.make || primaryPiano.pianoType)
               ? [primaryPiano.make, primaryPiano.pianoType].filter(Boolean).join(" · ")
@@ -869,6 +894,9 @@ export default function Customers() {
           })}
         </div>
       )}
+
+      {/* Sentinel: when this scrolls into view, the next chunk of rows renders */}
+      {hasMore && <div ref={sentinelRef} className="h-8" aria-hidden="true" />}
 
       <AppointmentDialog
         open={showAppointmentDialog}
