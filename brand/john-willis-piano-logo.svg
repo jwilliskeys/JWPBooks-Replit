@@ -1,0 +1,92 @@
+<svg viewBox="0 0 720 820" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="lt ld">
+<title id="lt">John Willis Piano logo</title>
+<desc id="ld">A black concert grand piano with open lid and a pianist with one hand raised.</desc>
+<defs>
+<style>
+.bronze{fill:#B65A1F;}
+.bronzeDark{fill:#8A4216;}
+.black{fill:#1C1712;}
+.black2{fill:#2E251B;}
+.ink{fill:#0E0B07;}
+.cream{fill:#F7F1E7;}
+.serif{font-family:'Libre Baskerville',Georgia,serif;}
+</style>
+</defs>
+
+<circle cx="360" cy="292" r="252" fill="#F7F1E7" stroke="#B65A1F" stroke-width="10"/>
+<circle cx="360" cy="292" r="234" fill="none" stroke="#8A4216" stroke-width="2"/>
+
+<ellipse cx="368" cy="452" rx="205" ry="20" fill="#E7DBC7"/>
+
+<path d="M243 168
+         C330 132 452 130 540 172
+         C583 193 585 244 543 262
+         C470 240 398 231 322 233
+         C288 230 258 205 243 168 Z" class="black"/>
+<path d="M270 172 C345 146 448 146 522 178 C470 168 360 165 300 185 C288 182 277 178 270 172 Z" class="black2"/>
+<path d="M322 233 C398 231 470 240 543 262 L536 276 C466 255 398 246 326 248 Z" class="ink"/>
+
+<rect x="430" y="238" width="6" height="70" class="black" transform="rotate(7 433 273)"/>
+
+<path d="M326 248
+         C398 246 466 255 536 276
+         C556 316 540 356 486 372
+         L360 392
+         L206 370
+         L192 306
+         C190 262 250 244 326 248 Z" class="black"/>
+<path d="M206 370 L360 392 L486 372 C494 366 500 360 504 352 L360 372 L212 352 Z" class="black2"/>
+
+<path d="M198 340 L360 360 L360 372 L206 352 Z" class="cream"/>
+<path d="M200 328 L360 348 L360 360 L202 340 Z" class="cream" stroke="#CBBDA4" stroke-width="1"/>
+<g stroke="#CBBDA4" stroke-width="1">
+<line x1="222" y1="330" x2="221" y2="342"/>
+<line x1="244" y1="333" x2="243" y2="345"/>
+<line x1="266" y1="335" x2="265" y2="347"/>
+<line x1="288" y1="338" x2="287" y2="350"/>
+<line x1="310" y1="341" x2="309" y2="352"/>
+<line x1="332" y1="343" x2="331" y2="355"/>
+<line x1="354" y1="346" x2="353" y2="358"/>
+</g>
+<g class="ink">
+<path d="M216 329 L226 330 L225 340 L215 339 Z"/>
+<path d="M238 332 L248 333 L247 343 L237 342 Z"/>
+<path d="M282 337 L292 338 L291 348 L281 347 Z"/>
+<path d="M304 340 L314 341 L313 351 L303 350 Z"/>
+<path d="M326 342 L336 343 L335 353 L325 352 Z"/>
+</g>
+
+<path d="M250 382 l-8 60 16 0 8 -58 Z" class="black"/>
+<path d="M470 372 l10 60 14 -4 -8 -58 Z" class="black"/>
+<path d="M356 392 l-4 56 12 0 4 -56 Z" class="black"/>
+<rect x="352" y="440" width="18" height="4" class="bronzeDark"/>
+
+<g>
+<rect x="120" y="378" width="72" height="9" rx="2" class="black"/>
+<rect x="126" y="387" width="7" height="42" class="black"/>
+<rect x="178" y="387" width="7" height="42" class="black"/>
+<path d="M150 322 C138 344 140 366 156 378 L192 378 C200 360 198 336 186 320 C176 312 162 312 150 322 Z" class="bronze"/>
+<path d="M182 336 C196 344 210 350 222 356 L214 368 C198 362 182 356 170 348 Z" class="bronze"/>
+<path d="M168 328 C176 300 182 272 179 248 C177 239 189 237 192 247 C198 274 194 306 180 336 Z" class="bronze"/>
+<circle cx="185" cy="242" r="9" class="bronze"/>
+<circle cx="166" cy="300" r="19" class="black"/>
+</g>
+
+<g class="bronzeDark">
+<circle cx="486" cy="150" r="7"/><rect x="491" y="124" width="3.5" height="28"/>
+<circle cx="524" cy="168" r="6"/><rect x="528" y="146" width="3" height="24"/>
+</g>
+
+<text x="360" y="616" text-anchor="middle" class="serif bronze" font-size="58" font-weight="700" letter-spacing="1">John Willis Piano</text>
+
+<g transform="translate(214 644)">
+<circle cx="20" cy="20" r="20" fill="#B65A1F"/>
+<circle cx="20" cy="20" r="15.5" fill="none" stroke="#F7F1E7" stroke-width="1.5"/>
+<rect x="10" y="24" width="20" height="4" fill="#F7F1E7"/>
+<rect x="12" y="24" width="2.5" height="4" fill="#0E0B07"/><rect x="18" y="24" width="2.5" height="4" fill="#0E0B07"/><rect x="24" y="24" width="2.5" height="4" fill="#0E0B07"/>
+<text x="20" y="19" text-anchor="middle" class="serif cream" font-size="11" font-weight="700">RPT</text>
+</g>
+<text x="278" y="670" class="serif black" font-size="24" font-style="italic">Registered Piano Technician</text>
+
+<text x="360" y="726" text-anchor="middle" class="serif bronzeDark" font-size="23" letter-spacing="2">Tuning &#183; Regulation &#183; Voicing &#183; Repairs</text>
+</svg>

@@ -11,7 +11,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +30,7 @@ type PianoType = "Grand" | "Upright" | "Unknown";
 interface PublicSettings {
   showServiceCost: boolean;
   showServiceDuration: boolean;
+  approvalMode?: "manual" | "auto";
   serviceAreaEnabled: boolean;
   serviceAreaLat: string | null;
   serviceAreaLng: string | null;
@@ -81,6 +82,12 @@ interface BookingPayload {
   phone: string;
   email: string;
   notes: string;
+}
+
+// ── Local-date helper (never toISOString — that shifts the day via UTC) ──────
+
+function toLocalYMD(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // ── Haversine ────────────────────────────────────────────────────────────────
@@ -199,9 +206,12 @@ export default function BookPage() {
   });
   const serviceOptions = servicesData?.services ?? ["Tuning", "Regulation", "Voicing", "Repair"];
 
+  const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>(1);
   const [outOfArea, setOutOfArea] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [autoApproved, setAutoApproved] = useState(false);
+  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
 
   const [form, setForm] = useState<BookingPayload>({
     streetAddress: "", addressLat: "", addressLng: "", cityNeighborhood: "",
@@ -210,6 +220,20 @@ export default function BookPage() {
     preferredDate: "", preferredTime: "", preferredTimes: "",
     firstName: "", lastName: "", phone: "", email: "", notes: "",
   });
+
+  // In embed mode, report our content height to the parent page so the iframe
+  // can auto-resize (the embed snippet listens for this message).
+  useEffect(() => {
+    if (!isEmbed) return;
+    const post = () => {
+      const h = document.documentElement.scrollHeight;
+      window.parent?.postMessage({ type: "jwp-book-height", height: h }, "*");
+    };
+    post();
+    const ro = new ResizeObserver(post);
+    ro.observe(document.body);
+    return () => ro.disconnect();
+  }, [isEmbed]);
 
   const [errors, setErrors] = useState<Partial<Record<keyof BookingPayload, string>>>({});
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -333,10 +357,9 @@ export default function BookPage() {
           pianoType: data.pianoType || undefined,
           serviceRequested: data.serviceRequested,
           lastTuned: data.lastTuned || undefined,
+          requestedDate: data.preferredDate || undefined,
+          requestedTime: data.preferredTime || undefined,
           preferredTimes: [
-            data.preferredDate && data.preferredTime
-              ? `Preferred: ${data.preferredDate} at ${data.preferredTime}`
-              : "",
             data.pianoMake ? `Piano: ${data.pianoMake}${data.pianoModel ? " " + data.pianoModel : ""}` : "",
             data.pianoRoom ? `Room: ${data.pianoRoom}` : "",
             data.pianoYear ? `Year: ${data.pianoYear}` : "",
@@ -344,12 +367,29 @@ export default function BookPage() {
           ].filter(Boolean).join(" | ") || undefined,
         }),
       });
+      const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.message || "Something went wrong. Please try again.");
+        const err = new Error(body.message || "Something went wrong. Please try again.") as Error & { conflict?: boolean };
+        err.conflict = res.status === 409;
+        throw err;
+      }
+      return body as { autoApproved?: boolean };
+    },
+    onSuccess: (body) => {
+      setAutoApproved(!!body?.autoApproved);
+      setSubmitted(true);
+    },
+    onError: (err: Error & { conflict?: boolean }) => {
+      if (err.conflict) {
+        // The slot was taken while the visitor filled out the form:
+        // refresh availability and send them back to the calendar.
+        setConflictMessage(err.message);
+        setF("preferredDate", "");
+        setF("preferredTime", "");
+        queryClient.invalidateQueries({ queryKey: ["/api/booking/available-slots"] });
+        setStep(3);
       }
     },
-    onSuccess: () => setSubmitted(true),
   });
 
   // ── Validation ───────────────────────────────────────────────────────────
@@ -421,21 +461,25 @@ export default function BookPage() {
 
   // ── Confirmation ─────────────────────────────────────────────────────────
   if (submitted) {
-    const msg = settings?.reservationCompleteMessage ||
-      "John will review your request and reach out shortly to confirm your appointment time.";
+    const msg = autoApproved
+      ? "Your appointment is confirmed — a confirmation email is on its way."
+      : (settings?.reservationCompleteMessage ||
+        "John will review your request and reach out shortly to confirm your appointment time.");
     if (settings && (settings as any).completionRedirectUrl) {
       window.location.href = (settings as any).completionRedirectUrl;
       return null;
     }
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-12">
+      <div className={`${isEmbed ? "bg-white" : "min-h-screen bg-slate-50"} flex items-center justify-center px-4 py-12`}>
         <div className="w-full max-w-md text-center space-y-5">
           <div className="flex justify-center">
             <div className="bg-green-100 rounded-full p-5">
               <CheckCircle2 className="h-10 w-10 text-green-600" />
             </div>
           </div>
-          <h1 className="text-2xl font-bold text-slate-900">Request Received!</h1>
+          <h1 className="text-2xl font-bold text-slate-900">
+            {autoApproved ? "You're Booked!" : "Request Received!"}
+          </h1>
           <p className="text-slate-600 leading-relaxed">
             Thanks, <strong>{form.firstName}</strong>! {msg}
           </p>
@@ -450,9 +494,19 @@ export default function BookPage() {
           )}
           <div className="bg-white rounded-xl border border-slate-200 p-4 text-left text-sm text-slate-500 space-y-1">
             <p className="font-medium text-slate-700 mb-1">What happens next?</p>
-            <p>• John reviews your request, usually within 1 business day.</p>
-            <p>• He'll contact you by email or phone to confirm the time.</p>
-            <p>• You'll get final confirmation once it's on his calendar.</p>
+            {autoApproved ? (
+              <>
+                <p>• Your time slot is reserved on John's calendar.</p>
+                <p>• Check your inbox for a confirmation email with the details.</p>
+                <p>• Need to change or cancel? Just reply to that email.</p>
+              </>
+            ) : (
+              <>
+                <p>• John reviews your request, usually within 1 business day.</p>
+                <p>• He'll contact you by email or phone to confirm the time.</p>
+                <p>• You'll get final confirmation once it's on his calendar.</p>
+              </>
+            )}
           </div>
           <p className="text-xs text-slate-400">
             Questions? Email{" "}
@@ -784,11 +838,17 @@ export default function BookPage() {
   // ── Step 3: Select a Date ─────────────────────────────────────────────────
   function StepDate() {
     const days = calendarDays(selectedMonth.year, selectedMonth.month);
-    const today = new Date().toISOString().split("T")[0];
+    const today = toLocalYMD(new Date());
 
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-slate-900">Select a Date</h2>
+
+        {conflictMessage && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700" data-testid="text-booking-conflict">
+            {conflictMessage}
+          </div>
+        )}
 
         {slotsData?.isUtah && (
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700 font-medium">
@@ -877,7 +937,7 @@ export default function BookPage() {
                   <button
                     key={dateStr}
                     type="button"
-                    onClick={() => { setF("preferredDate", dateStr); setF("preferredTime", ""); }}
+                    onClick={() => { setF("preferredDate", dateStr); setF("preferredTime", ""); setConflictMessage(null); }}
                     className={`relative aspect-square flex items-center justify-center rounded-lg text-sm font-semibold transition-all ${
                       isSelected
                         ? "bg-slate-900 text-white"
@@ -962,7 +1022,11 @@ export default function BookPage() {
         <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-500 space-y-1">
           <p className="font-medium text-slate-600">How it works</p>
           <p>• Suggested times cluster with nearby existing appointments for efficient routing.</p>
-          <p>• No slot is auto-confirmed — John will reach out to confirm within 1 business day.</p>
+          {settings?.approvalMode === "auto" ? (
+            <p>• Your appointment is confirmed instantly — the time is reserved the moment you submit.</p>
+          ) : (
+            <p>• Your time is held for you while John confirms, usually within 1 business day.</p>
+          )}
         </div>
       </div>
     );
@@ -1065,7 +1129,7 @@ export default function BookPage() {
   const welcomeMsg = settings?.welcomeMessage;
 
   return (
-    <div className={`min-h-screen bg-slate-100 ${isEmbed ? "bg-white" : ""}`}>
+    <div className={isEmbed ? "bg-white" : "min-h-screen bg-slate-100"}>
       <div className="max-w-3xl mx-auto px-4 py-6 sm:py-10">
 
         {/* Header (hidden in embed) */}

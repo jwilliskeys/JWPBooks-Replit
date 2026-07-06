@@ -894,12 +894,45 @@ export default function SettingsPage() {
   }
 
   // ── Self-Scheduler Panel ─────────────────────────────────────────────────────
+  const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  type DayHours = { enabled: boolean; start: string; end: string };
+  // Mirrors DEFAULT_AVAILABILITY in server/booking.ts
+  const DEFAULT_WEEK: Record<string, DayHours> = {
+    "0": { enabled: true, start: "09:00", end: "16:30" },
+    "1": { enabled: true, start: "16:00", end: "19:00" },
+    "2": { enabled: true, start: "16:00", end: "19:00" },
+    "3": { enabled: true, start: "16:00", end: "19:00" },
+    "4": { enabled: true, start: "16:00", end: "19:00" },
+    "5": { enabled: true, start: "16:00", end: "19:00" },
+    "6": { enabled: true, start: "09:00", end: "16:30" },
+  };
+
+  function parseWeek(json: string | null | undefined): Record<string, DayHours> {
+    if (!json) return { ...DEFAULT_WEEK };
+    try {
+      const parsed = JSON.parse(json);
+      const out = { ...DEFAULT_WEEK };
+      for (const k of Object.keys(out)) {
+        const d = parsed?.[k];
+        if (d && typeof d.enabled === "boolean" && d.start && d.end) out[k] = { enabled: d.enabled, start: d.start, end: d.end };
+      }
+      return out;
+    } catch {
+      return { ...DEFAULT_WEEK };
+    }
+  }
+
   function SelfSchedulerPanel() {
     const { data: schedulerData, isLoading: schedulerLoading } = useQuery<SchedulerSettings>({
       queryKey: ["/api/scheduler-settings"],
     });
 
     const defaultForm = {
+      approvalMode: "manual" as string,
+      slotDurationMinutes: "90",
+      slotBufferMinutes: "0",
+      maxPerWeek: "2",
+      bookingHorizonWeeks: "12",
       showServiceCost: false,
       showServiceDuration: true,
       completionRedirectUrl: "",
@@ -915,11 +948,18 @@ export default function SettingsPage() {
     };
 
     const [form, setForm] = useState(defaultForm);
+    const [week, setWeek] = useState<Record<string, DayHours>>({ ...DEFAULT_WEEK });
     const [copied, setCopied] = useState(false);
 
     useEffect(() => {
       if (schedulerData) {
+        setWeek(parseWeek(schedulerData.availabilityJson));
         setForm({
+          approvalMode: schedulerData.approvalMode === "auto" ? "auto" : "manual",
+          slotDurationMinutes: String(schedulerData.slotDurationMinutes ?? 90),
+          slotBufferMinutes: String(schedulerData.slotBufferMinutes ?? 0),
+          maxPerWeek: String(schedulerData.maxPerWeek ?? 2),
+          bookingHorizonWeeks: String(schedulerData.bookingHorizonWeeks ?? 12),
           showServiceCost: schedulerData.showServiceCost ?? false,
           showServiceDuration: schedulerData.showServiceDuration ?? true,
           completionRedirectUrl: schedulerData.completionRedirectUrl ?? "",
@@ -937,7 +977,11 @@ export default function SettingsPage() {
     }, [schedulerData]);
 
     const saveSchedulerMutation = useMutation({
-      mutationFn: (data: typeof form) => apiRequest("PUT", "/api/scheduler-settings", data),
+      mutationFn: (data: typeof form) =>
+        apiRequest("PUT", "/api/scheduler-settings", {
+          ...data,
+          availabilityJson: JSON.stringify(week),
+        }),
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: ["/api/scheduler-settings"] });
         toast({ title: "Self-Scheduler settings saved" });
@@ -946,7 +990,22 @@ export default function SettingsPage() {
     });
 
     const bookingUrl = `${window.location.origin}/book`;
-    const embedCode = `<iframe\n  src="${bookingUrl}?embed=true"\n  width="100%"\n  height="700"\n  frameborder="0"\n  style="border-radius:12px;"\n></iframe>`;
+    const embedCode = `<!-- JWP booking scheduler -->
+<iframe id="jwp-book" src="${bookingUrl}?embed=true" title="Book a piano appointment"
+  style="width:100%;min-height:760px;border:0;border-radius:12px;" loading="lazy"></iframe>
+<script>
+  window.addEventListener("message", function (e) {
+    if (e && e.data && e.data.type === "jwp-book-height") {
+      var f = document.getElementById("jwp-book");
+      if (f) f.style.height = Math.max(560, e.data.height + 24) + "px";
+    }
+  });
+</script>
+<noscript><a href="${bookingUrl}">Book an appointment</a></noscript>`;
+    const fallbackLink = `<a href="${bookingUrl}" target="_blank" rel="noopener"
+  style="display:inline-block;background:#1e293b;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:600;">
+  Book an Appointment
+</a>`;
 
     function handleCopy(text: string) {
       navigator.clipboard.writeText(text);
@@ -993,13 +1052,100 @@ export default function SettingsPage() {
         {/* ── Embed Widget ── */}
         <div className="rounded-xl border bg-card p-4 space-y-3">
           <p className="text-sm font-semibold">Embed on johnwillispiano.com</p>
-          <p className="text-xs text-muted-foreground">Paste this snippet into your website's HTML to embed the booking form directly on your site.</p>
+          <p className="text-xs text-muted-foreground">Paste this snippet into a Code/HTML block on your website. The form auto-sizes to its content, so there's no inner scrollbar on desktop or mobile.</p>
           <div className="relative">
-            <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre">{embedCode}</pre>
-            <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(embedCode)}>
+            <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre max-h-56">{embedCode}</pre>
+            <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(embedCode)} data-testid="button-copy-embed">
               <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
             </Button>
           </div>
+          <p className="text-xs text-muted-foreground">If your website builder doesn't allow iframes, use this button that opens the scheduler in a new tab instead:</p>
+          <div className="relative">
+            <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre">{fallbackLink}</pre>
+            <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(fallbackLink)} data-testid="button-copy-fallback-link">
+              <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Approval Mode ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold">Auto-approve bookings</p>
+              <p className="text-xs text-muted-foreground">
+                On: a booking instantly becomes a confirmed appointment on your calendar and the slot is locked.
+                Off: it stays a pending request you confirm in one tap (from the dashboard or the email link).
+              </p>
+            </div>
+            <Switch
+              checked={form.approvalMode === "auto"}
+              onCheckedChange={v => setForm(f => ({ ...f, approvalMode: v ? "auto" : "manual" }))}
+              data-testid="switch-approval-mode"
+            />
+          </div>
+        </div>
+
+        {/* ── Availability ── */}
+        <div className="rounded-xl border bg-card p-4 space-y-4">
+          <div>
+            <p className="text-sm font-semibold">Weekly Availability</p>
+            <p className="text-xs text-muted-foreground">The hours clients can book, per day. Times already taken by appointments or held requests are removed automatically.</p>
+          </div>
+          <div className="space-y-2">
+            {WEEKDAY_NAMES.map((name, i) => {
+              const key = String(i);
+              const day = week[key];
+              return (
+                <div key={key} className="flex items-center gap-3 flex-wrap">
+                  <Switch
+                    checked={day.enabled}
+                    onCheckedChange={v => setWeek(w => ({ ...w, [key]: { ...w[key], enabled: v } }))}
+                    data-testid={`switch-avail-${name.toLowerCase()}`}
+                  />
+                  <span className={`text-sm w-24 ${day.enabled ? "" : "text-muted-foreground line-through"}`}>{name}</span>
+                  {day.enabled && (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="time"
+                        value={day.start}
+                        onChange={e => setWeek(w => ({ ...w, [key]: { ...w[key], start: e.target.value } }))}
+                        className="w-28 h-9"
+                        data-testid={`input-avail-start-${name.toLowerCase()}`}
+                      />
+                      <span className="text-xs text-muted-foreground">to</span>
+                      <Input
+                        type="time"
+                        value={day.end}
+                        onChange={e => setWeek(w => ({ ...w, [key]: { ...w[key], end: e.target.value } }))}
+                        className="w-28 h-9"
+                        data-testid={`input-avail-end-${name.toLowerCase()}`}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Appointment length (min)</Label>
+              <Input inputMode="numeric" value={form.slotDurationMinutes} onChange={e => set("slotDurationMinutes", e.target.value)} data-testid="input-slot-duration" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Buffer between (min)</Label>
+              <Input inputMode="numeric" value={form.slotBufferMinutes} onChange={e => set("slotBufferMinutes", e.target.value)} data-testid="input-slot-buffer" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Max bookings / week</Label>
+              <Input inputMode="numeric" value={form.maxPerWeek} onChange={e => set("maxPerWeek", e.target.value)} data-testid="input-max-per-week" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Book ahead (weeks)</Label>
+              <Input inputMode="numeric" value={form.bookingHorizonWeeks} onChange={e => set("bookingHorizonWeeks", e.target.value)} data-testid="input-horizon-weeks" />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">Slot times are generated from these: e.g. 9:00 AM–4:30 PM with 90-minute appointments offers 9:00, 10:30, 12:00, 1:30, and 3:00. Utah trip dates use their own all-day trip schedule.</p>
         </div>
 
         {/* ── Behavior ── */}

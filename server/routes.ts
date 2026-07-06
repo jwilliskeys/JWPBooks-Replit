@@ -181,6 +181,8 @@ export async function registerRoutes(
     }
     // Public endpoints: booking form, scheduler settings, and availability for the client-facing book page
     if (req.path === "/booking-requests" && req.method === "POST") return next();
+    // One-tap approve link from the owner's notification email (HMAC token-protected)
+    if (/^\/booking-requests\/\d+\/quick-approve$/.test(req.path) && req.method === "GET") return next();
     if (req.path === "/scheduler-settings/public" && req.method === "GET") return next();
     if (req.path === "/booking/available-slots" && req.method === "GET") return next();
     if (req.path === "/booking/services" && req.method === "GET") return next();
@@ -1908,62 +1910,134 @@ export async function registerRoutes(
   });
 
   /**
-   * GET /api/booking/available-slots?lat=42.3&lng=-71.1
+   * Shared booking-availability engine.
    *
-   * Returns available booking dates/times for the public scheduler.
-   * - Detects UT vs MA from lat/lng bounding boxes
-   * - UT: returns dates from the owner's SLC trip (Nov 21-29 by default)
-   * - MA/other: returns next 10 weeks based on John's working hours,
-   *   respecting the 2-appointment-per-week maximum
-   * - "recommended" dates are ones that already have existing appointments
-   *   (route-clustering opportunity)
+   * All dates are formatted with toLocalYMD (local components) — NEVER
+   * toISOString(), which converts to UTC and can shift the calendar day.
+   * Slots are generated from scheduler_settings (per-weekday hours, duration,
+   * buffer, max/week, horizon) with sensible defaults, and every slot is
+   * conflict-checked against existing appointments AND pending (held)
+   * booking requests so a taken time is never offered twice.
    */
+  const UTAH_WEEKEND_SLOTS = ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM"];
+  const UTAH_WEEKDAY_SLOTS = ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM", "4:00 PM", "5:00 PM"];
+
+  async function resolveOwnerUserId(): Promise<string | null> {
+    const { db: drizzleDb } = await import("./db");
+    const { users } = await import("@shared/schema");
+    const { desc: descOp, eq: eqOp } = await import("drizzle-orm");
+    const ownerEmail = process.env.OWNER_EMAIL;
+    if (ownerEmail) {
+      const [owner] = await drizzleDb.select({ id: users.id }).from(users).where(eqOp(users.email, ownerEmail)).limit(1);
+      if (owner?.id) return owner.id;
+    }
+    const [fb] = await drizzleDb.select({ id: users.id }).from(users).orderBy(descOp(users.createdAt)).limit(1);
+    return fb?.id ?? null;
+  }
+
+  interface BookingData {
+    config: import("./booking").BookingConfig;
+    todayStr: string;
+    /** appointments + pending held requests, per date */
+    busyByDate: Record<string, import("./booking").BusyItem[]>;
+    /** confirmed appointments per date (for "recommended" routing) */
+    apptCountByDate: Record<string, number>;
+    /** appointments + pending requests per ISO week (for max-per-week cap) */
+    countByWeek: Record<string, number>;
+    slcTrips: { name: string; startDate: string; endDate: string }[];
+  }
+
+  async function loadBookingData(ownerUserId: string): Promise<BookingData> {
+    const booking = await import("./booking");
+    const { db: drizzleDb } = await import("./db");
+    const { appointments, trips, bookingRequests } = await import("@shared/schema");
+    const { eq: eqOp } = await import("drizzle-orm");
+
+    const settings = await storage.getSchedulerSettings(ownerUserId);
+    const config = booking.resolveBookingConfig(settings);
+    const todayStr = booking.toLocalYMD(new Date());
+
+    const existingAppts = await drizzleDb
+      .select({ date: appointments.date, time: appointments.time, duration: appointments.duration, status: appointments.status })
+      .from(appointments)
+      .where(eqOp(appointments.userId, ownerUserId));
+
+    const pendingReqs = await drizzleDb
+      .select({ requestedDate: bookingRequests.requestedDate, requestedTime: bookingRequests.requestedTime, status: bookingRequests.status })
+      .from(bookingRequests)
+      .where(eqOp(bookingRequests.userId, ownerUserId));
+
+    const busyByDate: Record<string, import("./booking").BusyItem[]> = {};
+    const apptCountByDate: Record<string, number> = {};
+    const countByWeek: Record<string, number> = {};
+
+    for (const a of existingAppts) {
+      if (!a.date || a.date < todayStr || a.status === "cancelled") continue;
+      (busyByDate[a.date] ??= []).push({ time: a.time, duration: a.duration });
+      apptCountByDate[a.date] = (apptCountByDate[a.date] ?? 0) + 1;
+      const wk = booking.isoWeekKey(a.date);
+      countByWeek[wk] = (countByWeek[wk] ?? 0) + 1;
+    }
+    // Pending requests with a chosen slot HOLD that slot until approved/declined
+    for (const r of pendingReqs) {
+      if (r.status !== "pending" || !r.requestedDate || r.requestedDate < todayStr) continue;
+      (busyByDate[r.requestedDate] ??= []).push({ time: r.requestedTime });
+      const wk = booking.isoWeekKey(r.requestedDate);
+      countByWeek[wk] = (countByWeek[wk] ?? 0) + 1;
+    }
+
+    const allTrips = await drizzleDb.select().from(trips).where(eqOp(trips.userId, ownerUserId));
+    const slcTrips = allTrips
+      .filter(t => {
+        const combined = `${t.name} ${t.notes ?? ""}`.toLowerCase();
+        return combined.includes("slc") || combined.includes("salt lake") || combined.includes("utah");
+      })
+      .map(t => ({ name: t.name, startDate: t.startDate, endDate: t.endDate }));
+
+    return { config, todayStr, busyByDate, apptCountByDate, countByWeek, slcTrips };
+  }
+
+  /** Free slot labels for one date (handles both Utah-trip days and regular days). */
+  async function freeSlotsForDate(data: BookingData, dateStr: string, isTripDate: boolean): Promise<string[]> {
+    const booking = await import("./booking");
+    const busy = booking.busyIntervalsForDate(data.busyByDate[dateStr] ?? [], data.config);
+    const d = new Date(dateStr + "T00:00:00");
+    const dayOfWeek = d.getDay();
+    if (isTripDate) {
+      const base = dayOfWeek === 0 || dayOfWeek === 6 ? UTAH_WEEKEND_SLOTS : UTAH_WEEKDAY_SLOTS;
+      return booking.filterSlotLabels(base, busy, data.config);
+    }
+    return booking.freeSlotLabels(dayOfWeek, busy, data.config);
+  }
+
+  function isWithinSlcTrip(data: BookingData, dateStr: string): boolean {
+    return data.slcTrips.some(t => dateStr >= t.startDate && dateStr <= t.endDate);
+  }
+
   app.get("/api/booking/available-slots", async (req, res) => {
     try {
-      const { db: drizzleDb } = await import("./db");
-      const { users, appointments, trips } = await import("@shared/schema");
-      const { desc: descOp, eq: eqOp, gte: gteOp, lte: lteOp } = await import("drizzle-orm");
-
-      // Resolve owner
-      const ownerEmail = process.env.OWNER_EMAIL;
-      let ownerUserId: string | null = null;
-      if (ownerEmail) {
-        const [owner] = await drizzleDb.select({ id: users.id }).from(users).where(eqOp(users.email, ownerEmail)).limit(1);
-        ownerUserId = owner?.id ?? null;
-      }
-      if (!ownerUserId) {
-        const [fb] = await drizzleDb.select({ id: users.id }).from(users).orderBy(descOp(users.createdAt)).limit(1);
-        ownerUserId = fb?.id ?? null;
-      }
+      const booking = await import("./booking");
+      const ownerUserId = await resolveOwnerUserId();
       if (!ownerUserId) return res.json({ availableDates: [] });
+
+      const data = await loadBookingData(ownerUserId);
 
       // State detection from lat/lng bounding boxes
       const lat = parseFloat(req.query.lat as string || "0");
       const lng = parseFloat(req.query.lng as string || "0");
       const isUT = lat >= 36.99 && lat <= 42.00 && lng >= -114.05 && lng <= -109.04;
 
-      // ── UT: return SLC trip dates ──────────────────────────────────────────
+      type AvailableDate = {
+        date: string;
+        dayLabel: string;
+        isRecommended: boolean;
+        isTripDate: boolean;
+        slots: string[];
+      };
+
+      // ── UT: return SLC trip dates (conflict-checked) ───────────────────────
       if (isUT) {
-        const allTrips = await drizzleDb
-          .select()
-          .from(trips)
-          .where(eqOp(trips.userId, ownerUserId));
-
-        // Find SLC/Utah trips — look for "SLC", "Salt Lake", or "Utah" in name/notes
-        const slcTrips = allTrips.filter(t => {
-          const combined = `${t.name} ${t.notes ?? ""}`.toLowerCase();
-          return combined.includes("slc") || combined.includes("salt lake") || combined.includes("utah");
-        });
-
-        type AvailableDate = {
-          date: string;
-          dayLabel: string;
-          isRecommended: boolean;
-          isTripDate: boolean;
-          slots: string[];
-        };
-
-        if (slcTrips.length === 0) {
+        if (data.slcTrips.length === 0) {
           return res.json({
             availableDates: [],
             isUtah: true,
@@ -1972,18 +2046,17 @@ export async function registerRoutes(
         }
 
         const utahDates: AvailableDate[] = [];
-        for (const trip of slcTrips) {
+        for (const trip of data.slcTrips) {
           const start = new Date(trip.startDate + "T00:00:00");
           const end = new Date(trip.endDate + "T00:00:00");
           for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-            const dateStr = d.toISOString().split("T")[0];
-            const day = d.getDay();
-            const slots = day === 0 || day === 6
-              ? ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM"]
-              : ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM", "4:00 PM", "5:00 PM"];
+            const dateStr = booking.toLocalYMD(d);
+            if (dateStr < data.todayStr) continue;
+            const slots = await freeSlotsForDate(data, dateStr, true);
+            if (slots.length === 0) continue;
             utahDates.push({
               date: dateStr,
-              dayLabel: new Date(d).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }),
+              dayLabel: d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }),
               isRecommended: false,
               isTripDate: true,
               slots,
@@ -1991,87 +2064,41 @@ export async function registerRoutes(
           }
         }
 
-        return res.json({ availableDates: utahDates, isUtah: true, tripName: slcTrips[0].name });
+        if (utahDates.length === 0) {
+          // Trips exist but are entirely in the past or fully booked
+          return res.json({
+            availableDates: [],
+            isUtah: true,
+            message: "No Utah trip dates are currently open for booking. Please contact John directly to request a Utah appointment.",
+          });
+        }
+
+        return res.json({ availableDates: utahDates, isUtah: true, tripName: data.slcTrips[0].name });
       }
 
-      // ── MA / Other: compute from working-hours calendar ───────────────────
-      // Working hours: 4pm–6pm Mon–Fri, all day Sat–Sun
-      // Max 2 appointments per week
-      const MAX_PER_WEEK = 2;
-      const WEEKS_AHEAD = 12;
-      const WEEKDAY_SLOTS = ["4:00 PM", "5:00 PM"];
-      const WEEKEND_SLOTS = ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM"];
-
+      // ── MA / Other: compute from configurable working hours ────────────────
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      const todayStr = today.toISOString().split("T")[0];
 
-      // Fetch existing appointments (next WEEKS_AHEAD weeks)
-      const cutoffDate = new Date(today);
-      cutoffDate.setDate(today.getDate() + WEEKS_AHEAD * 7);
-      const cutoffStr = cutoffDate.toISOString().split("T")[0];
-
-      const existingAppts = await drizzleDb
-        .select({ date: appointments.date, status: appointments.status })
-        .from(appointments)
-        .where(eqOp(appointments.userId, ownerUserId));
-
-      // Filter to future, non-cancelled
-      const futureAppts = existingAppts.filter(a =>
-        a.date >= todayStr && a.date <= cutoffStr && a.status !== "cancelled"
-      );
-
-      // Group by ISO week string (YYYY-Www)
-      function isoWeek(dateStr: string): string {
-        const d = new Date(dateStr + "T00:00:00");
-        const tmp = new Date(d);
-        tmp.setHours(0, 0, 0, 0);
-        tmp.setDate(tmp.getDate() + 4 - (tmp.getDay() || 7));
-        const yearStart = new Date(tmp.getFullYear(), 0, 1);
-        const weekNo = Math.ceil((((tmp.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-        return `${tmp.getFullYear()}-W${weekNo.toString().padStart(2, "0")}`;
-      }
-
-      const apptsByWeek: Record<string, number> = {};
-      const apptsByDate: Record<string, number> = {};
-      for (const a of futureAppts) {
-        const wk = isoWeek(a.date);
-        apptsByWeek[wk] = (apptsByWeek[wk] ?? 0) + 1;
-        apptsByDate[a.date] = (apptsByDate[a.date] ?? 0) + 1;
-      }
-
-      const availableDates: {
-        date: string;
-        dayLabel: string;
-        isRecommended: boolean;
-        isTripDate: boolean;
-        slots: string[];
-      }[] = [];
-
-      for (let dayOffset = 1; dayOffset <= WEEKS_AHEAD * 7; dayOffset++) {
+      const availableDates: AvailableDate[] = [];
+      for (let dayOffset = 1; dayOffset <= data.config.bookingHorizonWeeks * 7; dayOffset++) {
         const d = new Date(today);
         d.setDate(today.getDate() + dayOffset);
-        const dateStr = d.toISOString().split("T")[0];
-        const dayOfWeek = d.getDay(); // 0=Sun, 6=Sat
+        const dateStr = booking.toLocalYMD(d);
 
-        // Working days only (Mon–Sun, but weekdays only 4pm–6pm)
-        const wk = isoWeek(dateStr);
-        const weekCount = apptsByWeek[wk] ?? 0;
+        // Skip if this week is already at capacity (appointments + held requests)
+        const weekCount = data.countByWeek[booking.isoWeekKey(dateStr)] ?? 0;
+        if (weekCount >= data.config.maxPerWeek) continue;
 
-        // Skip if this week is already at capacity
-        if (weekCount >= MAX_PER_WEEK) continue;
+        const slots = await freeSlotsForDate(data, dateStr, false);
+        if (slots.length === 0) continue;
 
-        const slots = dayOfWeek === 0 || dayOfWeek === 6 ? WEEKEND_SLOTS : WEEKDAY_SLOTS;
-        const existingOnDay = apptsByDate[dateStr] ?? 0;
-
-        // A date is "recommended" if there's already an appointment that day
+        // "Recommended" = an appointment already exists that day
         // (route clustering: John is already in the area)
-        const isRecommended = existingOnDay > 0;
-
         availableDates.push({
           date: dateStr,
           dayLabel: d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }),
-          isRecommended,
+          isRecommended: (data.apptCountByDate[dateStr] ?? 0) > 0,
           isTripDate: false,
           slots,
         });
@@ -2104,6 +2131,12 @@ export async function registerRoutes(
         outsideServiceAreaMessage: null,
         privacyPolicyUrl: null,
         termsOfServiceUrl: null,
+        approvalMode: "manual",
+        availabilityJson: null,
+        slotDurationMinutes: 90,
+        slotBufferMinutes: 0,
+        maxPerWeek: 2,
+        bookingHorizonWeeks: 12,
         updatedAt: null,
       });
     } catch (error: any) {
@@ -2128,7 +2161,17 @@ export async function registerRoutes(
         outsideServiceAreaMessage,
         privacyPolicyUrl,
         termsOfServiceUrl,
+        approvalMode,
+        availabilityJson,
+        slotDurationMinutes,
+        slotBufferMinutes,
+        maxPerWeek,
+        bookingHorizonWeeks,
       } = req.body;
+      const toInt = (v: unknown, fallback: number) => {
+        const n = typeof v === "string" ? parseInt(v, 10) : typeof v === "number" ? Math.round(v) : NaN;
+        return Number.isFinite(n) && n > 0 ? n : fallback;
+      };
       const settings = await storage.upsertSchedulerSettings(userId, {
         showServiceCost: showServiceCost ?? false,
         showServiceDuration: showServiceDuration ?? true,
@@ -2142,6 +2185,12 @@ export async function registerRoutes(
         outsideServiceAreaMessage: outsideServiceAreaMessage ?? null,
         privacyPolicyUrl: privacyPolicyUrl ?? null,
         termsOfServiceUrl: termsOfServiceUrl ?? null,
+        approvalMode: approvalMode === "auto" ? "auto" : "manual",
+        availabilityJson: typeof availabilityJson === "string" && availabilityJson.length > 0 ? availabilityJson : null,
+        slotDurationMinutes: toInt(slotDurationMinutes, 90),
+        slotBufferMinutes: typeof slotBufferMinutes !== "undefined" ? Math.max(0, toInt(slotBufferMinutes, 0)) : 0,
+        maxPerWeek: toInt(maxPerWeek, 2),
+        bookingHorizonWeeks: Math.min(52, toInt(bookingHorizonWeeks, 12)),
       });
       res.json(settings);
     } catch (error: any) {
@@ -2189,6 +2238,7 @@ export async function registerRoutes(
         outsideServiceAreaMessage: settings?.outsideServiceAreaMessage ?? null,
         privacyPolicyUrl: settings?.privacyPolicyUrl ?? null,
         termsOfServiceUrl: settings?.termsOfServiceUrl ?? null,
+        approvalMode: settings?.approvalMode === "auto" ? "auto" : "manual",
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -2496,6 +2546,62 @@ export async function registerRoutes(
 
   // ── Booking Requests ────────────────────────────────────────────────────────
 
+  /** HMAC token so the owner's "Approve" email link works without a login. */
+  async function quickApproveToken(requestId: number): Promise<string> {
+    const { createHmac } = await import("crypto");
+    const secret = process.env.SESSION_SECRET || process.env.DATABASE_URL || "jwp-books";
+    return createHmac("sha256", secret).update(`approve:${requestId}`).digest("hex");
+  }
+
+  /** Create/find customer + create appointment from a booking request (shared by all approval paths). */
+  async function convertBookingRequestToAppointment(
+    existing: import("@shared/schema").BookingRequest,
+    userId: string,
+    opts: { date: string; time: string; duration?: string; notes?: string },
+  ) {
+    let customer = await storage.findCustomerByName(existing.firstName, existing.lastName, userId);
+    if (!customer) {
+      customer = await storage.createCustomer({
+        firstName: existing.firstName,
+        lastName: existing.lastName,
+        email: existing.email,
+        phone: existing.phone ?? undefined,
+        address: existing.streetAddress ?? undefined,
+        city: existing.cityNeighborhood ?? undefined,
+        pianoType: existing.pianoType ?? undefined,
+        personalNotes: existing.preferredTimes
+          ? `Self-scheduling request note: ${existing.preferredTimes}`
+          : undefined,
+      }, userId);
+    }
+
+    const appointment = await storage.createAppointment({
+      customerId: customer.id,
+      date: opts.date,
+      time: opts.time,
+      duration: opts.duration ?? "2 hours",
+      isTuning: true,
+      servicesRequested: existing.serviceRequested || "Standard Tuning",
+      notes: opts.notes ?? `From booking request submitted by ${existing.firstName} ${existing.lastName}.`,
+      status: "scheduled",
+    }, userId);
+
+    const updated = await storage.updateBookingRequest(existing.id, {
+      status: "approved",
+      convertedCustomerId: customer.id,
+      convertedAppointmentId: appointment.id,
+    });
+
+    return { request: updated, customer, appointment };
+  }
+
+  /** Base URL of the deployed app, for links in emails. */
+  function appBaseUrl(req: import("express").Request): string {
+    if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/$/, "");
+    const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+    return `${proto}://${req.get("host")}`;
+  }
+
   // PUBLIC — no auth required. Called by the client-facing /book page.
   app.post("/api/booking-requests", async (req, res) => {
     try {
@@ -2503,24 +2609,106 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid request", errors: parsed.error.flatten() });
       }
-      // Assign to the owner's userId (the single-owner app always has one user)
-      const { db: drizzleDb } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { desc: descOp } = await import("drizzle-orm");
-      const ownerEmail = process.env.OWNER_EMAIL;
-      let ownerUserId: string | null = null;
-      if (ownerEmail) {
-        const [owner] = await drizzleDb.select({ id: users.id }).from(users).where((await import("drizzle-orm")).eq(users.email, ownerEmail)).limit(1);
-        ownerUserId = owner?.id ?? null;
+      const ownerUserId = (await resolveOwnerUserId()) ?? "owner";
+
+      // ── Conflict re-check: is the picked slot still genuinely free? ────────
+      const booking = await import("./booking");
+      const data = await loadBookingData(ownerUserId);
+      const { requestedDate, requestedTime } = parsed.data;
+      if (requestedDate && requestedTime) {
+        const wantedMins = booking.parseTimeToMinutes(requestedTime);
+        let conflict = "";
+        if (requestedDate < data.todayStr) {
+          conflict = "That date has already passed. Please pick a new date.";
+        } else {
+          const isTrip = isWithinSlcTrip(data, requestedDate);
+          if (!isTrip) {
+            const weekCount = data.countByWeek[booking.isoWeekKey(requestedDate)] ?? 0;
+            if (weekCount >= data.config.maxPerWeek) {
+              conflict = "That week just filled up. Please pick a date in a different week.";
+            }
+          }
+          if (!conflict) {
+            const free = await freeSlotsForDate(data, requestedDate, isTrip);
+            const stillFree = free.some(s => booking.parseTimeToMinutes(s) === wantedMins);
+            if (!stillFree) {
+              conflict = "That time was just booked by someone else. Please pick a different time.";
+            }
+          }
+        }
+        if (conflict) return res.status(409).json({ message: conflict, conflict: true });
       }
-      if (!ownerUserId) {
-        const [fallback] = await drizzleDb.select({ id: users.id }).from(users).orderBy(descOp(users.createdAt)).limit(1);
-        ownerUserId = fallback?.id ?? "owner";
-      }
+
       const request = await storage.createBookingRequest(parsed.data, ownerUserId);
-      res.status(201).json(request);
+
+      // ── Auto vs manual approval ────────────────────────────────────────────
+      const email = await import("./email");
+      const autoMode = data.config.approvalMode === "auto" && !!requestedDate && !!requestedTime;
+
+      if (autoMode) {
+        const result = await convertBookingRequestToAppointment(request, ownerUserId, {
+          date: requestedDate!,
+          time: requestedTime!,
+        });
+        // Emails (fire-and-forget — never block or fail the booking on email problems)
+        const confirmed = email.clientConfirmedEmail(request);
+        void email.sendEmail({ to: request.email, subject: confirmed.subject, html: confirmed.html, replyTo: process.env.OWNER_EMAIL }).catch(() => {});
+        const owner = email.ownerNotificationEmail(request, "auto");
+        void email.sendEmail({ to: owner.to, subject: owner.subject, html: owner.html, replyTo: request.email }).catch(() => {});
+        return res.status(201).json({ ...(result.request ?? request), autoApproved: true });
+      }
+
+      // Manual mode: stays pending; notify both sides
+      const received = email.clientReceivedEmail(request);
+      void email.sendEmail({ to: request.email, subject: received.subject, html: received.html, replyTo: process.env.OWNER_EMAIL }).catch(() => {});
+      const approveUrl = requestedDate && requestedTime
+        ? `${appBaseUrl(req)}/api/booking-requests/${request.id}/quick-approve?token=${await quickApproveToken(request.id)}`
+        : undefined;
+      const owner = email.ownerNotificationEmail(request, "manual", approveUrl);
+      void email.sendEmail({ to: owner.to, subject: owner.subject, html: owner.html, replyTo: request.email }).catch(() => {});
+
+      res.status(201).json({ ...request, autoApproved: false });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  // PUBLIC (token-protected) — one-tap approve link from the owner's email.
+  app.get("/api/booking-requests/:id/quick-approve", async (req, res) => {
+    const page = (title: string, body: string, ok: boolean) =>
+      `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title></head>
+      <body style="font-family:Georgia,serif;max-width:480px;margin:60px auto;padding:0 20px;color:#1e293b;text-align:center;">
+      <h2 style="color:${ok ? "#16a34a" : "#dc2626"};">${title}</h2><p style="font-size:16px;line-height:1.5;">${body}</p></body></html>`;
+    try {
+      const id = parseInt(req.params.id as string);
+      const token = String(req.query.token ?? "");
+      if (isNaN(id) || !token || token !== (await quickApproveToken(id))) {
+        return res.status(403).send(page("Link not valid", "This approval link is invalid or has expired. Open your dashboard to review the request instead.", false));
+      }
+      const ownerUserId = await resolveOwnerUserId();
+      if (!ownerUserId) return res.status(500).send(page("Something went wrong", "Could not find the owner account.", false));
+
+      const all = await storage.getBookingRequests(ownerUserId);
+      const existing = all.find(r => r.id === id);
+      if (!existing) return res.status(404).send(page("Not found", "This booking request no longer exists.", false));
+      if (existing.status === "approved") {
+        return res.send(page("Already approved", `${existing.firstName} ${existing.lastName} is already on your calendar.`, true));
+      }
+      if (!existing.requestedDate || !existing.requestedTime) {
+        return res.send(page("Needs a time", "This request has no specific time attached. Approve it from your dashboard where you can pick one.", false));
+      }
+
+      const result = await convertBookingRequestToAppointment(existing, ownerUserId, {
+        date: existing.requestedDate,
+        time: existing.requestedTime,
+      });
+      const email = await import("./email");
+      const approved = email.clientApprovedEmail(existing, existing.requestedDate, existing.requestedTime);
+      void email.sendEmail({ to: existing.email, subject: approved.subject, html: approved.html, replyTo: process.env.OWNER_EMAIL }).catch(() => {});
+
+      res.send(page("Approved", `${existing.firstName} ${existing.lastName} is booked for ${existing.requestedDate} at ${existing.requestedTime}. They've been emailed a confirmation, and the appointment (#${result.appointment.id}) is on your calendar.`, true));
+    } catch (error: any) {
+      res.status(500).send(page("Something went wrong", error.message ?? "Unknown error", false));
     }
   });
 
@@ -2546,64 +2734,37 @@ export async function registerRoutes(
     }
   });
 
-  // Approve: create customer + appointment, mark request approved
+  // Approve: create customer + appointment, mark request approved.
+  // date/time default to what the client picked on the calendar.
   app.post("/api/booking-requests/:id/approve", async (req, res) => {
     try {
       const userId = getUserId(req);
       const id = parseInt(req.params.id as string);
-      const { date, time, duration, notes } = req.body as {
-        date: string;
-        time: string;
-        duration?: string;
-        notes?: string;
-      };
+      const body = req.body as { date?: string; time?: string; duration?: string; notes?: string };
+
+      const all = await storage.getBookingRequests(userId);
+      const existing = all.find(r => r.id === id);
+      if (!existing) return res.status(404).json({ message: "Booking request not found" });
+
+      const date = body.date || existing.requestedDate || "";
+      const time = body.time || existing.requestedTime || "";
       if (!date || !time) {
         return res.status(400).json({ message: "date and time are required" });
       }
 
-      // Fetch the original request
-      const [existing] = await (async () => {
-        const all = await storage.getBookingRequests(userId);
-        return all.filter(r => r.id === id);
-      })();
-      if (!existing) return res.status(404).json({ message: "Booking request not found" });
-
-      // Create or find customer
-      let customer = await storage.findCustomerByName(existing.firstName, existing.lastName, userId);
-      if (!customer) {
-        customer = await storage.createCustomer({
-          firstName: existing.firstName,
-          lastName: existing.lastName,
-          email: existing.email,
-          phone: existing.phone ?? undefined,
-          city: existing.cityNeighborhood ?? undefined,
-          pianoType: existing.pianoType ?? undefined,
-          personalNotes: existing.preferredTimes
-            ? `Self-scheduling request note: ${existing.preferredTimes}`
-            : undefined,
-        }, userId);
-      }
-
-      // Create appointment
-      const appointment = await storage.createAppointment({
-        customerId: customer.id,
+      const result = await convertBookingRequestToAppointment(existing, userId, {
         date,
         time,
-        duration: duration ?? "2 hours",
-        isTuning: true,
-        servicesRequested: "Standard Tuning",
-        notes: notes ?? `From booking request submitted by ${existing.firstName} ${existing.lastName}.`,
-        status: "scheduled",
-      }, userId);
-
-      // Mark request approved
-      const updated = await storage.updateBookingRequest(id, {
-        status: "approved",
-        convertedCustomerId: customer.id,
-        convertedAppointmentId: appointment.id,
+        duration: body.duration,
+        notes: body.notes,
       });
 
-      res.json({ request: updated, customer, appointment });
+      // Email the client their confirmation (fire-and-forget)
+      const email = await import("./email");
+      const approved = email.clientApprovedEmail(existing, date, time);
+      void email.sendEmail({ to: existing.email, subject: approved.subject, html: approved.html, replyTo: process.env.OWNER_EMAIL }).catch(() => {});
+
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

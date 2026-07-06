@@ -1089,6 +1089,18 @@ interface ApproveModalState {
   notes: string;
 }
 
+/** "4:00 PM" → "16:00" for <input type="time"> prefill. */
+function to24h(label: string | null | undefined): string {
+  if (!label) return "";
+  const m = label.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!m) return "";
+  let h = parseInt(m[1], 10);
+  const ampm = m[3]?.toUpperCase();
+  if (ampm === "PM" && h !== 12) h += 12;
+  if (ampm === "AM" && h === 12) h = 0;
+  return `${String(h).padStart(2, "0")}:${m[2]}`;
+}
+
 function PendingBookingRequestsPanel() {
   const qc = useQueryClient();
   const { toast } = useToast();
@@ -1214,6 +1226,11 @@ function PendingBookingRequestsPanel() {
                         <span>Last tuned: {req.lastTuned}</span>
                       )}
                     </p>
+                    {req.requestedDate && req.requestedTime && (
+                      <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mt-1">
+                        Requested: {req.requestedDate} at {req.requestedTime}
+                      </p>
+                    )}
                     {req.preferredTimes && (
                       <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 italic line-clamp-2">
                         "{req.preferredTimes}"
@@ -1254,8 +1271,9 @@ function PendingBookingRequestsPanel() {
                     onClick={() =>
                       setApproveModal({
                         request: req,
-                        date: "",
-                        time: "",
+                        // Prefill with the slot the client picked on the calendar
+                        date: req.requestedDate ?? "",
+                        time: to24h(req.requestedTime),
                         duration: "2 hours",
                         notes: "",
                       })

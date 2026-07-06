@@ -26,6 +26,20 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// Allow the public /book page to be embedded in an iframe on johnwillispiano.com
+// (plus common site-builder editor/preview domains). Everything else stays
+// same-origin-only. Express sets no X-Frame-Options by default, so this CSP
+// header is the single source of truth for framing.
+app.use((req, res, next) => {
+  if (req.path === "/book") {
+    res.setHeader(
+      "Content-Security-Policy",
+      "frame-ancestors 'self' https://johnwillispiano.com https://*.johnwillispiano.com https://*.squarespace.com https://*.wix.com https://*.wixsite.com https://*.editmysite.com https://*.weebly.com",
+    );
+  }
+  next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -125,7 +139,39 @@ async function ensurePianoSchemaColumns() {
         "created_at" timestamp DEFAULT now()
       );
     `);
-    log("Schema migration: pianos, calendar_events, invoices, business_expenses, inspections, and booking_requests ensured.", "migration");
+    // Booking system: columns added after booking_requests was first created,
+    // plus scheduler_settings availability/approval config. All additive.
+    await pool.query(`
+      ALTER TABLE "booking_requests" ADD COLUMN IF NOT EXISTS "street_address" text;
+      ALTER TABLE "booking_requests" ADD COLUMN IF NOT EXISTS "address_lat" text;
+      ALTER TABLE "booking_requests" ADD COLUMN IF NOT EXISTS "address_lng" text;
+      ALTER TABLE "booking_requests" ADD COLUMN IF NOT EXISTS "service_requested" text;
+      ALTER TABLE "booking_requests" ADD COLUMN IF NOT EXISTS "requested_date" text;
+      ALTER TABLE "booking_requests" ADD COLUMN IF NOT EXISTS "requested_time" text;
+      CREATE TABLE IF NOT EXISTS "scheduler_settings" (
+        "user_id" text PRIMARY KEY NOT NULL,
+        "show_service_cost" boolean DEFAULT false,
+        "show_service_duration" boolean DEFAULT true,
+        "completion_redirect_url" text,
+        "service_area_lat" text,
+        "service_area_lng" text,
+        "service_area_radius_miles" text DEFAULT '40',
+        "service_area_enabled" boolean DEFAULT false,
+        "welcome_message" text,
+        "reservation_complete_message" text,
+        "outside_service_area_message" text,
+        "privacy_policy_url" text,
+        "terms_of_service_url" text,
+        "updated_at" timestamp DEFAULT now()
+      );
+      ALTER TABLE "scheduler_settings" ADD COLUMN IF NOT EXISTS "approval_mode" text DEFAULT 'manual';
+      ALTER TABLE "scheduler_settings" ADD COLUMN IF NOT EXISTS "availability_json" text;
+      ALTER TABLE "scheduler_settings" ADD COLUMN IF NOT EXISTS "slot_duration_minutes" integer DEFAULT 90;
+      ALTER TABLE "scheduler_settings" ADD COLUMN IF NOT EXISTS "slot_buffer_minutes" integer DEFAULT 0;
+      ALTER TABLE "scheduler_settings" ADD COLUMN IF NOT EXISTS "max_per_week" integer DEFAULT 2;
+      ALTER TABLE "scheduler_settings" ADD COLUMN IF NOT EXISTS "booking_horizon_weeks" integer DEFAULT 12;
+    `);
+    log("Schema migration: pianos, calendar_events, invoices, business_expenses, inspections, booking_requests, and scheduler_settings ensured.", "migration");
   } catch (err: any) {
     log(`Schema migration error: ${err.message}`, "migration");
   }

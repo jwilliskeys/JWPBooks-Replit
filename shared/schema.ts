@@ -518,6 +518,9 @@ export const bookingRequests = pgTable("booking_requests", {
   pianoType: text("piano_type"),    // "Upright" | "Grand" | "Other"
   lastTuned: text("last_tuned"),    // approximate, free text
   preferredTimes: text("preferred_times"), // free text: preferred days/times + issues
+  // Structured slot selection (what the client actually picked on the calendar)
+  requestedDate: text("requested_date"),   // YYYY-MM-DD
+  requestedTime: text("requested_time"),   // "4:00 PM"
   status: text("status").notNull().default("pending"), // "pending" | "approved" | "declined"
   adminNotes: text("admin_notes"), // internal notes when approving/declining
   convertedCustomerId: integer("converted_customer_id"), // set when approved → customer created
@@ -549,6 +552,8 @@ export const publicBookingRequestSchema = insertBookingRequestSchema.extend({
   pianoType: z.enum(["Upright", "Grand", "Other"]).optional(),
   lastTuned: z.string().optional(),
   preferredTimes: z.string().optional(),
+  requestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date").optional(),
+  requestedTime: z.string().max(20).optional(),
 });
 
 export type BookingRequest = typeof bookingRequests.$inferSelect;
@@ -574,6 +579,14 @@ export const schedulerSettings = pgTable("scheduler_settings", {
   // Legal
   privacyPolicyUrl: text("privacy_policy_url"),
   termsOfServiceUrl: text("terms_of_service_url"),
+  // Availability & booking rules (all nullable — server falls back to defaults)
+  approvalMode: text("approval_mode").default("manual"), // "manual" | "auto"
+  // JSON: { "0": { enabled, start: "09:00", end: "16:30" }, ... "6": ... } keyed by day-of-week (0=Sun)
+  availabilityJson: text("availability_json"),
+  slotDurationMinutes: integer("slot_duration_minutes").default(90),
+  slotBufferMinutes: integer("slot_buffer_minutes").default(0),
+  maxPerWeek: integer("max_per_week").default(2),
+  bookingHorizonWeeks: integer("booking_horizon_weeks").default(12),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
