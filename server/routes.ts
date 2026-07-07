@@ -1735,8 +1735,13 @@ export async function registerRoutes(
   });
 
   // ── Google Places (server-side proxy) ───────────────────────────────────────
+  // Uses Places API (New) — the legacy Places web service is not enabled for
+  // API keys created after March 2025 and returns REQUEST_DENIED.
   // GOOGLE_MAPS_API_KEY is read at request time so a missing key is handled
   // gracefully — predictions just return an empty array.
+  // The optional `sessiontoken` query param (minted client-side per typing
+  // session) is forwarded to Google so autocomplete + the matching details
+  // call bill at the cheaper per-session rate.
 
   app.get("/api/places/autocomplete", async (req, res) => {
     try {
@@ -1749,18 +1754,56 @@ export async function registerRoutes(
         return res.json({ predictions: [] });
       }
 
-      const url = new URL("https://maps.googleapis.com/maps/api/place/autocomplete/json");
-      url.searchParams.set("input", input);
-      url.searchParams.set("types", "address");
-      url.searchParams.set("components", "country:us");
-      url.searchParams.set("key", key);
+      const sessionToken = (req.query.sessiontoken as string | undefined) || undefined;
+      const body: Record<string, unknown> = {
+        input,
+        includedRegionCodes: ["us"],
+        includedPrimaryTypes: ["street_address", "premise", "subpremise"],
+      };
+      if (sessionToken) body.sessionToken = sessionToken;
 
-      const resp = await fetch(url.toString());
-      const data = (await resp.json()) as { predictions?: unknown[]; status?: string };
-      if (data.status && data.status !== "OK" && data.status !== "ZERO_RESULTS") {
-        console.error("Places autocomplete status:", data.status);
+      const resp = await fetch("https://places.googleapis.com/v1/places:autocomplete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Goog-Api-Key": key,
+        },
+        body: JSON.stringify(body),
+      });
+      const data = (await resp.json()) as {
+        suggestions?: Array<{
+          placePrediction?: {
+            placeId?: string;
+            text?: { text?: string };
+            structuredFormat?: {
+              mainText?: { text?: string };
+              secondaryText?: { text?: string };
+            };
+          };
+        }>;
+        error?: { status?: string; message?: string };
+      };
+
+      if (!resp.ok || data.error) {
+        console.error(
+          "Places autocomplete (New) error:",
+          data.error?.status ?? resp.status,
+          data.error?.message ?? "",
+        );
+        return res.json({ predictions: [] });
       }
-      return res.json({ predictions: data.predictions ?? [] });
+
+      const predictions = (data.suggestions ?? [])
+        .map((s) => s.placePrediction)
+        .filter((p): p is NonNullable<typeof p> => !!p?.placeId)
+        .map((p) => ({
+          place_id: p.placeId as string,
+          description: p.text?.text ?? "",
+          mainText: p.structuredFormat?.mainText?.text ?? "",
+          secondaryText: p.structuredFormat?.secondaryText?.text ?? "",
+        }));
+
+      return res.json({ predictions });
     } catch (err: any) {
       console.error("Places autocomplete fetch failed:", err);
       return res.json({ predictions: [] });
@@ -1778,30 +1821,36 @@ export async function registerRoutes(
         return res.status(500).json({ error: "API key not configured" });
       }
 
-      const url = new URL("https://maps.googleapis.com/maps/api/place/details/json");
-      url.searchParams.set("place_id", placeId);
-      url.searchParams.set("fields", "address_components,formatted_address,geometry");
-      url.searchParams.set("key", key);
+      const url = new URL(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`);
+      const sessionToken = (req.query.sessiontoken as string | undefined) || undefined;
+      if (sessionToken) url.searchParams.set("sessionToken", sessionToken);
 
-      const resp = await fetch(url.toString());
+      const resp = await fetch(url.toString(), {
+        headers: {
+          "X-Goog-Api-Key": key,
+          "X-Goog-FieldMask": "addressComponents,formattedAddress,location",
+        },
+      });
       const data = (await resp.json()) as {
-        result?: {
-          address_components?: Array<{ types: string[]; long_name: string; short_name: string }>;
-          formatted_address?: string;
-          geometry?: { location?: { lat: number; lng: number } };
-        };
-        status?: string;
+        addressComponents?: Array<{ types?: string[]; longText?: string; shortText?: string }>;
+        formattedAddress?: string;
+        location?: { latitude?: number; longitude?: number };
+        error?: { status?: string; message?: string };
       };
 
-      if (data.status !== "OK") {
-        console.error("Places details status:", data.status);
-        return res.status(400).json({ error: data.status ?? "Unknown error" });
+      if (!resp.ok || data.error) {
+        console.error(
+          "Places details (New) error:",
+          data.error?.status ?? resp.status,
+          data.error?.message ?? "",
+        );
+        return res.status(400).json({ error: data.error?.status ?? "Unknown error" });
       }
 
-      const comps = data.result?.address_components ?? [];
+      const comps = data.addressComponents ?? [];
       const pick = (type: string, short = false): string => {
-        const c = comps.find((c) => c.types.includes(type));
-        return c ? (short ? c.short_name : c.long_name) : "";
+        const c = comps.find((c) => (c.types ?? []).includes(type));
+        return c ? (short ? c.shortText ?? "" : c.longText ?? "") : "";
       };
 
       const streetNumber = pick("street_number");
@@ -1811,16 +1860,16 @@ export async function registerRoutes(
         pick("locality") || pick("sublocality") || pick("neighborhood");
       const state = pick("administrative_area_level_1", true);
       const zipCode = pick("postal_code");
-      const loc = data.result?.geometry?.location;
+      const loc = data.location;
 
       return res.json({
         street,
         city,
         state,
         zipCode,
-        formattedAddress: data.result?.formatted_address ?? "",
-        lat: loc ? String(loc.lat) : "",
-        lng: loc ? String(loc.lng) : "",
+        formattedAddress: data.formattedAddress ?? "",
+        lat: loc?.latitude != null ? String(loc.latitude) : "",
+        lng: loc?.longitude != null ? String(loc.longitude) : "",
       });
     } catch (err: any) {
       console.error("Places details fetch failed:", err);
@@ -1870,43 +1919,22 @@ export async function registerRoutes(
 
   /**
    * GET /api/booking/services
-   * Returns service group names for the public booking form (simplified list).
-   * Falls back to default categories if no groups are configured.
+   * Returns the client-facing service list for the public booking form.
+   * Deliberately a fixed list (per Willis) — the service_groups table holds
+   * internal category names (Field Service, Institutional, …) that aren't
+   * meaningful to customers.
    */
-  app.get("/api/booking/services", async (req, res) => {
-    try {
-      const { db: drizzleDb } = await import("./db");
-      const { users } = await import("@shared/schema");
-      const { serviceGroups } = await import("@shared/schema");
-      const { desc: descOp, eq: eqOp } = await import("drizzle-orm");
-
-      // Resolve owner userId
-      const ownerEmail = process.env.OWNER_EMAIL;
-      let ownerUserId: string | null = null;
-      if (ownerEmail) {
-        const [owner] = await drizzleDb.select({ id: users.id }).from(users).where(eqOp(users.email, ownerEmail)).limit(1);
-        ownerUserId = owner?.id ?? null;
-      }
-      if (!ownerUserId) {
-        const [fb] = await drizzleDb.select({ id: users.id }).from(users).orderBy(descOp(users.createdAt)).limit(1);
-        ownerUserId = fb?.id ?? null;
-      }
-
-      if (!ownerUserId) {
-        return res.json({ services: ["Tuning", "Regulation", "Voicing", "Repair"] });
-      }
-
-      const groups = await drizzleDb
-        .select({ name: serviceGroups.name, sortOrder: serviceGroups.sortOrder })
-        .from(serviceGroups)
-        .where(eqOp(serviceGroups.userId, ownerUserId))
-        .orderBy(serviceGroups.sortOrder);
-
-      const names = groups.map(g => g.name);
-      res.json({ services: names.length > 0 ? names : ["Tuning", "Regulation", "Voicing", "Repair"] });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
+  const PUBLIC_BOOKING_SERVICES = [
+    "Standard Tuning",
+    "Major Tuning (Pitch Correction)",
+    "Cleaning",
+    "Repairs",
+    "Regulation",
+    "Voicing",
+    "Inspection",
+  ];
+  app.get("/api/booking/services", async (_req, res) => {
+    res.json({ services: PUBLIC_BOOKING_SERVICES });
   });
 
   /**
@@ -1919,8 +1947,9 @@ export async function registerRoutes(
    * conflict-checked against existing appointments AND pending (held)
    * booking requests so a taken time is never offered twice.
    */
-  const UTAH_WEEKEND_SLOTS = ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM"];
-  const UTAH_WEEKDAY_SLOTS = ["9:00 AM", "10:30 AM", "12:00 PM", "1:30 PM", "3:00 PM", "4:00 PM", "5:00 PM"];
+  // Utah trip days offer these fixed times (flight-day exclusions handled in
+  // freeSlotsForDate — the first and last day of a trip are never bookable).
+  const UTAH_TRIP_SLOTS = ["8:00 AM", "10:00 AM", "1:00 PM", "3:00 PM"];
 
   async function resolveOwnerUserId(): Promise<string | null> {
     const { db: drizzleDb } = await import("./db");
@@ -1938,10 +1967,14 @@ export async function registerRoutes(
   interface BookingData {
     config: import("./booking").BookingConfig;
     todayStr: string;
-    /** appointments + pending held requests, per date */
+    /** appointments + trip appointments + pending held requests + timed calendar events, per date */
     busyByDate: Record<string, import("./booking").BusyItem[]>;
+    /** whole days blocked by all-day calendar events (conventions, travel, etc.) */
+    blockedDates: Set<string>;
     /** confirmed appointments per date (for "recommended" routing) */
     apptCountByDate: Record<string, number>;
+    /** Utah trip-appointment service areas per date (for same-area recommendations) */
+    areasByDate: Record<string, string[]>;
     /** appointments + pending requests per ISO week (for max-per-week cap) */
     countByWeek: Record<string, number>;
     slcTrips: { name: string; startDate: string; endDate: string }[];
@@ -1950,7 +1983,7 @@ export async function registerRoutes(
   async function loadBookingData(ownerUserId: string): Promise<BookingData> {
     const booking = await import("./booking");
     const { db: drizzleDb } = await import("./db");
-    const { appointments, trips, bookingRequests } = await import("@shared/schema");
+    const { appointments, trips, tripAppointments, bookingRequests, calendarEvents } = await import("@shared/schema");
     const { eq: eqOp } = await import("drizzle-orm");
 
     const settings = await storage.getSchedulerSettings(ownerUserId);
@@ -1968,22 +2001,83 @@ export async function registerRoutes(
       .where(eqOp(bookingRequests.userId, ownerUserId));
 
     const busyByDate: Record<string, import("./booking").BusyItem[]> = {};
+    const blockedDates = new Set<string>();
     const apptCountByDate: Record<string, number> = {};
+    const areasByDate: Record<string, string[]> = {};
     const countByWeek: Record<string, number> = {};
 
+    // NOTE: every stored date goes through normalizeDateStr — the calendar
+    // saves "7/11/26" while this engine works in "2026-07-11"; comparing them
+    // raw made every busy lookup miss (the July 11 double-booking bug).
     for (const a of existingAppts) {
-      if (!a.date || a.date < todayStr || a.status === "cancelled") continue;
-      (busyByDate[a.date] ??= []).push({ time: a.time, duration: a.duration });
-      apptCountByDate[a.date] = (apptCountByDate[a.date] ?? 0) + 1;
-      const wk = booking.isoWeekKey(a.date);
+      const date = booking.normalizeDateStr(a.date);
+      if (!date || date < todayStr || a.status === "cancelled") continue;
+      (busyByDate[date] ??= []).push({ time: a.time, duration: a.duration });
+      apptCountByDate[date] = (apptCountByDate[date] ?? 0) + 1;
+      const wk = booking.isoWeekKey(date);
       countByWeek[wk] = (countByWeek[wk] ?? 0) + 1;
     }
     // Pending requests with a chosen slot HOLD that slot until approved/declined
     for (const r of pendingReqs) {
-      if (r.status !== "pending" || !r.requestedDate || r.requestedDate < todayStr) continue;
-      (busyByDate[r.requestedDate] ??= []).push({ time: r.requestedTime });
-      const wk = booking.isoWeekKey(r.requestedDate);
+      const date = booking.normalizeDateStr(r.requestedDate);
+      if (r.status !== "pending" || !date || date < todayStr) continue;
+      (busyByDate[date] ??= []).push({ time: r.requestedTime });
+      const wk = booking.isoWeekKey(date);
       countByWeek[wk] = (countByWeek[wk] ?? 0) + 1;
+    }
+
+    // Trip Planner appointments (SLC itineraries) occupy their slots too, and
+    // their service areas drive "recommended" days for Utah visitors.
+    const tripAppts = await drizzleDb
+      .select({
+        date: tripAppointments.date,
+        time: tripAppointments.time,
+        duration: tripAppointments.duration,
+        status: tripAppointments.status,
+        serviceArea: tripAppointments.serviceArea,
+      })
+      .from(tripAppointments);
+    for (const ta of tripAppts) {
+      const date = booking.normalizeDateStr(ta.date);
+      if (!date || date < todayStr || ta.status === "cancelled") continue;
+      (busyByDate[date] ??= []).push({ time: ta.time, duration: ta.duration, area: ta.serviceArea });
+      apptCountByDate[date] = (apptCountByDate[date] ?? 0) + 1;
+      if (ta.serviceArea) (areasByDate[date] ??= []).push(ta.serviceArea);
+    }
+
+    // Calendar events: all-day events (incl. multi-day ranges like conventions)
+    // block whole days; timed events block their interval.
+    // (Repeating events only block their base date for now.)
+    const events = await drizzleDb
+      .select({
+        date: calendarEvents.date,
+        endDate: calendarEvents.endDate,
+        startTime: calendarEvents.startTime,
+        endTime: calendarEvents.endTime,
+        isAllDay: calendarEvents.isAllDay,
+      })
+      .from(calendarEvents)
+      .where(eqOp(calendarEvents.userId, ownerUserId));
+    for (const ev of events) {
+      const start = booking.normalizeDateStr(ev.date);
+      if (!start) continue;
+      const end = booking.normalizeDateStr(ev.endDate) ?? start;
+      if (end < todayStr) continue;
+      if (ev.isAllDay || !ev.startTime) {
+        const d = new Date(start + "T00:00:00");
+        const stop = new Date(end + "T00:00:00");
+        for (; d <= stop; d.setDate(d.getDate() + 1)) {
+          blockedDates.add(booking.toLocalYMD(d));
+        }
+      } else {
+        const startMins = booking.parseTimeToMinutes(ev.startTime);
+        const endMins = booking.parseTimeToMinutes(ev.endTime);
+        const durationLabel =
+          startMins != null && endMins != null && endMins > startMins
+            ? `${endMins - startMins} min`
+            : null;
+        (busyByDate[start] ??= []).push({ time: ev.startTime, duration: durationLabel });
+      }
     }
 
     const allTrips = await drizzleDb.select().from(trips).where(eqOp(trips.userId, ownerUserId));
@@ -1992,20 +2086,36 @@ export async function registerRoutes(
         const combined = `${t.name} ${t.notes ?? ""}`.toLowerCase();
         return combined.includes("slc") || combined.includes("salt lake") || combined.includes("utah");
       })
-      .map(t => ({ name: t.name, startDate: t.startDate, endDate: t.endDate }));
+      .map(t => ({
+        name: t.name,
+        startDate: booking.normalizeDateStr(t.startDate) ?? "",
+        endDate: booking.normalizeDateStr(t.endDate) ?? "",
+      }))
+      .filter(t => t.startDate && t.endDate);
 
-    return { config, todayStr, busyByDate, apptCountByDate, countByWeek, slcTrips };
+    return { config, todayStr, busyByDate, blockedDates, apptCountByDate, areasByDate, countByWeek, slcTrips };
+  }
+
+  /** First/last day of a trip are travel days — never bookable (flight risk). */
+  function isTripTravelDay(data: BookingData, dateStr: string): boolean {
+    return data.slcTrips.some(t => dateStr === t.startDate || dateStr === t.endDate);
   }
 
   /** Free slot labels for one date (handles both Utah-trip days and regular days). */
-  async function freeSlotsForDate(data: BookingData, dateStr: string, isTripDate: boolean): Promise<string[]> {
+  async function freeSlotsForDate(
+    data: BookingData,
+    dateStr: string,
+    isTripDate: boolean,
+    visitor?: { lat: number | null; lng: number | null },
+  ): Promise<string[]> {
     const booking = await import("./booking");
-    const busy = booking.busyIntervalsForDate(data.busyByDate[dateStr] ?? [], data.config);
+    if (data.blockedDates.has(dateStr)) return [];
+    const busy = booking.busyIntervalsForDate(data.busyByDate[dateStr] ?? [], data.config, visitor);
     const d = new Date(dateStr + "T00:00:00");
     const dayOfWeek = d.getDay();
     if (isTripDate) {
-      const base = dayOfWeek === 0 || dayOfWeek === 6 ? UTAH_WEEKEND_SLOTS : UTAH_WEEKDAY_SLOTS;
-      return booking.filterSlotLabels(base, busy, data.config);
+      if (isTripTravelDay(data, dateStr)) return [];
+      return booking.filterSlotLabels(UTAH_TRIP_SLOTS, busy, data.config);
     }
     return booking.freeSlotLabels(dayOfWeek, busy, data.config);
   }
@@ -2026,6 +2136,9 @@ export async function registerRoutes(
       const lat = parseFloat(req.query.lat as string || "0");
       const lng = parseFloat(req.query.lng as string || "0");
       const isUT = lat >= 36.99 && lat <= 42.00 && lng >= -114.05 && lng <= -109.04;
+      // Visitor's city (from the address they picked) → Utah county, for
+      // recommending the trip day that already has appointments in their area.
+      const visitorCounty = booking.utahCountyForCity(req.query.city as string | undefined);
 
       type AvailableDate = {
         date: string;
@@ -2052,12 +2165,19 @@ export async function registerRoutes(
           for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
             const dateStr = booking.toLocalYMD(d);
             if (dateStr < data.todayStr) continue;
-            const slots = await freeSlotsForDate(data, dateStr, true);
+            const slots = await freeSlotsForDate(data, dateStr, true, { lat, lng });
             if (slots.length === 0) continue;
+            // Recommend the day whose existing appointments are in the
+            // visitor's county (route clustering — John is already nearby).
+            const dayCounties = (data.areasByDate[dateStr] ?? [])
+              .map(a => booking.utahCountyForCity(a))
+              .filter(Boolean);
+            const isRecommended =
+              !!visitorCounty && dayCounties.includes(visitorCounty);
             utahDates.push({
               date: dateStr,
               dayLabel: d.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" }),
-              isRecommended: false,
+              isRecommended,
               isTripDate: true,
               slots,
             });
@@ -2073,7 +2193,10 @@ export async function registerRoutes(
           });
         }
 
-        return res.json({ availableDates: utahDates, isUtah: true, tripName: data.slcTrips[0].name });
+        // Name the trip the offered dates actually belong to (not a past trip)
+        const currentTrip =
+          data.slcTrips.find(t => t.endDate >= data.todayStr) ?? data.slcTrips[0];
+        return res.json({ availableDates: utahDates, isUtah: true, tripName: currentTrip.name });
       }
 
       // ── MA / Other: compute from configurable working hours ────────────────
@@ -2089,6 +2212,9 @@ export async function registerRoutes(
         // Skip if this week is already at capacity (appointments + held requests)
         const weekCount = data.countByWeek[booking.isoWeekKey(dateStr)] ?? 0;
         if (weekCount >= data.config.maxPerWeek) continue;
+
+        // John is out of town during SLC trips — no Boston-area bookings then
+        if (isWithinSlcTrip(data, dateStr)) continue;
 
         const slots = await freeSlotsForDate(data, dateStr, false);
         if (slots.length === 0) continue;
@@ -2629,7 +2755,12 @@ export async function registerRoutes(
             }
           }
           if (!conflict) {
-            const free = await freeSlotsForDate(data, requestedDate, isTrip);
+            const vLat = parseFloat(parsed.data.addressLat ?? "");
+            const vLng = parseFloat(parsed.data.addressLng ?? "");
+            const visitor = Number.isFinite(vLat) && Number.isFinite(vLng)
+              ? { lat: vLat, lng: vLng }
+              : undefined;
+            const free = await freeSlotsForDate(data, requestedDate, isTrip, visitor);
             const stillFree = free.some(s => booking.parseTimeToMinutes(s) === wantedMins);
             if (!stillFree) {
               conflict = "That time was just booked by someone else. Please pick a different time.";

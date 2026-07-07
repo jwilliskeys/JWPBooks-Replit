@@ -18,6 +18,34 @@ export function toLocalYMD(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/**
+ * Normalize any stored date string to YYYY-MM-DD.
+ * The app's calendar/appointments store dates as "7/11/26" or "07/11/2026",
+ * while the booking engine works in "2026-07-11" — comparing them raw was the
+ * root cause of double-booking (busy lookups never matched).
+ * Returns null if the string can't be parsed.
+ */
+export function normalizeDateStr(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim();
+  // Already ISO: 2026-07-11
+  const iso = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (iso) {
+    return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  }
+  // US style: 7/11/26 or 07/11/2026
+  const us = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (us) {
+    let year = parseInt(us[3], 10);
+    if (year < 100) year += 2000;
+    const month = parseInt(us[1], 10);
+    const day = parseInt(us[2], 10);
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+  return null;
+}
+
 /** Parse "4:00 PM" / "16:00" / "9:30 am" → minutes since midnight, or null. */
 export function parseTimeToMinutes(t: string | null | undefined): number | null {
   if (!t) return null;
@@ -41,15 +69,23 @@ export function minutesToLabel(mins: number): string {
   return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
-/** Parse an appointment duration string ("2 hours", "90 min", "1.5 hours") → minutes. */
+/**
+ * Parse an appointment duration string → minutes.
+ * Handles "2 hours", "90 min", "1.5 hours", AND compound forms like
+ * "1 hr 30 min" (the format the appointment dialog actually saves — the old
+ * single-unit regex read that as just 1 hour and under-blocked the calendar).
+ */
 export function parseDurationToMinutes(d: string | null | undefined, fallback: number): number {
   if (!d) return fallback;
-  const m = d.trim().match(/^(\d+(?:\.\d+)?)\s*(hour|hr|h|minute|min|m)/i);
-  if (!m) return fallback;
-  const n = parseFloat(m[1]);
-  const unit = m[2].toLowerCase();
-  const mins = unit.startsWith("h") ? n * 60 : n;
-  return Number.isFinite(mins) && mins > 0 ? Math.round(mins) : fallback;
+  let total = 0;
+  const re = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|h|minutes?|mins?|m)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(d)) !== null) {
+    const n = parseFloat(m[1]);
+    if (!Number.isFinite(n)) continue;
+    total += m[2].toLowerCase().startsWith("h") ? n * 60 : n;
+  }
+  return total > 0 ? Math.round(total) : fallback;
 }
 
 // ── Availability config ──────────────────────────────────────────────────────
@@ -129,16 +165,32 @@ export function generateDaySlotStarts(dayOfWeek: number, config: BookingConfig):
 export interface BusyItem {
   time: string | null;           // "4:00 PM"
   duration?: string | null;      // "2 hours" (appointments only)
+  /** service area (Utah trip appointments) — enables drive-time buffers */
+  area?: string | null;
 }
 
-/** Busy [start,end) intervals in minutes for one date. */
-export function busyIntervalsForDate(items: BusyItem[], config: BookingConfig): Array<[number, number]> {
+/**
+ * Busy [start,end) intervals in minutes for one date.
+ * When the visitor's coordinates are provided, items carrying a service area
+ * are padded on BOTH sides with the estimated drive time between that area
+ * and the visitor — a Kamas 8:00–9:30 appointment blocks a Centerville
+ * visitor until ~10:40 (9:30 + the hour-ish drive back).
+ */
+export function busyIntervalsForDate(
+  items: BusyItem[],
+  config: BookingConfig,
+  visitor?: { lat: number | null; lng: number | null },
+): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const it of items) {
     const start = parseTimeToMinutes(it.time);
     if (start == null) continue;
     const dur = parseDurationToMinutes(it.duration, config.slotDurationMinutes);
-    out.push([start, start + dur + config.slotBufferMinutes]);
+    let pad = 0;
+    if (visitor && it.area) {
+      pad = driveMinutesToVisitor(it.area, visitor.lat, visitor.lng);
+    }
+    out.push([start - pad, start + dur + config.slotBufferMinutes + pad]);
   }
   return out;
 }
@@ -169,6 +221,122 @@ export function filterSlotLabels(
     const slotEnd = slotStart + config.slotDurationMinutes;
     return !busy.some(([bStart, bEnd]) => slotStart < bEnd && slotEnd > bStart);
   });
+}
+
+// ── Utah service-area clustering ─────────────────────────────────────────────
+// Maps Utah cities/areas to counties so a Davis County visitor gets steered
+// toward the trip day that already has Davis County appointments scheduled.
+
+const UTAH_COUNTY_BY_CITY: Record<string, string> = {
+  // Davis County
+  "bountiful": "davis", "centerville": "davis", "farmington": "davis",
+  "kaysville": "davis", "layton": "davis", "clearfield": "davis",
+  "syracuse": "davis", "clinton": "davis", "woods cross": "davis",
+  "north salt lake": "davis", "fruit heights": "davis", "west point": "davis",
+  "west bountiful": "davis", "south weber": "davis", "sunset": "davis",
+  // Salt Lake County
+  "salt lake city": "salt lake", "sandy": "salt lake", "draper": "salt lake",
+  "murray": "salt lake", "west jordan": "salt lake", "south jordan": "salt lake",
+  "millcreek": "salt lake", "holladay": "salt lake", "west valley city": "salt lake",
+  "taylorsville": "salt lake", "cottonwood heights": "salt lake", "midvale": "salt lake",
+  "riverton": "salt lake", "herriman": "salt lake", "bluffdale": "salt lake",
+  "south salt lake": "salt lake", "magna": "salt lake", "kearns": "salt lake",
+  // Weber County
+  "ogden": "weber", "roy": "weber", "north ogden": "weber", "south ogden": "weber",
+  "riverdale": "weber", "washington terrace": "weber", "pleasant view": "weber",
+  "harrisville": "weber", "west haven": "weber",
+  // Utah County
+  "provo": "utah", "orem": "utah", "lehi": "utah", "american fork": "utah",
+  "pleasant grove": "utah", "spanish fork": "utah", "springville": "utah",
+  "saratoga springs": "utah", "eagle mountain": "utah", "payson": "utah",
+  "lindon": "utah", "highland": "utah", "alpine": "utah", "mapleton": "utah",
+  // Summit / Wasatch counties
+  "park city": "summit", "kamas": "summit", "coalville": "summit", "oakley": "summit",
+  "heber city": "wasatch", "heber": "wasatch", "midway": "wasatch",
+  // Tooele / Cache / Box Elder
+  "tooele": "tooele", "grantsville": "tooele", "stansbury park": "tooele",
+  "logan": "cache", "north logan": "cache", "smithfield": "cache",
+  "brigham city": "box elder", "tremonton": "box elder",
+};
+
+/** Utah county for a city / service-area name, or null if unknown. */
+export function utahCountyForCity(city: string | null | undefined): string | null {
+  if (!city) return null;
+  return UTAH_COUNTY_BY_CITY[city.trim().toLowerCase()] ?? null;
+}
+
+// Approximate centers for Utah cities/areas — used to estimate drive time
+// between an existing trip appointment and a prospective visitor, so a Kamas
+// morning appointment doesn't let someone book Centerville 30 minutes later.
+const UTAH_CITY_COORDS: Record<string, [number, number]> = {
+  "bountiful": [40.8894, -111.8808], "centerville": [40.9180, -111.8722],
+  "farmington": [40.9805, -111.8874], "kaysville": [41.0352, -111.9386],
+  "layton": [41.0602, -111.9711], "clearfield": [41.1108, -112.0261],
+  "syracuse": [41.0894, -112.0647], "clinton": [41.1394, -112.0505],
+  "woods cross": [40.8716, -111.8927], "north salt lake": [40.8486, -111.9069],
+  "fruit heights": [41.0322, -111.9022], "west point": [41.1183, -112.0841],
+  "west bountiful": [40.8938, -111.9019], "south weber": [41.1322, -111.9316],
+  "sunset": [41.1361, -112.0308],
+  "salt lake city": [40.7608, -111.8911], "sandy": [40.5649, -111.8389],
+  "draper": [40.5247, -111.8638], "murray": [40.6669, -111.8879],
+  "west jordan": [40.6097, -111.9391], "south jordan": [40.5622, -111.9297],
+  "millcreek": [40.6869, -111.8750], "holladay": [40.6689, -111.8247],
+  "west valley city": [40.6916, -112.0011], "taylorsville": [40.6677, -111.9388],
+  "cottonwood heights": [40.6197, -111.8102], "midvale": [40.6111, -111.8994],
+  "riverton": [40.5219, -111.9391], "herriman": [40.5141, -112.0329],
+  "bluffdale": [40.4847, -111.9389], "south salt lake": [40.7188, -111.8882],
+  "magna": [40.7091, -112.1016], "kearns": [40.6599, -112.0093],
+  "ogden": [41.2230, -111.9738], "roy": [41.1616, -112.0263],
+  "north ogden": [41.3072, -111.9602], "south ogden": [41.1919, -111.9713],
+  "riverdale": [41.1769, -112.0038], "washington terrace": [41.1727, -111.9766],
+  "pleasant view": [41.3183, -112.0016], "harrisville": [41.2811, -111.9883],
+  "west haven": [41.2033, -112.0536],
+  "provo": [40.2338, -111.6585], "orem": [40.2969, -111.6946],
+  "lehi": [40.3916, -111.8508], "american fork": [40.3769, -111.7958],
+  "pleasant grove": [40.3641, -111.7385], "spanish fork": [40.1150, -111.6549],
+  "springville": [40.1652, -111.6108], "saratoga springs": [40.3491, -111.9047],
+  "eagle mountain": [40.3141, -112.0069], "payson": [40.0444, -111.7321],
+  "lindon": [40.3433, -111.7208], "highland": [40.4255, -111.7944],
+  "alpine": [40.4533, -111.7772], "mapleton": [40.1302, -111.5785],
+  "park city": [40.6461, -111.4980], "kamas": [40.6430, -111.2807],
+  "coalville": [40.9177, -111.3993], "oakley": [40.7147, -111.3005],
+  "heber city": [40.5070, -111.4133], "heber": [40.5070, -111.4133],
+  "midway": [40.5122, -111.4744],
+  "tooele": [40.5308, -112.2983], "grantsville": [40.5999, -112.4644],
+  "stansbury park": [40.6377, -112.2961],
+  "logan": [41.7370, -111.8338], "north logan": [41.7694, -111.8047],
+  "smithfield": [41.8383, -111.8327],
+  "brigham city": [41.5102, -112.0155], "tremonton": [41.7119, -112.1655],
+};
+
+function haversineMilesLL(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3958.8;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Estimated one-way drive minutes from a named service area to the visitor's
+ * coordinates. Straight-line miles × 1.3 road factor at ~40 mph average,
+ * clamped to [10, 180]. Unknown areas fall back to 30 minutes.
+ */
+export function driveMinutesToVisitor(
+  area: string | null | undefined,
+  visitorLat: number | null,
+  visitorLng: number | null,
+): number {
+  if (visitorLat == null || visitorLng == null) return 0;
+  const coords = area ? UTAH_CITY_COORDS[area.trim().toLowerCase()] : undefined;
+  if (!coords) return area ? 30 : 0;
+  const roadMiles = haversineMilesLL(coords[0], coords[1], visitorLat, visitorLng) * 1.3;
+  const mins = (roadMiles / 40) * 60;
+  return Math.min(180, Math.max(10, Math.round(mins)));
 }
 
 /** ISO week key (YYYY-Www) from a YYYY-MM-DD string — used for max-per-week caps. */

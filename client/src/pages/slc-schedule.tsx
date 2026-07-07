@@ -1838,7 +1838,9 @@ export default function SlcSchedule() {
   const [dialogDayArea, setDialogDayArea] = useState("");
   const [customerSearch, setCustomerSearch] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
-  const [selectedPianoId, setSelectedPianoId] = useState<string>("none");
+  // Multiple pianos per visit (Gazelle-style): one trip-appointment row is
+  // created per selected piano — same as the standard calendar dialog.
+  const [selectedPianoIds, setSelectedPianoIds] = useState<string[]>([]);
   const [apptTimeMinutes, setApptTimeMinutes] = useState(DEFAULT_TIME_MINUTES);
   const [apptDurationMinutes, setApptDurationMinutes] = useState(DEFAULT_DURATION_MINUTES);
   const [apptServices, setApptServices] = useState("");
@@ -1853,6 +1855,8 @@ export default function SlcSchedule() {
   const [editingAppt, setEditingAppt] = useState<TripAppointment | null>(null);
   const [editingTripId, setEditingTripId] = useState<number | null>(null);
   const [editDayExistingAppts, setEditDayExistingAppts] = useState<ExistingAppointment[]>([]);
+  const [editPianoId, setEditPianoId] = useState<string>("none");
+  const [editPianoCbOpen, setEditPianoCbOpen] = useState(false);
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
   const [editServices, setEditServices] = useState("");
@@ -1995,10 +1999,19 @@ export default function SlcSchedule() {
   });
 
   const createAppointmentMutation = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", `/api/trips/${data.tripId}/appointments`, data),
-    onSuccess: (_res, variables) => {
+    // One row per selected piano (pianoIds: [undefined] when no specific piano)
+    // — mirrors the standard calendar dialog, which also saves one appointment
+    // per piano section.
+    mutationFn: async (data: any) => {
+      const { pianoIds, ...rest } = data as { pianoIds: (number | undefined)[] } & Record<string, any>;
+      for (const pianoId of pianoIds) {
+        await apiRequest("POST", `/api/trips/${rest.tripId}/appointments`, { ...rest, pianoId });
+      }
+    },
+    onSuccess: (_res, variables: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", variables.tripId, "appointments"] });
-      toast({ title: "Appointment added" });
+      const n = variables.pianoIds?.length ?? 1;
+      toast({ title: n > 1 ? `${n} appointments added (one per piano)` : "Appointment added" });
       closeAddDialog();
     },
     onError: () => {
@@ -2169,7 +2182,7 @@ export default function SlcSchedule() {
     setDialogExistingAppts(existingAppts);
     setDialogDayArea(dayArea);
     setSelectedCustomerId("");
-    setSelectedPianoId("none");
+    setSelectedPianoIds([]);
     setCustomerSearch("");
     setApptServices("");
     setApptPrice("");
@@ -2192,7 +2205,7 @@ export default function SlcSchedule() {
 
   function handleCustomerSelect(custId: string) {
     setSelectedCustomerId(custId);
-    setSelectedPianoId("none");
+    setSelectedPianoIds([]);
     setConflictError("");
   }
 
@@ -2211,7 +2224,9 @@ export default function SlcSchedule() {
     createAppointmentMutation.mutate({
       tripId: dialogTripId,
       customerId: parseInt(selectedCustomerId),
-      pianoId: selectedPianoId !== "none" ? parseInt(selectedPianoId) : undefined,
+      pianoIds: selectedPianoIds.length > 0
+        ? selectedPianoIds.map(id => parseInt(id))
+        : [undefined],
       date: dialogDate,
       time: timeStr,
       duration: durationStr,
@@ -2226,6 +2241,8 @@ export default function SlcSchedule() {
     setEditingAppt(appt);
     setEditingTripId(tripId);
     setEditDayExistingAppts(dayExistingAppts);
+    setEditPianoId(appt.pianoId ? String(appt.pianoId) : "none");
+    setEditPianoCbOpen(false);
     const timeMins = parseTimeString(appt.time || "8:00 AM");
     setEditTime(formatTimeMinutes(timeMins > 0 ? timeMins : DEFAULT_TIME_MINUTES));
     const durMins = parseDurationString(appt.duration || "2 hours");
@@ -2254,6 +2271,7 @@ export default function SlcSchedule() {
       data: {
         time: editTime,
         duration: editDuration,
+        pianoId: editPianoId !== "none" ? parseInt(editPianoId) : null,
         servicesRequested: editServices || undefined,
         priceEstimate: editPrice || undefined,
         notes: editNotes || undefined,
@@ -2608,7 +2626,12 @@ export default function SlcSchedule() {
 
             {selectedCustomerId && selectedCustomerPianos.length > 0 && (
               <div className="space-y-2">
-                <Label>Piano</Label>
+                <Label>
+                  Piano{selectedCustomerPianos.length > 1 ? "s" : ""}{" "}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    (pick multiple to service them in one visit)
+                  </span>
+                </Label>
                 <Popover open={pianoCbOpen} onOpenChange={setPianoCbOpen}>
                   <PopoverTrigger asChild>
                     <Button
@@ -2618,12 +2641,14 @@ export default function SlcSchedule() {
                       data-testid="select-appt-piano"
                     >
                       <span className="truncate">
-                        {selectedPianoId !== "none"
-                          ? (() => {
-                              const p = selectedCustomerPianos.find(p => String(p.id) === selectedPianoId);
-                              return p ? [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}` : "Select piano...";
-                            })()
-                          : "No specific piano"}
+                        {selectedPianoIds.length === 0
+                          ? "No specific piano"
+                          : selectedPianoIds.length === 1
+                            ? (() => {
+                                const p = selectedCustomerPianos.find(p => String(p.id) === selectedPianoIds[0]);
+                                return p ? [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}` : "1 piano selected";
+                              })()
+                            : `${selectedPianoIds.length} pianos selected`}
                       </span>
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
@@ -2636,20 +2661,28 @@ export default function SlcSchedule() {
                         <CommandGroup>
                           <CommandItem
                             value="none"
-                            onSelect={() => { setSelectedPianoId("none"); setPianoCbOpen(false); }}
+                            onSelect={() => { setSelectedPianoIds([]); setPianoCbOpen(false); }}
                           >
-                            <Check className={`mr-2 h-4 w-4 ${selectedPianoId === "none" ? "opacity-100" : "opacity-0"}`} />
+                            <Check className={`mr-2 h-4 w-4 ${selectedPianoIds.length === 0 ? "opacity-100" : "opacity-0"}`} />
                             No specific piano
                           </CommandItem>
                           {selectedCustomerPianos.map((p) => {
                             const label = [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
+                            const checked = selectedPianoIds.includes(String(p.id));
                             return (
                               <CommandItem
                                 key={p.id}
                                 value={label}
-                                onSelect={() => { setSelectedPianoId(String(p.id)); setPianoCbOpen(false); }}
+                                // Toggle without closing so several pianos can be picked
+                                onSelect={() => {
+                                  setSelectedPianoIds(ids =>
+                                    checked
+                                      ? ids.filter(id => id !== String(p.id))
+                                      : [...ids, String(p.id)],
+                                  );
+                                }}
                               >
-                                <Check className={`mr-2 h-4 w-4 ${selectedPianoId === String(p.id) ? "opacity-100" : "opacity-0"}`} />
+                                <Check className={`mr-2 h-4 w-4 ${checked ? "opacity-100" : "opacity-0"}`} />
                                 {label}
                               </CommandItem>
                             );
@@ -2659,6 +2692,11 @@ export default function SlcSchedule() {
                     </Command>
                   </PopoverContent>
                 </Popover>
+                {selectedPianoIds.length > 1 && (
+                  <p className="text-xs text-muted-foreground">
+                    One appointment entry will be created per piano at this time slot — same as the standard calendar.
+                  </p>
+                )}
               </div>
             )}
 
@@ -2886,6 +2924,65 @@ export default function SlcSchedule() {
                 })()}
                 {" · "}{editingAppt.date}
               </div>
+
+              {(() => {
+                const editCustomerPianos = (allPianos ?? []).filter(
+                  p => p.customerId === editingAppt.customerId,
+                );
+                if (editCustomerPianos.length === 0) return null;
+                const current = editCustomerPianos.find(p => String(p.id) === editPianoId);
+                const currentLabel = current
+                  ? [current.make, current.model, current.pianoType].filter(Boolean).join(" ") || `Piano #${current.id}`
+                  : "No specific piano";
+                return (
+                  <div className="space-y-2">
+                    <Label>Piano</Label>
+                    <Popover open={editPianoCbOpen} onOpenChange={setEditPianoCbOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          variant="outline"
+                          role="combobox"
+                          className="w-full justify-between font-normal"
+                          data-testid="select-edit-appt-piano"
+                        >
+                          <span className="truncate">{currentLabel}</span>
+                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-full p-0" align="start">
+                        <Command>
+                          <CommandInput placeholder="Search piano..." />
+                          <CommandList>
+                            <CommandEmpty>No piano found.</CommandEmpty>
+                            <CommandGroup>
+                              <CommandItem
+                                value="none"
+                                onSelect={() => { setEditPianoId("none"); setEditPianoCbOpen(false); }}
+                              >
+                                <Check className={`mr-2 h-4 w-4 ${editPianoId === "none" ? "opacity-100" : "opacity-0"}`} />
+                                No specific piano
+                              </CommandItem>
+                              {editCustomerPianos.map((p) => {
+                                const label = [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
+                                return (
+                                  <CommandItem
+                                    key={p.id}
+                                    value={label}
+                                    onSelect={() => { setEditPianoId(String(p.id)); setEditPianoCbOpen(false); }}
+                                  >
+                                    <Check className={`mr-2 h-4 w-4 ${editPianoId === String(p.id) ? "opacity-100" : "opacity-0"}`} />
+                                    {label}
+                                  </CommandItem>
+                                );
+                              })}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">

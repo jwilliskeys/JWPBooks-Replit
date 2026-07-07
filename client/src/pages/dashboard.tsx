@@ -1274,7 +1274,7 @@ function PendingBookingRequestsPanel() {
                         // Prefill with the slot the client picked on the calendar
                         date: req.requestedDate ?? "",
                         time: to24h(req.requestedTime),
-                        duration: "2 hours",
+                        duration: "1 hr 30 min",
                         notes: "",
                       })
                     }
@@ -1318,126 +1318,203 @@ function PendingBookingRequestsPanel() {
         )}
       </Card>
 
-      {approveModal && (
-        <Dialog open onOpenChange={() => setApproveModal(null)}>
-          <DialogContent className="w-[calc(100%-2rem)] rounded-lg sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Schedule Appointment</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-2">
-              <p className="text-sm text-muted-foreground">
-                Confirm a date &amp; time for{" "}
-                <strong>
-                  {approveModal.request.firstName}{" "}
-                  {approveModal.request.lastName}
-                </strong>
-                . This will create a new client record and appointment.
-              </p>
+      {approveModal && (() => {
+        const req = approveModal.request;
+        const durMins = parseDurationToMinutes(approveModal.duration);
+        const startMins = parseTimeToMinutes(approveModal.time);
+        const endsAt = startMins >= 0 ? minutesToTimeStr(startMins + durMins) : "";
+        const fmtDur = (mins: number) => {
+          const h = Math.floor(mins / 60);
+          const m = mins % 60;
+          if (h === 0) return `${m} min`;
+          if (m === 0) return `${h} hr`;
+          return `${h} hr ${m} min`;
+        };
+        const bumpDuration = (delta: number) => {
+          const next = Math.max(15, durMins + delta);
+          setApproveModal((mo) => (mo ? { ...mo, duration: fmtDur(next) } : mo));
+        };
+        const initials = `${req.firstName?.[0] ?? ""}${req.lastName?.[0] ?? ""}`.toUpperCase();
+        const stepBtn =
+          "h-7 px-2 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90";
+        return (
+          <Dialog open onOpenChange={() => setApproveModal(null)}>
+            <DialogContent className="w-[calc(100%-2rem)] rounded-lg sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>Approve &amp; Schedule</DialogTitle>
+              </DialogHeader>
 
-              {approveModal.request.preferredTimes && (
-                <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-3 text-xs text-amber-900 dark:text-amber-300">
-                  <span className="font-medium">Their preference: </span>
-                  {approveModal.request.preferredTimes}
-                </div>
-              )}
+              <div className="grid sm:grid-cols-2 gap-4 py-1">
+                {/* ── Left: Date & Time ─────────────────────────────── */}
+                <div className="space-y-4">
+                  <div className="bg-muted/60 rounded-lg px-3 py-2 text-sm font-semibold">
+                    Date &amp; Time
+                  </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="appr-date" className="text-sm">
-                    Date
-                  </Label>
-                  <Input
-                    id="appr-date"
-                    type="date"
-                    className="text-base h-11"
-                    value={approveModal.date}
-                    onChange={(e) =>
-                      setApproveModal((m) =>
-                        m ? { ...m, date: e.target.value } : m
-                      )
-                    }
-                  />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="appr-date" className="text-sm">Date</Label>
+                    <Input
+                      id="appr-date"
+                      type="date"
+                      className="text-base h-11"
+                      data-testid="input-approve-date"
+                      value={approveModal.date}
+                      onChange={(e) =>
+                        setApproveModal((m) => (m ? { ...m, date: e.target.value } : m))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="appr-time" className="text-sm">Start time</Label>
+                    <Input
+                      id="appr-time"
+                      type="time"
+                      className="text-base h-11"
+                      data-testid="input-approve-time"
+                      value={approveModal.time}
+                      onChange={(e) =>
+                        setApproveModal((m) => (m ? { ...m, time: e.target.value } : m))
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-sm">Duration</Label>
+                    <div className="flex items-center gap-2">
+                      <div className="flex flex-col gap-1">
+                        <button type="button" className={stepBtn} onClick={() => bumpDuration(60)} data-testid="button-duration-plus-hour">+1h</button>
+                        <button type="button" className={stepBtn} onClick={() => bumpDuration(-60)} data-testid="button-duration-minus-hour">-1h</button>
+                      </div>
+                      <div
+                        className="flex-1 h-11 border rounded-md flex items-center justify-center text-sm font-semibold tabular-nums"
+                        data-testid="text-approve-duration"
+                      >
+                        {fmtDur(durMins)}
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <button type="button" className={stepBtn} onClick={() => bumpDuration(15)} data-testid="button-duration-plus-15">+15m</button>
+                        <button type="button" className={stepBtn} onClick={() => bumpDuration(-15)} data-testid="button-duration-minus-15">-15m</button>
+                      </div>
+                    </div>
+                    {endsAt && (
+                      <p className="text-xs text-muted-foreground pl-1">Ends at {endsAt}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="appr-notes" className="text-sm">
+                      Internal Notes <span className="text-muted-foreground font-normal">(optional)</span>
+                    </Label>
+                    <Textarea
+                      id="appr-notes"
+                      rows={3}
+                      className="text-base resize-none"
+                      data-testid="input-approve-notes"
+                      value={approveModal.notes}
+                      onChange={(e) =>
+                        setApproveModal((m) => (m ? { ...m, notes: e.target.value } : m))
+                      }
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="appr-time" className="text-sm">
-                    Time
-                  </Label>
-                  <Input
-                    id="appr-time"
-                    type="time"
-                    className="text-base h-11"
-                    value={approveModal.time}
-                    onChange={(e) =>
-                      setApproveModal((m) =>
-                        m ? { ...m, time: e.target.value } : m
-                      )
-                    }
-                  />
+
+                {/* ── Right: Client Information ─────────────────────── */}
+                <div className="space-y-4">
+                  <div className="bg-muted/60 rounded-lg px-3 py-2 text-sm font-semibold">
+                    Client Information
+                  </div>
+
+                  <div className="rounded-lg border p-3 flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-primary/15 text-primary flex items-center justify-center text-sm font-bold shrink-0">
+                      {initials || "?"}
+                    </div>
+                    <div className="min-w-0 text-sm">
+                      <p className="font-semibold">{req.firstName} {req.lastName}</p>
+                      {(req.streetAddress || req.cityNeighborhood) && (
+                        <p className="text-muted-foreground flex items-start gap-1 mt-0.5">
+                          <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                          <span className="break-words">{req.streetAddress || req.cityNeighborhood}</span>
+                        </p>
+                      )}
+                      <p className="text-xs mt-1 space-x-2">
+                        {req.email && (
+                          <a href={`mailto:${req.email}`} className="text-primary hover:underline">{req.email}</a>
+                        )}
+                        {req.phone && (
+                          <a href={`tel:${req.phone}`} className="text-primary hover:underline">{formatPhone(req.phone)}</a>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border p-3 space-y-2 text-sm">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      Piano &amp; Service
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {req.serviceRequested && (
+                        <span className="inline-flex items-center rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold">
+                          {req.serviceRequested}
+                        </span>
+                      )}
+                      {req.pianoType && (
+                        <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium">
+                          {req.pianoType}
+                        </span>
+                      )}
+                    </div>
+                    {req.lastTuned && (
+                      <p className="text-xs text-muted-foreground">Last tuned: {req.lastTuned}</p>
+                    )}
+                    {req.preferredTimes && (
+                      <p className="text-xs text-muted-foreground border-t pt-2 italic">
+                        {req.preferredTimes}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/40 p-3 flex items-center justify-between text-sm">
+                    <span className="font-semibold">Total</span>
+                    <span className="font-semibold tabular-nums">
+                      {fmtDur(durMins)}{approveModal.date ? ` · ${approveModal.date}` : ""}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-muted-foreground">
+                    Approving creates a new client record and a scheduled appointment,
+                    and emails {req.firstName} a confirmation.
+                  </p>
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="appr-duration" className="text-sm">
-                  Duration
-                </Label>
-                <Input
-                  id="appr-duration"
-                  placeholder="e.g. 2 hours"
-                  className="text-base h-11"
-                  value={approveModal.duration}
-                  onChange={(e) =>
-                    setApproveModal((m) =>
-                      m ? { ...m, duration: e.target.value } : m
-                    )
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setApproveModal(null)} data-testid="button-approve-cancel">
+                  Cancel
+                </Button>
+                <Button
+                  disabled={
+                    !approveModal.date ||
+                    !approveModal.time ||
+                    approveMutation.isPending
                   }
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="appr-notes" className="text-sm">
-                  Internal Notes (optional)
-                </Label>
-                <Textarea
-                  id="appr-notes"
-                  rows={2}
-                  className="text-base resize-none"
-                  value={approveModal.notes}
-                  onChange={(e) =>
-                    setApproveModal((m) =>
-                      m ? { ...m, notes: e.target.value } : m
-                    )
+                  onClick={() =>
+                    approveMutation.mutate({
+                      id: approveModal.request.id,
+                      date: approveModal.date,
+                      time: approveModal.time,
+                      duration: approveModal.duration,
+                      notes: approveModal.notes,
+                    })
                   }
-                />
-              </div>
-            </div>
-
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setApproveModal(null)}>
-                Cancel
-              </Button>
-              <Button
-                disabled={
-                  !approveModal.date ||
-                  !approveModal.time ||
-                  approveMutation.isPending
-                }
-                onClick={() =>
-                  approveMutation.mutate({
-                    id: approveModal.request.id,
-                    date: approveModal.date,
-                    time: approveModal.time,
-                    duration: approveModal.duration,
-                    notes: approveModal.notes,
-                  })
-                }
-                className="bg-green-600 hover:bg-green-700"
-              >
-                {approveMutation.isPending ? "Saving…" : "Book Appointment"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+                  data-testid="button-approve-save"
+                >
+                  {approveMutation.isPending ? "Saving…" : "Book Appointment"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        );
+      })()}
     </>
   );
 }

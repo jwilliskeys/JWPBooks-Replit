@@ -549,7 +549,11 @@ export const publicBookingRequestSchema = insertBookingRequestSchema.extend({
   addressLat: z.string().optional(),
   addressLng: z.string().optional(),
   serviceRequested: z.string().optional(),
-  pianoType: z.enum(["Upright", "Grand", "Other"]).optional(),
+  pianoType: z.enum([
+    "Upright", "Grand", "Other",
+    // "Other" refinements offered by the /book form's dropdown
+    "Console", "Spinet", "Studio", "Digital", "Hybrid", "Harpsichord",
+  ]).optional(),
   lastTuned: z.string().optional(),
   preferredTimes: z.string().optional(),
   requestedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Invalid date").optional(),

@@ -19,13 +19,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { PhoneInput } from "@/components/phone-input";
 import {
   CheckCircle2, Piano, MapPin, AlertTriangle, ChevronLeft, ChevronRight,
-  Clock, CalendarDays, Star,
+  Clock, CalendarDays, Star, Loader2,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type Step = 1 | 2 | 3 | 4 | 5;
-type PianoType = "Grand" | "Upright" | "Unknown";
+type PianoType = "Grand" | "Upright" | "Other";
+
+// Shown in the dropdown when "Other" is picked (Gazelle-style refinement)
+const OTHER_PIANO_TYPES = ["Console", "Spinet", "Studio", "Digital", "Hybrid", "Harpsichord"];
 
 interface PublicSettings {
   showServiceCost: boolean;
@@ -107,6 +110,127 @@ function haversineMiles(lat1: number, lng1: number, lat2: number, lng2: number) 
 // Address autocomplete is handled server-side via /api/places/autocomplete and
 // /api/places/details (see StepLocation) — no in-browser Google widget or
 // browser-exposed Maps key is needed.
+
+// ── Interactive verification map (Leaflet from CDN — no npm dep, same
+//     pattern as outreach-map.tsx) ──────────────────────────────────────────
+
+const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+
+let leafletLoading: Promise<void> | null = null;
+function loadLeaflet(): Promise<void> {
+  if ((window as any).L) return Promise.resolve();
+  if (leafletLoading) return leafletLoading;
+  leafletLoading = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = LEAFLET_CSS;
+    document.head.appendChild(css);
+    const script = document.createElement("script");
+    script.src = LEAFLET_JS;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load map library"));
+    document.head.appendChild(script);
+  });
+  return leafletLoading;
+}
+
+/**
+ * Zoomable/pannable map with a draggable pin. Scroll-wheel zoom is disabled
+ * on purpose (the page — especially embedded in an iframe on the website —
+ * would trap scrolling); +/− buttons, double-click, and pinch all zoom.
+ */
+function VerifyLocationMap({
+  lat,
+  lng,
+  onMove,
+}: {
+  lat: number;
+  lng: number;
+  onMove: (lat: number, lng: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<any>(null);
+  const markerRef = useRef<any>(null);
+  const onMoveRef = useRef(onMove);
+  onMoveRef.current = onMove;
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadLeaflet()
+      .then(() => { if (!cancelled) setReady(true); })
+      .catch(() => { if (!cancelled) setLoadError(true); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Init once, tear down on unmount.
+  useEffect(() => {
+    if (!ready || !containerRef.current || mapRef.current) return;
+    const L = (window as any).L;
+    const map = L.map(containerRef.current, { scrollWheelZoom: false }).setView([lat, lng], 17);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+    const marker = L.marker([lat, lng], { draggable: true }).addTo(map);
+    marker.on("dragend", () => {
+      const p = marker.getLatLng();
+      onMoveRef.current(p.lat, p.lng);
+    });
+    mapRef.current = map;
+    markerRef.current = marker;
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      markerRef.current = null;
+    };
+    // lat/lng deliberately omitted — position changes are handled below
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
+  // Recenter when a different address is picked from the dropdown.
+  useEffect(() => {
+    if (!mapRef.current || !markerRef.current) return;
+    const cur = markerRef.current.getLatLng();
+    if (Math.abs(cur.lat - lat) > 1e-7 || Math.abs(cur.lng - lng) > 1e-7) {
+      markerRef.current.setLatLng([lat, lng]);
+      mapRef.current.setView([lat, lng], mapRef.current.getZoom());
+    }
+  }, [lat, lng]);
+
+  if (loadError) {
+    return (
+      <div className="w-full h-44 border-t border-slate-100 flex items-center justify-center text-xs text-slate-400">
+        Map couldn't load — your address is still saved.
+      </div>
+    );
+  }
+  return (
+    <div
+      ref={containerRef}
+      className="w-full h-56 border-t border-slate-100 z-0"
+      data-testid="map-verify-location"
+    />
+  );
+}
+
+// Bolds the first case-insensitive occurrence of the typed query inside a
+// suggestion line (Gazelle-style match highlighting).
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  const q = query.trim();
+  if (!q) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(q.toLowerCase());
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <span className="font-semibold text-slate-900">{text.slice(idx, idx + q.length)}</span>
+      {text.slice(idx + q.length)}
+    </>
+  );
+}
 
 // ── Step nav (sidebar on desktop, pills on mobile) ────────────────────────────
 
@@ -245,12 +369,16 @@ export default function BookPage() {
     setErrors(e => ({ ...e, [k]: undefined }));
   }
 
+  // City from the picked address (not user-typed) — sent to available-slots so
+  // Utah visitors get "recommended" days matching their county's trip route.
+  const [addressCity, setAddressCity] = useState("");
+
   // ── Available slots query (only fires once lat/lng are known) ────────────
   const slotsEnabled = !!(form.addressLat && form.addressLng);
   const { data: slotsData } = useQuery<SlotsResponse>({
-    queryKey: ["/api/booking/available-slots", form.addressLat, form.addressLng],
+    queryKey: ["/api/booking/available-slots", form.addressLat, form.addressLng, addressCity],
     queryFn: () =>
-      fetch(`/api/booking/available-slots?lat=${form.addressLat}&lng=${form.addressLng}`)
+      fetch(`/api/booking/available-slots?lat=${form.addressLat}&lng=${form.addressLng}&city=${encodeURIComponent(addressCity)}`)
         .then(r => r.json()),
     enabled: slotsEnabled,
   });
@@ -294,50 +422,89 @@ export default function BookPage() {
 
   // ── Address autocomplete via our own backend (uses the server-side Google
   //     key — no browser key, no fragile widget, full control over the dropdown)
-  type AddrPrediction = { description: string; place_id: string };
+  type AddrPrediction = {
+    description: string;
+    place_id: string;
+    mainText?: string;
+    secondaryText?: string;
+  };
   const [predictions, setPredictions] = useState<AddrPrediction[]>([]);
   const [showPredictions, setShowPredictions] = useState(false);
+  const [loadingPredictions, setLoadingPredictions] = useState(false);
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [activePrediction, setActivePrediction] = useState(-1);
   const suppressSearchRef = useRef(false);
+
+  // One Google session token per typing session (autocomplete calls + the
+  // matching details call share it, so Google bills the cheaper session rate).
+  const placesSessionRef = useRef("");
+  const getPlacesSession = useCallback(() => {
+    if (!placesSessionRef.current) {
+      const c: any = typeof crypto !== "undefined" ? crypto : undefined;
+      placesSessionRef.current = c?.randomUUID
+        ? c.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+    return placesSessionRef.current;
+  }, []);
 
   // Debounced prediction fetch as the user types.
   useEffect(() => {
     if (suppressSearchRef.current) { suppressSearchRef.current = false; return; }
     const q = localAddress.trim();
-    if (q.length < 3) { setPredictions([]); setShowPredictions(false); return; }
+    if (q.length < 3) {
+      setPredictions([]);
+      setShowPredictions(false);
+      setLoadingPredictions(false);
+      setActivePrediction(-1);
+      return;
+    }
+    setLoadingPredictions(true);
     const t = setTimeout(async () => {
       try {
-        const r = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(q)}`);
+        const r = await fetch(
+          `/api/places/autocomplete?input=${encodeURIComponent(q)}&sessiontoken=${encodeURIComponent(getPlacesSession())}`,
+        );
         const d = await r.json();
         setPredictions(Array.isArray(d.predictions) ? d.predictions : []);
+        setActivePrediction(-1);
         setShowPredictions(true);
       } catch {
         setPredictions([]);
+      } finally {
+        setLoadingPredictions(false);
       }
     }, 250);
     return () => clearTimeout(t);
-  }, [localAddress]);
+  }, [localAddress, getPlacesSession]);
 
-  // User clicked a suggestion → fetch full details (formatted address + lat/lng).
+  // User picked a suggestion → fetch full details (formatted address + lat/lng).
   const pickPrediction = useCallback(async (p: AddrPrediction) => {
     suppressSearchRef.current = true;
     setLocalAddress(p.description);
     setShowPredictions(false);
     setPredictions([]);
+    setActivePrediction(-1);
     setLoadingDetails(true);
+    const token = getPlacesSession();
+    placesSessionRef.current = ""; // details call ends the billing session
     try {
-      const r = await fetch(`/api/places/details?place_id=${encodeURIComponent(p.place_id)}`);
+      const r = await fetch(
+        `/api/places/details?place_id=${encodeURIComponent(p.place_id)}&sessiontoken=${encodeURIComponent(token)}`,
+      );
       const d = await r.json();
       const addr = d.formattedAddress || p.description;
       suppressSearchRef.current = true;
       setLocalAddress(addr);
+      setAddressCity(d.city ?? "");
       handleAddressSelect(addr, d.lat ?? "", d.lng ?? "");
     } catch {
+      setAddressCity("");
       handleAddressSelect(p.description, "", "");
     } finally {
       setLoadingDetails(false);
     }
-  }, [handleAddressSelect]);
+  }, [handleAddressSelect, getPlacesSession]);
 
   // ── Submit ───────────────────────────────────────────────────────────────
   const mutation = useMutation({
@@ -527,9 +694,6 @@ export default function BookPage() {
     // because this is rendered inline via StepLocation() rather than as a mounted
     // component. Keep this function hook-free.
     const verified = !!(form.addressLat && form.addressLng);
-    const mapSrc = verified
-      ? `https://www.openstreetmap.org/export/embed.html?bbox=${parseFloat(form.addressLng) - 0.008},${parseFloat(form.addressLat) - 0.005},${parseFloat(form.addressLng) + 0.008},${parseFloat(form.addressLat) + 0.005}&layer=mapnik&marker=${form.addressLat},${form.addressLng}`
-      : null;
 
     return (
       <div className="space-y-5">
@@ -575,33 +739,94 @@ export default function BookPage() {
                   if (form.addressLat || form.addressLng) {
                     setF("addressLat", "");
                     setF("addressLng", "");
+                    setAddressCity("");
                   }
                 }}
                 onFocus={() => { if (predictions.length) setShowPredictions(true); }}
                 onBlur={() => { setTimeout(() => setShowPredictions(false), 150); }}
-                className={`w-full h-12 pl-9 pr-4 border rounded-lg text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400 ${
+                onKeyDown={e => {
+                  if (!showPredictions || predictions.length === 0) {
+                    if (e.key === "Escape") setShowPredictions(false);
+                    return;
+                  }
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    setActivePrediction(i => (i + 1) % predictions.length);
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    setActivePrediction(i => (i <= 0 ? predictions.length - 1 : i - 1));
+                  } else if (e.key === "Enter") {
+                    e.preventDefault();
+                    pickPrediction(predictions[activePrediction >= 0 ? activePrediction : 0]);
+                  } else if (e.key === "Escape") {
+                    setShowPredictions(false);
+                    setActivePrediction(-1);
+                  }
+                }}
+                role="combobox"
+                aria-expanded={showPredictions}
+                aria-controls="address-suggestions"
+                aria-autocomplete="list"
+                data-testid="input-booking-address"
+                className={`w-full h-12 pl-9 pr-10 border rounded-lg text-base bg-white focus:outline-none focus:ring-2 focus:ring-slate-400 ${
                   errors.streetAddress ? "border-red-400" : "border-slate-300"
                 }`}
               />
+              {(loadingPredictions || loadingDetails) && (
+                <Loader2
+                  className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 animate-spin"
+                  data-testid="spinner-address-loading"
+                />
+              )}
               {showPredictions && predictions.length > 0 && (
-                <ul className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-72 overflow-y-auto">
-                  {predictions.map(p => (
-                    <li key={p.place_id}>
+                <ul
+                  id="address-suggestions"
+                  role="listbox"
+                  data-testid="list-address-suggestions"
+                  className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden max-h-72 overflow-y-auto"
+                >
+                  {predictions.map((p, i) => (
+                    <li key={p.place_id} role="option" aria-selected={i === activePrediction}>
                       <button
                         type="button"
                         // onMouseDown fires before the input's onBlur, so the click registers
                         onMouseDown={e => { e.preventDefault(); pickPrediction(p); }}
-                        className="w-full text-left px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-100 flex items-start gap-2"
+                        onMouseEnter={() => setActivePrediction(i)}
+                        data-testid={`suggestion-address-${i}`}
+                        className={`w-full text-left px-3 py-3 text-sm flex items-start gap-2.5 transition-colors ${
+                          i === activePrediction ? "bg-slate-100" : "bg-white"
+                        }`}
                       >
                         <MapPin className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
-                        <span>{p.description}</span>
+                        {p.mainText ? (
+                          <span className="min-w-0">
+                            <span className="block text-slate-700 leading-snug">
+                              <HighlightMatch text={p.mainText} query={localAddress} />
+                            </span>
+                            {p.secondaryText && (
+                              <span className="block text-xs text-slate-400 leading-snug mt-0.5">
+                                {p.secondaryText}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-slate-700 leading-snug">
+                            <HighlightMatch text={p.description} query={localAddress} />
+                          </span>
+                        )}
                       </button>
                     </li>
                   ))}
                 </ul>
               )}
-              {loadingDetails && (
-                <p className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">Loading…</p>
+              {showPredictions && !loadingPredictions && predictions.length === 0 &&
+                localAddress.trim().length >= 3 && (
+                <div
+                  data-testid="text-address-no-matches"
+                  className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-3 text-sm text-slate-500"
+                >
+                  No matches — enter it manually or use the On a Map tab.
+                </div>
               )}
             </div>
             {errors.streetAddress && <p className="text-xs text-red-500">{errors.streetAddress}</p>}
@@ -700,14 +925,16 @@ export default function BookPage() {
                 </p>
               </div>
             </div>
-            {mapSrc && (
-              <iframe
-                src={mapSrc}
-                title="Location map"
-                className="w-full h-44 border-t border-slate-100"
-                style={{ pointerEvents: "none" }}
-              />
-            )}
+            <VerifyLocationMap
+              lat={parseFloat(form.addressLat)}
+              lng={parseFloat(form.addressLng)}
+              onMove={(la, ln) =>
+                handleAddressSelect(form.streetAddress, la.toFixed(6), ln.toFixed(6))
+              }
+            />
+            <p className="px-4 py-2 text-xs text-slate-400 bg-white border-t border-slate-100">
+              Pin not quite right? Drag it to your exact location. Zoom with the + / − buttons or by pinching.
+            </p>
           </div>
         )}
 
@@ -731,7 +958,9 @@ export default function BookPage() {
 
   // ── Step 2: Piano & Service ───────────────────────────────────────────────
   function StepPianoService() {
-    const PIANO_TYPES: PianoType[] = ["Grand", "Upright", "Unknown"];
+    const PIANO_TYPES: PianoType[] = ["Grand", "Upright", "Other"];
+    const otherActive =
+      form.pianoType === "Other" || OTHER_PIANO_TYPES.includes(form.pianoType);
     const LAST_TUNED = [
       "Within the last 6 months", "6–12 months ago", "1–2 years ago",
       "2–5 years ago", "More than 5 years ago", "Never / Unknown",
@@ -745,12 +974,18 @@ export default function BookPage() {
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Piano type <span className="font-normal normal-case text-slate-400">— optional</span></p>
           <div className="grid grid-cols-3 gap-3">
             {PIANO_TYPES.map(type => {
-              const selected = form.pianoType === type;
+              const isOtherTile = type === "Other";
+              const selected = isOtherTile ? otherActive : form.pianoType === type;
+              const label =
+                isOtherTile && OTHER_PIANO_TYPES.includes(form.pianoType)
+                  ? form.pianoType
+                  : type;
               return (
                 <button
                   key={type}
                   type="button"
                   onClick={() => setF("pianoType", selected ? "" : type)}
+                  data-testid={`button-piano-type-${type.toLowerCase()}`}
                   className={`relative flex flex-col items-center justify-center gap-2 py-4 px-2 rounded-xl border-2 transition-all ${
                     selected
                       ? "border-slate-900 bg-slate-900 text-white"
@@ -763,11 +998,25 @@ export default function BookPage() {
                     </div>
                   )}
                   <Piano className={`h-8 w-8 ${selected ? "text-white" : "text-slate-400"}`} />
-                  <span className="text-sm font-medium">{type}</span>
+                  <span className="text-sm font-medium">{label}</span>
                 </button>
               );
             })}
           </div>
+          {otherActive && (
+            <div className="relative mt-3">
+              <select
+                value={OTHER_PIANO_TYPES.includes(form.pianoType) ? form.pianoType : ""}
+                onChange={e => setF("pianoType", e.target.value || "Other")}
+                data-testid="select-piano-type-other"
+                className="w-full h-11 pl-3 pr-8 border border-slate-300 rounded-lg bg-white text-sm text-slate-700 appearance-none focus:outline-none focus:ring-2 focus:ring-slate-400"
+              >
+                <option value="">What kind? Select one…</option>
+                {OTHER_PIANO_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <ChevronRight className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 rotate-90" />
+            </div>
+          )}
         </div>
 
         {/* Optional piano details */}
@@ -1018,16 +1267,6 @@ export default function BookPage() {
         )}
 
         {errors.preferredTime && <p className="text-xs text-red-500">{errors.preferredTime}</p>}
-
-        <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-500 space-y-1">
-          <p className="font-medium text-slate-600">How it works</p>
-          <p>• Suggested times cluster with nearby existing appointments for efficient routing.</p>
-          {settings?.approvalMode === "auto" ? (
-            <p>• Your appointment is confirmed instantly — the time is reserved the moment you submit.</p>
-          ) : (
-            <p>• Your time is held for you while John confirms, usually within 1 business day.</p>
-          )}
-        </div>
       </div>
     );
   }
