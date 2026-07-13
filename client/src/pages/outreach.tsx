@@ -23,6 +23,7 @@ import {
   Phone, Mail, MailPlus, Plus, Trash2, Pencil, Church, Music, Mic, Building2,
   GraduationCap, MapPin, PhoneCall, Globe, Star, Search, Compass, CheckCircle2,
   CalendarClock, Armchair, List as ListIcon, Map as MapIcon, Lightbulb,
+  ChevronDown, ChevronRight, Sparkles, Loader2,
 } from "lucide-react";
 import { OutreachMap } from "@/components/outreach-map";
 import type { OutreachLead, InsertOutreachLead } from "@shared/schema";
@@ -77,32 +78,45 @@ const CONTACT_METHODS = [
   { value: "in_person", label: "In person" },
 ];
 
-// ── Nearby cities, outward from Somerville (approx. miles) ───────────────────
-// Used by the "Suggested nearby cities" panel to recommend where to expand next.
-const NEARBY_CITIES: { city: string; miles: number }[] = [
-  { city: "Cambridge", miles: 1.5 },
-  { city: "Medford", miles: 2 },
-  { city: "Everett", miles: 2.5 },
-  { city: "Charlestown", miles: 2.5 },
-  { city: "Arlington", miles: 3 },
-  { city: "Malden", miles: 3.5 },
-  { city: "Chelsea", miles: 3.5 },
-  { city: "Boston", miles: 3.5 },
-  { city: "Allston", miles: 3.5 },
-  { city: "Belmont", miles: 3.5 },
-  { city: "Watertown", miles: 4 },
-  { city: "Brighton", miles: 4.5 },
-  { city: "Winchester", miles: 5 },
-  { city: "Revere", miles: 5 },
-  { city: "Brookline", miles: 5 },
-  { city: "Melrose", miles: 5.5 },
-  { city: "Stoneham", miles: 6 },
-  { city: "Newton", miles: 6 },
-  { city: "Lexington", miles: 6.5 },
-  { city: "Waltham", miles: 6.5 },
-  { city: "Woburn", miles: 7 },
-  { city: "Saugus", miles: 7 },
-];
+// ── City distances from home base (14 Murdock St, Somerville — approx. miles) ─
+// Drives BOTH the proximity ordering of the lead list (Somerville first, then
+// branching outward) and the compact "branch out" suggestions at the bottom.
+const HOME_CITY = "Somerville";
+const CITY_MILES: Record<string, number> = {
+  somerville: 0,
+  medford: 1.5, // closest neighbor to 14 Murdock St
+  cambridge: 2,
+  arlington: 2.5,
+  malden: 3,
+  everett: 3.5,
+  charlestown: 3.5,
+  belmont: 3.5,
+  boston: 4,
+  winchester: 4.5,
+  chelsea: 4.5,
+  allston: 4.5,
+  watertown: 4.5,
+  melrose: 4.5,
+  brighton: 5,
+  brookline: 5.5,
+  revere: 5.5,
+  stoneham: 5.5,
+  lexington: 6.5,
+  woburn: 6.5,
+  saugus: 6.5,
+  newton: 7,
+  waltham: 7,
+};
+
+// Distance for sorting: known cities get their mileage, unknown cities sort last.
+function cityMiles(city: string): number | null {
+  const m = CITY_MILES[normalizeCity(city)];
+  return m === undefined ? null : m;
+}
+
+const NEARBY_CITIES: { city: string; miles: number }[] = Object.entries(CITY_MILES)
+  .filter(([c]) => c !== "somerville")
+  .map(([c, miles]) => ({ city: c.charAt(0).toUpperCase() + c.slice(1), miles }));
 
 // Normalizes city names so e.g. "Back Bay Area" counts as Boston coverage.
 function normalizeCity(c: string | null | undefined): string {
@@ -196,6 +210,18 @@ function nextStepHint(lead: OutreachLead): string | null {
   return null;
 }
 
+// Sort weight within a city group — most actionable first, dead/won last.
+// 0 follow-up due · 1 warm · 2 never contacted · 3 waiting on reply · 4 client · 5 dead
+function leadPriority(l: OutreachLead): number {
+  const s = (l.status || "").toLowerCase();
+  if (s.includes("not interested") || s.includes("not in service") || s.includes("disconnect")) return 5;
+  if (s.includes("client")) return 4;
+  if (l.followUpDate && l.followUpDate <= todayISO()) return 0;
+  if ((s.includes("interested") && !s.includes("not")) || s.includes("conversation") || s.includes("callback")) return 1;
+  if (!l.contactedDate) return 2;
+  return 3;
+}
+
 const EMPTY_FORM: Partial<InsertOutreachLead> = {
   leadType: "church",
   name: "",
@@ -229,6 +255,30 @@ export default function OutreachPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<Partial<InsertOutreachLead>>(EMPTY_FORM);
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  // City the AI-research dialog is aimed at (null = dialog closed)
+  const [researchCity, setResearchCity] = useState<string | null>(null);
+  // Collapsed city groups — persisted so the layout sticks between visits
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      return new Set<string>(JSON.parse(localStorage.getItem("outreach-collapsed-cities") || "[]"));
+    } catch {
+      return new Set<string>();
+    }
+  });
+
+  function saveCollapsed(next: Set<string>) {
+    setCollapsed(next);
+    try {
+      localStorage.setItem("outreach-collapsed-cities", JSON.stringify(Array.from(next)));
+    } catch {}
+  }
+
+  function toggleCity(city: string) {
+    const next = new Set(collapsed);
+    if (next.has(city)) next.delete(city);
+    else next.add(city);
+    saveCollapsed(next);
+  }
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["/api/outreach-leads"] });
@@ -264,6 +314,29 @@ export default function OutreachPage() {
     onError: (e: any) => toast({ title: "Geocoding failed", description: e.message, variant: "destructive" }),
   });
 
+  // AI research: server web-searches the city and inserts leads it finds.
+  // Slow by nature (~1-2 min) — the dialog shows progress while it runs.
+  const researchMutation = useMutation({
+    mutationFn: async (city: string) =>
+      (await apiRequest("POST", "/api/outreach-leads/research", { city })).json(),
+    onSuccess: (r: { added: number; skipped: number }, city) => {
+      invalidate();
+      setResearchCity(null);
+      // Make sure the freshly researched city is expanded so the results show.
+      const next = new Set(collapsed);
+      next.delete(city);
+      saveCollapsed(next);
+      toast({
+        title: `Found ${r.added} new lead${r.added === 1 ? "" : "s"} in ${city}`,
+        description:
+          (r.skipped ? `${r.skipped} already on your list. ` : "") +
+          (r.added ? "Spot-check phone numbers before dialing — AI research isn't perfect." : "Try again later or add leads manually."),
+      });
+    },
+    onError: (e: any) =>
+      toast({ title: "Research failed", description: e.message, variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => apiRequest("DELETE", `/api/outreach-leads/${id}`),
     onSuccess: () => {
@@ -278,7 +351,14 @@ export default function OutreachPage() {
   const cities = useMemo(() => {
     const set = new Set<string>();
     (leads || []).forEach((l) => l.city && set.add(l.city));
-    return Array.from(set).sort();
+    // Nearest-first, unknown cities alphabetical at the end.
+    return Array.from(set).sort((a, b) => {
+      const ma = cityMiles(a), mb = cityMiles(b);
+      if (ma !== null && mb !== null && ma !== mb) return ma - mb;
+      if (ma !== null && mb === null) return -1;
+      if (ma === null && mb !== null) return 1;
+      return a.localeCompare(b);
+    });
   }, [leads]);
 
   const filtered = useMemo(() => {
@@ -308,7 +388,9 @@ export default function OutreachPage() {
     return rows;
   }, [leads, cityFilter, typeFilter, statusFilter, search]);
 
-  // Group filtered rows by city
+  // Group filtered rows by city — nearest to home first (Somerville, then
+  // Medford, Cambridge, …), so calls start close and branch outward. Within a
+  // city, the most actionable leads float to the top.
   const grouped = useMemo(() => {
     const map = new Map<string, OutreachLead[]>();
     filtered.forEach((l) => {
@@ -316,7 +398,18 @@ export default function OutreachPage() {
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(l);
     });
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const entries = Array.from(map.entries());
+    entries.forEach(([, rows]) =>
+      rows.sort((a, b) => leadPriority(a) - leadPriority(b) || a.name.localeCompare(b.name)),
+    );
+    return entries.sort((a, b) => {
+      const ma = a[0] === "Uncategorized" ? null : cityMiles(a[0]);
+      const mb = b[0] === "Uncategorized" ? null : cityMiles(b[0]);
+      if (ma !== null && mb !== null && ma !== mb) return ma - mb;
+      if (ma !== null && mb === null) return -1;
+      if (ma === null && mb !== null) return 1;
+      return a[0].localeCompare(b[0]);
+    });
   }, [filtered]);
 
   const stats = useMemo(() => {
@@ -428,39 +521,6 @@ export default function OutreachPage() {
         <StatCard label="Follow-ups due" value={stats.followUpsDue} icon={CalendarClock} />
       </div>
 
-      {/* Suggested nearby cities */}
-      {suggestions.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Compass className="h-4 w-4" /> Suggested nearby cities
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-3">
-              Cities branching outward from Somerville that aren't on your list yet. Add a lead
-              directly, or ask Claude in chat to research one (e.g. "research churches and
-              studios in {suggestions[0].city}") and it'll fill them in here.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {suggestions.map((s) => (
-                <Button
-                  key={s.city}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openAdd(s.city)}
-                  data-testid={`button-suggest-${s.city.toLowerCase()}`}
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1" />
-                  {s.city}
-                  <span className="ml-1.5 text-xs text-muted-foreground">~{s.miles} mi</span>
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px]">
@@ -552,33 +612,151 @@ export default function OutreachPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-6">
-          {grouped.map(([city, rows]) => (
-            <div key={city}>
-              <div className="flex items-center gap-2 mb-2">
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                  {city}
-                </h2>
-                <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
+        <div className="space-y-4">
+          {/* Expand / collapse all */}
+          <div className="flex items-center justify-end gap-1 text-xs text-muted-foreground -mb-1">
+            <button
+              className="hover:text-foreground underline-offset-2 hover:underline"
+              onClick={() => saveCollapsed(new Set())}
+              data-testid="button-expand-all"
+            >
+              Expand all
+            </button>
+            <span>·</span>
+            <button
+              className="hover:text-foreground underline-offset-2 hover:underline"
+              onClick={() => saveCollapsed(new Set(grouped.map(([c]) => c)))}
+              data-testid="button-collapse-all"
+            >
+              Collapse all
+            </button>
+          </div>
+          {grouped.map(([city, rows]) => {
+            const isCollapsed = collapsed.has(city);
+            return (
+              <div key={city}>
+                <button
+                  className="flex w-full items-center gap-2 mb-2 group text-left"
+                  onClick={() => toggleCity(city)}
+                  data-testid={`button-city-toggle-${city.toLowerCase().replace(/\s+/g, "-")}`}
+                >
+                  {isCollapsed ? (
+                    <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                  )}
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground group-hover:text-foreground">
+                    {city}
+                  </h2>
+                  <Badge variant="secondary" className="text-xs">{rows.length}</Badge>
+                  {normalizeCity(city) !== normalizeCity(HOME_CITY) && cityMiles(city) !== null && (
+                    <span className="text-xs text-muted-foreground">~{cityMiles(city)} mi</span>
+                  )}
+                </button>
+                {!isCollapsed && (
+                  <div className="space-y-2">
+                    {rows.map((l) => (
+                      <LeadRow
+                        key={l.id}
+                        lead={l}
+                        onStatusChange={(status) => updateMutation.mutate({ id: l.id, data: { status } })}
+                        onLogCall={() => logContact(l, "phone")}
+                        onLogEmail={() => logContact(l, "email")}
+                        onDraftEmail={() => draftEmail(l)}
+                        onEdit={() => openEdit(l)}
+                        onDelete={() => setDeleteId(l.id)}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-              <div className="space-y-2">
-                {rows.map((l) => (
-                  <LeadRow
-                    key={l.id}
-                    lead={l}
-                    onStatusChange={(status) => updateMutation.mutate({ id: l.id, data: { status } })}
-                    onLogCall={() => logContact(l, "phone")}
-                    onLogEmail={() => logContact(l, "email")}
-                    onDraftEmail={() => draftEmail(l)}
-                    onEdit={() => openEdit(l)}
-                    onDelete={() => setDeleteId(l.id)}
-                  />
-                ))}
-              </div>
-            </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Branch out — compact suggestion strip, deliberately out of the way */}
+      {view === "list" && !isLoading && suggestions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-1.5">
+            <Compass className="h-3.5 w-3.5" /> Branch out next:
+          </span>
+          {suggestions.slice(0, 5).map((s) => (
+            <Button
+              key={s.city}
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-muted-foreground"
+              onClick={() => setResearchCity(s.city)}
+              title={`AI-research piano leads in ${s.city} (~${s.miles} mi)`}
+              data-testid={`button-suggest-${s.city.toLowerCase()}`}
+            >
+              <Sparkles className="h-3 w-3 mr-1" />
+              {s.city} <span className="ml-1 text-xs opacity-70">~{s.miles} mi</span>
+            </Button>
           ))}
         </div>
       )}
+
+      {/* AI research dialog */}
+      <Dialog
+        open={researchCity !== null}
+        onOpenChange={(o) => {
+          if (!o && !researchMutation.isPending) setResearchCity(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" /> Research {researchCity}
+            </DialogTitle>
+            <DialogDescription>
+              Claude will search the web for churches, schools, teaching & recording studios,
+              venues, and senior living communities in {researchCity} that likely own pianos —
+              and add them here with the phone numbers, emails, and websites it finds.
+            </DialogDescription>
+          </DialogHeader>
+          {researchMutation.isPending ? (
+            <div className="flex items-center gap-3 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin shrink-0" />
+              <div>
+                Researching {researchCity}… this usually takes a minute or two.
+                <br />You can keep working — results will appear in the list when done.
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Takes 1–2 minutes and adds up to ~15 leads. Duplicates of anything already on
+              your list are skipped. Spot-check contact info before dialing.
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={researchMutation.isPending}
+              onClick={() => {
+                const c = researchCity;
+                setResearchCity(null);
+                openAdd(c ?? "");
+              }}
+              data-testid="button-research-manual"
+            >
+              Add one manually
+            </Button>
+            <Button
+              disabled={researchMutation.isPending}
+              onClick={() => researchCity && researchMutation.mutate(researchCity)}
+              data-testid="button-research-start"
+            >
+              {researchMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Researching…</>
+              ) : (
+                <><Sparkles className="h-4 w-4 mr-1" /> Start research</>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add / Edit dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

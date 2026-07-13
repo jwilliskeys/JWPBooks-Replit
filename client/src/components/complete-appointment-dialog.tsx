@@ -32,6 +32,7 @@ import { Plus, Trash2, Music, ChevronDown, FileText, ExternalLink, Pencil } from
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Piano, ServiceCatalogItem, Invoice, Customer } from "@shared/schema";
+import { parseServiceItems } from "@/lib/service-lines";
 
 interface SelectedService {
   catalogId: number;
@@ -128,6 +129,46 @@ export function CompleteAppointmentDialog({
     if (!open || !pianos) return;
     const isTuning = deriveIsTuning();
     const initialRecords: PianoRecord[] = [];
+    let initialMisc: SelectedService[] = [];
+    // New-style appointments: prefill every piano + its itemized services
+    const groups = parseServiceItems(appointment.serviceItems);
+    if (groups && groups.length > 0) {
+      for (const g of groups) {
+        const toSelected = (lines: typeof g.lines): SelectedService[] =>
+          lines.map(l => ({
+            catalogId: catalog?.find(c => c.name === l.name)?.id ?? 0,
+            name: l.name,
+            price: `$${(l.eachAmount || 0).toFixed(2)}`,
+            duration: l.durationMinutes ? `${l.durationMinutes} min` : "",
+            isTuning: l.isTuning,
+            quantity: l.quantity || 1,
+          }));
+        if (g.pianoId == null) {
+          initialMisc = [...initialMisc, ...toSelected(g.lines)];
+          continue;
+        }
+        const piano = pianos.find(p => p.id === g.pianoId);
+        initialRecords.push({
+          pianoId: g.pianoId,
+          label: piano
+            ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || `Piano #${piano.id}`
+            : `Piano #${g.pianoId}`,
+          isTuning: g.lines.some(l => l.isTuning),
+          notes: "",
+          humidity: "",
+          temperature: "",
+          services: toSelected(g.lines),
+        });
+      }
+      setPianoRecords(initialRecords);
+      setMiscServices(initialMisc);
+      setResult("completed");
+      setClientNotes(appointment.notes || "");
+      setPaymentMethod("");
+      setPaymentAmount("");
+      setLocalCreatedInvoice(null);
+      return;
+    }
     if (appointment.pianoId) {
       const piano = pianos.find(p => p.id === appointment.pianoId);
       if (piano) {
@@ -160,7 +201,7 @@ export function CompleteAppointmentDialog({
     setPaymentMethod("");
     setPaymentAmount("");
     setLocalCreatedInvoice(null);
-  }, [open, pianos, catalog, appointment.pianoId, appointment.isTuning, appointment.servicesRequested, appointment.notes, appointment.id]);
+  }, [open, pianos, catalog, appointment.pianoId, appointment.isTuning, appointment.servicesRequested, appointment.serviceItems, appointment.notes, appointment.id]);
 
   const createInvoiceMutation = useMutation({
     mutationFn: async () => {

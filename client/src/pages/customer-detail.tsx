@@ -632,10 +632,10 @@ const BLANK_PIANO: NewPianoFormState = {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 type HubTab = "pianos" | "history" | "appointments" | "estimates" | "invoices";
-const HUB_TABS: { key: HubTab; label: string }[] = [
+const HUB_TABS: { key: HubTab; label: string; shortLabel?: string }[] = [
   { key: "pianos", label: "Pianos" },
   { key: "history", label: "History" },
-  { key: "appointments", label: "Appointments" },
+  { key: "appointments", label: "Appointments", shortLabel: "Appts" },
   { key: "estimates", label: "Estimates" },
   { key: "invoices", label: "Invoices" },
 ];
@@ -960,7 +960,7 @@ export default function CustomerDetail() {
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
             <TabsList className="w-full sm:w-auto justify-start" data-testid="customer-hub-tabs">
-              {HUB_TABS.map(({ key, label }) => {
+              {HUB_TABS.map(({ key, label, shortLabel }) => {
                 const count =
                   key === "pianos" ? customerPianos?.length
                   : key === "invoices" ? invoices?.length
@@ -972,10 +972,18 @@ export default function CustomerDetail() {
                   <TabsTrigger
                     key={key}
                     value={key}
-                    className="text-xs sm:text-sm"
+                    className="text-xs sm:text-sm px-2 sm:px-3"
                     data-testid={`tab-${key}`}
                   >
-                    {label}
+                    {/* Shorter label on phones so all five tabs fit without scrolling */}
+                    {shortLabel ? (
+                      <>
+                        <span className="sm:hidden">{shortLabel}</span>
+                        <span className="hidden sm:inline">{label}</span>
+                      </>
+                    ) : (
+                      label
+                    )}
                     {count !== undefined && count > 0 && (
                       <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground tabular-nums">
                         {count}

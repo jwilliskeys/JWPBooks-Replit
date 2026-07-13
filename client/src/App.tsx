@@ -103,7 +103,9 @@ function AppShell() {
 
   return (
     <SidebarProvider style={sidebarStyle as React.CSSProperties}>
-      <div className="flex h-screen w-full">
+      {/* h-dvh (not h-screen): 100vh on iOS Safari includes the space behind the
+          collapsing address bar, which pushed the bottom of the app off-screen. */}
+      <div className="flex h-dvh w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
           <header className="flex items-center justify-between gap-2 p-2 border-b h-14 sm:h-12 shrink-0">
@@ -121,7 +123,10 @@ function AppShell() {
             </button>
             <ThemeToggle />
           </header>
-          <main ref={mainRef} className="flex-1 overflow-auto">
+          {/* overflow-x-hidden: any accidentally-too-wide element used to make the whole
+              page scroll sideways on iOS ("things don't fit on the screen"). Vertical
+              scrolling only; individual tables/tab bars keep their own overflow-x-auto. */}
+          <main ref={mainRef} className="flex-1 overflow-y-auto overflow-x-hidden">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={location}

@@ -36,7 +36,16 @@ import {
   parseDurationToMinutes,
   type ExistingAppointment,
 } from "@/lib/scheduling";
-import { ServicePicker } from "@/components/service-picker";
+import { ServiceLineEditor } from "@/components/service-line-editor";
+import {
+  type ServiceLine,
+  type ServiceItemGroup,
+  linesTotal,
+  linesDuration,
+  serializeServiceItems,
+  groupsServiceNames,
+  formatMoney,
+} from "@/lib/service-lines";
 import {
   TimeStepperWidget,
   DatePickerPopover,
@@ -164,10 +173,7 @@ function parseCost(s: string | null | undefined): number {
 interface PianoSection {
   sectionId: string;
   pianoId: number | null;
-  selectedNames: string[];
-  isTuning: boolean;
-  price: string;
-  pickerKey: number;
+  lines: ServiceLine[];
   isMisc: boolean;
 }
 
@@ -175,10 +181,7 @@ function makeSection(pianoId: number | null = null, isMisc = false): PianoSectio
   return {
     sectionId: `${Date.now()}-${Math.random()}`,
     pianoId,
-    selectedNames: [],
-    isTuning: false,
-    price: "",
-    pickerKey: 0,
+    lines: [],
     isMisc,
   };
 }
@@ -320,21 +323,13 @@ function SectionBar({ title, children }: { title: string; children?: React.React
 interface PianoCardProps {
   section: PianoSection;
   piano: Piano | undefined;
-  catalog: ServiceCatalogItem[] | undefined;
   onUpdate: (patch: Partial<PianoSection>) => void;
   onRemove: () => void;
-  pickerMountKey: number;
   showRemove: boolean;
 }
 
-function PianoCard({ section, piano, catalog, onUpdate, onRemove, pickerMountKey, showRemove }: PianoCardProps) {
-  const totalCost = useMemo(() => {
-    if (!catalog) return 0;
-    return section.selectedNames.reduce((sum, name) => {
-      const svc = catalog.find(s => s.name === name);
-      return sum + parseCost(svc?.defaultCost);
-    }, 0);
-  }, [section.selectedNames, catalog]);
+function PianoCard({ section, piano, onUpdate, onRemove, showRemove }: PianoCardProps) {
+  const sectionTotal = useMemo(() => linesTotal(section.lines), [section.lines]);
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -371,26 +366,14 @@ function PianoCard({ section, piano, catalog, onUpdate, onRemove, pickerMountKey
       </div>
 
       <div className="px-3 py-2.5">
-        <ServicePicker
-          key={`${pickerMountKey}-${section.sectionId}`}
-          value={section.selectedNames}
-          onChange={(names, isTuning, cost) => {
-            onUpdate({
-              selectedNames: names,
-              isTuning,
-              price: cost > 0 ? `$${cost.toFixed(0)}` : "",
-            });
-          }}
+        <ServiceLineEditor
+          lines={section.lines}
+          onChange={lines => onUpdate({ lines })}
+          autoAddDefault={!section.isMisc}
         />
-        {section.selectedNames.length > 0 && (
-          <div className="flex items-center gap-2 mt-2.5">
-            <Label className="text-xs text-muted-foreground shrink-0">Price override</Label>
-            <Input
-              value={section.price}
-              onChange={e => onUpdate({ price: e.target.value })}
-              placeholder={totalCost > 0 ? `$${totalCost.toFixed(0)}` : "$—"}
-              className="h-7 text-sm"
-            />
+        {section.lines.length > 1 && (
+          <div className="flex items-center justify-end gap-2 mt-2 text-xs text-muted-foreground">
+            Subtotal <span className="font-semibold text-foreground tabular-nums">{formatMoney(sectionTotal)}</span>
           </div>
         )}
       </div>
@@ -541,25 +524,32 @@ function FinalizeDialog({
     mutationFn: async () => {
       const timeStr = isAllDay ? "9:00 AM" : formatTimeMinutes(timeMinutes);
       const durationStr = formatDurationMinutes(localDuration);
-      const payloadSections = sections.length > 0 ? sections : [makeSection()];
-      const results = [];
-      for (const sec of payloadSections) {
-        const payload = {
-          customerId: effectiveCustomerId,
-          pianoId: sec.pianoId ?? undefined,
-          date,
-          time: timeStr,
-          duration: durationStr,
-          servicesRequested: sec.selectedNames.join(", ") || undefined,
-          priceEstimate: sec.price || undefined,
-          notes: notes || undefined,
-          isTuning: sec.isTuning,
-          status: "scheduled",
-        };
-        const res = await apiRequest("POST", "/api/appointments", payload);
-        results.push(await res.json());
-      }
-      return results;
+      // ONE appointment for the whole visit — every piano + its services rides
+      // along in serviceItems (JSON). pianoId keeps the first piano for
+      // backward compatibility with older single-piano screens.
+      const groups: ServiceItemGroup[] = sections.map(sec => ({
+        pianoId: sec.isMisc ? null : sec.pianoId,
+        lines: sec.lines,
+      }));
+      const allNames = groupsServiceNames(groups);
+      const total = groups.reduce((s, g) => s + linesTotal(g.lines), 0);
+      const anyTuning = groups.some(g => g.lines.some(l => l.isTuning));
+      const firstPianoId = sections.find(s => !s.isMisc && s.pianoId)?.pianoId ?? undefined;
+      const payload = {
+        customerId: effectiveCustomerId,
+        pianoId: firstPianoId,
+        date,
+        time: timeStr,
+        duration: durationStr,
+        servicesRequested: allNames.join(", ") || undefined,
+        priceEstimate: total > 0 ? formatMoney(total) : undefined,
+        notes: notes || undefined,
+        isTuning: anyTuning,
+        status: "scheduled",
+        serviceItems: groups.length > 0 ? serializeServiceItems(groups) : undefined,
+      };
+      const res = await apiRequest("POST", "/api/appointments", payload);
+      return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
@@ -568,7 +558,8 @@ function FinalizeDialog({
       }
       onSuccess();
       onOpenChange(false);
-      toast({ title: sections.length > 1 ? `${sections.length} appointments scheduled` : "Appointment scheduled" });
+      const pianoCount = sections.filter(s => !s.isMisc && s.pianoId).length;
+      toast({ title: pianoCount > 1 ? `Appointment scheduled (${pianoCount} pianos)` : "Appointment scheduled" });
     },
     onError: () => toast({ title: "Failed to schedule appointment", variant: "destructive" }),
   });
@@ -814,10 +805,8 @@ function FinalizeDialog({
                           key={sec.sectionId}
                           section={sec}
                           piano={sec.pianoId ? pianoMap.get(sec.pianoId) : undefined}
-                          catalog={catalog}
                           onUpdate={patch => updateFinalizeSection(sec.sectionId, patch)}
                           onRemove={() => removeFinalizeSection(sec.sectionId)}
-                          pickerMountKey={finalizeMountKey}
                           showRemove={sections.length > 1 || !!sec.isMisc}
                         />
                       ))
@@ -918,33 +907,17 @@ export function AppointmentDialog({
 
   const selectedCustomer = customerMap.get(effectiveCustomerId);
 
-  // Total cost across all sections
-  const totalCost = useMemo(() => {
-    let total = 0;
-    sections.forEach(sec => { total += parseCost(sec.price); });
-    if (total === 0 && catalog) {
-      sections.forEach(sec => {
-        sec.selectedNames.forEach(name => {
-          const svc = catalog.find(s => s.name === name);
-          total += parseCost(svc?.defaultCost);
-        });
-      });
-    }
-    return total;
-  }, [sections, catalog]);
+  // Total cost across all sections (qty × each on every service line)
+  const totalCost = useMemo(
+    () => sections.reduce((sum, sec) => sum + linesTotal(sec.lines), 0),
+    [sections]
+  );
 
-  // Duration from services
+  // Appointment length = sum of every service line's duration
   const totalDurationMinutes = useMemo(() => {
-    if (!catalog) return 90;
-    let total = 0;
-    sections.forEach(sec => {
-      sec.selectedNames.forEach(name => {
-        const svc = catalog.find(s => s.name === name);
-        if (svc?.defaultDuration) total += parseDurationToMinutes(svc.defaultDuration);
-      });
-    });
+    const total = sections.reduce((sum, sec) => sum + linesDuration(sec.lines), 0);
     return total || 90;
-  }, [sections, catalog]);
+  }, [sections]);
 
   const pianoMap = useMemo(
     () => new Map((customerPianos ?? []).map(p => [p.id, p])),
@@ -1151,10 +1124,8 @@ export function AppointmentDialog({
                           key={sec.sectionId}
                           section={sec}
                           piano={sec.pianoId ? pianoMap.get(sec.pianoId) : undefined}
-                          catalog={catalog}
                           onUpdate={(patch) => updateSection(sec.sectionId, patch)}
                           onRemove={() => removeSection(sec.sectionId)}
-                          pickerMountKey={pickerMountKey}
                           showRemove={sections.length > 1 || !!sec.isMisc}
                         />
                       ))}

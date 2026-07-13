@@ -22,8 +22,23 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatPhone } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Appointment, Customer, Piano, Invoice } from "@shared/schema";
+import type { Appointment, Customer, Piano, Invoice, ServiceCatalogItem } from "@shared/schema";
 import { CompleteAppointmentDialog } from "./complete-appointment-dialog";
+import { ServiceLineEditor } from "./service-line-editor";
+import {
+  type ServiceItemGroup,
+  parseServiceItems,
+  serializeServiceItems,
+  groupsServiceNames,
+  groupsTotal,
+  groupsHaveTuning,
+  linesTotal,
+  lineFromCatalog,
+  lineTotal,
+  formatMoney,
+  formatLineSubline,
+  formatLineDuration,
+} from "@/lib/service-lines";
 
 interface Props {
   appointment: Appointment | null;
@@ -66,6 +81,8 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     servicesRequested: "", priceEstimate: "", notes: "", status: "scheduled",
     pianoId: null, isTuning: false,
   });
+  // Itemized pianos + services (new-style appointments). null = legacy free-text.
+  const [editGroups, setEditGroups] = useState<ServiceItemGroup[] | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -82,6 +99,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
         pianoId: appointment.pianoId ?? null,
         isTuning: appointment.isTuning ?? false,
       });
+      setEditGroups(parseServiceItems(appointment.serviceItems));
       setEditMode(false);
       setLocalCreatedInvoice(null);
     }
@@ -90,6 +108,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const { data: customers } = useQuery<Customer[]>({ queryKey: ["/api/customers"] });
   const { data: allPianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
   const { data: allInvoices } = useQuery<Invoice[]>({ queryKey: ["/api/invoices"], enabled: open });
+  const { data: catalog } = useQuery<ServiceCatalogItem[]>({ queryKey: ["/api/service-catalog"], enabled: open });
 
   const displayed = localAppt ?? appointment;
   const customer = customers?.find(c => c.id === displayed?.customerId);
@@ -109,7 +128,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     : null;
 
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<FormState>) =>
+    mutationFn: (data: Partial<FormState> & { serviceItems?: string }) =>
       apiRequest("PATCH", `/api/appointments/${displayed?.id}`, data),
     onSuccess: async (res) => {
       const updated = await res.json();
@@ -187,7 +206,60 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const isScheduled = displayed.status === "scheduled" || !displayed.status;
 
   function handleSave() {
-    updateMutation.mutate(form);
+    if (editGroups && editGroups.length > 0) {
+      // Itemized mode: recompute the summary fields from the service lines
+      const names = groupsServiceNames(editGroups);
+      const total = groupsTotal(editGroups);
+      updateMutation.mutate({
+        ...form,
+        servicesRequested: names.join(", "),
+        priceEstimate: total > 0 ? formatMoney(total) : "",
+        isTuning: groupsHaveTuning(editGroups),
+        pianoId: editGroups.find(g => g.pianoId != null)?.pianoId ?? null,
+        serviceItems: serializeServiceItems(editGroups),
+      });
+    } else {
+      updateMutation.mutate(form);
+    }
+  }
+
+  /** Convert a legacy free-text appointment into itemized piano/service lines. */
+  function itemizeLegacy() {
+    if (!displayed) return;
+    const names = (displayed.servicesRequested ?? "")
+      .split(/\n|,/).map(s => s.trim()).filter(Boolean);
+    const price = parseFloat(displayed.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
+    const lines = names.map((name, i) => {
+      const svc = catalog?.find(c => c.name.toLowerCase() === name.toLowerCase());
+      const line = svc
+        ? lineFromCatalog(svc)
+        : {
+            lineId: `${Date.now()}-${i}`,
+            name,
+            expenseType: "Fixed Rate Labor" as const,
+            quantity: 1,
+            eachAmount: 0,
+            durationMinutes: 0,
+            isTuning: !!displayed.isTuning && i === 0,
+            isTaxable: false,
+          };
+      return line;
+    });
+    // Single service + known price → carry the price over
+    if (lines.length === 1 && price > 0) lines[0].eachAmount = price;
+    if (lines.length === 0) {
+      const defaultSvc = catalog?.find(s => s.isDefault && s.isActive !== false);
+      if (defaultSvc) lines.push(lineFromCatalog(defaultSvc));
+    }
+    setEditGroups([{ pianoId: displayed.pianoId ?? null, lines }]);
+  }
+
+  function addEditGroup(v: string) {
+    const pianoId = v === "misc" ? null : parseInt(v);
+    const defaultSvc = catalog?.find(s => s.isDefault && s.isActive !== false);
+    // Adding a piano defaults to a tuning (catalog default service)
+    const lines = pianoId != null && defaultSvc ? [lineFromCatalog(defaultSvc)] : [];
+    setEditGroups(gs => [...(gs ?? []), { pianoId, lines }]);
   }
 
   function handleDelete() {
@@ -208,6 +280,9 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const serviceLines = displayed.servicesRequested
     ? displayed.servicesRequested.split(/\n|,/).map(s => s.trim()).filter(Boolean)
     : [];
+
+  // New-style itemized appointments render pianos + service lines from serviceItems
+  const viewGroups = parseServiceItems(displayed.serviceItems);
 
   return (
     <>
@@ -249,6 +324,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                             pianoId: displayed.pianoId ?? null,
                             isTuning: displayed.isTuning ?? false,
                           });
+                          setEditGroups(parseServiceItems(displayed.serviceItems));
                           setEditMode(false);
                         }}
                         data-testid="button-cancel-appt-edit"
@@ -297,16 +373,18 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                         data-testid="input-appt-duration"
                       />
                     </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Price Estimate</Label>
-                      <Input
-                        value={form.priceEstimate}
-                        onChange={e => setForm(f => ({ ...f, priceEstimate: e.target.value }))}
-                        placeholder="$150"
-                        className="h-8 text-sm"
-                        data-testid="input-appt-price"
-                      />
-                    </div>
+                    {!editGroups && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">Price Estimate</Label>
+                        <Input
+                          value={form.priceEstimate}
+                          onChange={e => setForm(f => ({ ...f, priceEstimate: e.target.value }))}
+                          placeholder="$150"
+                          className="h-8 text-sm"
+                          data-testid="input-appt-price"
+                        />
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Status</Label>
@@ -322,48 +400,127 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Services Requested</Label>
-                    <Textarea
-                      value={form.servicesRequested}
-                      onChange={e => setForm(f => ({ ...f, servicesRequested: e.target.value }))}
-                      className="text-sm resize-none h-16"
-                      placeholder="Services..."
-                      data-testid="input-appt-services"
-                    />
-                  </div>
-                  {customerPianos.length > 0 && (
-                    <div className="space-y-1">
-                      <Label className="text-xs">Piano</Label>
-                      <Select
-                        value={form.pianoId ? String(form.pianoId) : "none"}
-                        onValueChange={v => setForm(f => ({ ...f, pianoId: v === "none" ? null : parseInt(v) }))}
-                      >
-                        <SelectTrigger className="h-8 text-sm" data-testid="select-appt-piano">
-                          <SelectValue placeholder="No specific piano" />
+                  {editGroups ? (
+                    <div className="space-y-2">
+                      <Label className="text-xs">Pianos &amp; Services</Label>
+                      {editGroups.map((g, gi) => {
+                        const gPiano = g.pianoId ? allPianos?.find(p => p.id === g.pianoId) : null;
+                        const gLabel = g.pianoId == null
+                          ? "Misc / Standalone Services"
+                          : gPiano
+                            ? [gPiano.year, gPiano.make, gPiano.model].filter(Boolean).join(" ") || `Piano #${g.pianoId}`
+                            : `Piano #${g.pianoId}`;
+                        return (
+                          <div key={`${g.pianoId ?? "misc"}-${gi}`} className="rounded-lg border p-2.5 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm font-semibold flex items-center gap-1.5">
+                                <Music className="h-3.5 w-3.5 text-muted-foreground" />
+                                {gLabel}
+                              </span>
+                              {editGroups.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setEditGroups(gs => gs!.filter((_, i) => i !== gi))}
+                                  className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                  title="Remove piano from appointment"
+                                  data-testid={`button-remove-edit-group-${gi}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
+                            <ServiceLineEditor
+                              lines={g.lines}
+                              onChange={lines => setEditGroups(gs => gs!.map((gg, i) => i === gi ? { ...gg, lines } : gg))}
+                            />
+                            {g.lines.length > 1 && (
+                              <div className="flex justify-end text-xs text-muted-foreground">
+                                Subtotal&nbsp;<span className="font-semibold text-foreground tabular-nums">{formatMoney(linesTotal(g.lines))}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <Select value="" onValueChange={addEditGroup}>
+                        <SelectTrigger className="h-8 text-sm" data-testid="select-add-piano-to-appt">
+                          <SelectValue placeholder="+ Add a piano to this appointment…" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="none">No specific piano</SelectItem>
-                          {customerPianos.map(p => (
-                            <SelectItem key={p.id} value={String(p.id)}>
-                              {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                            </SelectItem>
-                          ))}
+                          {customerPianos
+                            .filter(p => !editGroups.some(g => g.pianoId === p.id))
+                            .map(p => (
+                              <SelectItem key={p.id} value={String(p.id)}>
+                                {[p.year, p.make, p.model].filter(Boolean).join(" ") || `Piano #${p.id}`}
+                              </SelectItem>
+                            ))}
+                          {!editGroups.some(g => g.pianoId == null) && (
+                            <SelectItem value="misc">Misc / standalone services</SelectItem>
+                          )}
                         </SelectContent>
                       </Select>
+                      <div className="flex justify-end text-sm">
+                        <span className="text-muted-foreground">Total&nbsp;</span>
+                        <span className="font-semibold tabular-nums">{formatMoney(groupsTotal(editGroups))}</span>
+                      </div>
                     </div>
+                  ) : (
+                    <>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Services Requested</Label>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-xs text-primary"
+                            onClick={itemizeLegacy}
+                            data-testid="button-itemize-services"
+                          >
+                            Itemize services
+                          </Button>
+                        </div>
+                        <Textarea
+                          value={form.servicesRequested}
+                          onChange={e => setForm(f => ({ ...f, servicesRequested: e.target.value }))}
+                          className="text-sm resize-none h-16"
+                          placeholder="Services..."
+                          data-testid="input-appt-services"
+                        />
+                      </div>
+                      {customerPianos.length > 0 && (
+                        <div className="space-y-1">
+                          <Label className="text-xs">Piano</Label>
+                          <Select
+                            value={form.pianoId ? String(form.pianoId) : "none"}
+                            onValueChange={v => setForm(f => ({ ...f, pianoId: v === "none" ? null : parseInt(v) }))}
+                          >
+                            <SelectTrigger className="h-8 text-sm" data-testid="select-appt-piano">
+                              <SelectValue placeholder="No specific piano" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">No specific piano</SelectItem>
+                              {customerPianos.map(p => (
+                                <SelectItem key={p.id} value={String(p.id)}>
+                                  {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2 pt-1">
+                        <Checkbox
+                          id="edit-is-tuning"
+                          checked={form.isTuning}
+                          onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
+                          data-testid="checkbox-edit-is-tuning"
+                        />
+                        <label htmlFor="edit-is-tuning" className="text-sm cursor-pointer select-none">
+                          This appointment includes a tuning
+                        </label>
+                      </div>
+                    </>
                   )}
-                  <div className="flex items-center gap-2 pt-1">
-                    <Checkbox
-                      id="edit-is-tuning"
-                      checked={form.isTuning}
-                      onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
-                      data-testid="checkbox-edit-is-tuning"
-                    />
-                    <label htmlFor="edit-is-tuning" className="text-sm cursor-pointer select-none">
-                      This appointment includes a tuning
-                    </label>
-                  </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Notes</Label>
                     <Textarea
@@ -526,8 +683,58 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                     </div>
                   )}
 
-                  {/* PIANOS & SERVICES */}
-                  {(pianoLabel || serviceLines.length > 0 || displayed.priceEstimate) && (
+                  {/* PIANOS & SERVICES (itemized, new-style) */}
+                  {viewGroups && viewGroups.length > 0 ? (
+                    <div className="px-5 py-4">
+                      <p className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground mb-2">Pianos &amp; Services</p>
+                      <div className="space-y-3">
+                        {viewGroups.map((g, gi) => {
+                          const gPiano = g.pianoId ? allPianos?.find(p => p.id === g.pianoId) : null;
+                          const gLabel = g.pianoId == null
+                            ? "Misc / Standalone Services"
+                            : gPiano
+                              ? [gPiano.year, gPiano.make, gPiano.model].filter(Boolean).join(" ") || `Piano #${g.pianoId}`
+                              : `Piano #${g.pianoId}`;
+                          return (
+                            <div key={`${g.pianoId ?? "misc"}-${gi}`}>
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <Music className="h-4 w-4 text-muted-foreground shrink-0" />
+                                <span className="text-sm font-semibold">{gLabel}</span>
+                                {gPiano && (
+                                  <Link href={`/pianos/${gPiano.id}`} onClick={() => onOpenChange(false)}>
+                                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground ml-1 cursor-pointer" data-testid={`link-appt-piano-${gPiano.id}`} />
+                                  </Link>
+                                )}
+                              </div>
+                              <div className="ml-6 space-y-1.5">
+                                {g.lines.map(line => (
+                                  <div key={line.lineId} className="flex items-start justify-between gap-2 text-sm">
+                                    <div className="min-w-0">
+                                      <span className="text-foreground">{line.name}</span>
+                                      {line.isTuning && (
+                                        <Badge className="ml-1.5 text-[9px] px-1 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 border-amber-200 dark:border-amber-700 align-middle">
+                                          Tuning
+                                        </Badge>
+                                      )}
+                                      <p className="text-xs text-muted-foreground">
+                                        {formatLineSubline(line)}
+                                        {line.durationMinutes > 0 ? ` · ${formatLineDuration(line.durationMinutes)}` : ""}
+                                      </p>
+                                    </div>
+                                    <span className="font-medium tabular-nums shrink-0">{formatMoney(lineTotal(line))}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        <div className="flex items-center justify-between border-t pt-2 text-sm">
+                          <span className="text-muted-foreground">Total</span>
+                          <span className="font-semibold tabular-nums">{formatMoney(groupsTotal(viewGroups))}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (pianoLabel || serviceLines.length > 0 || displayed.priceEstimate) && (
                     <div className="px-5 py-4">
                       <p className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground mb-2">Pianos &amp; Services</p>
                       {pianoLabel && (

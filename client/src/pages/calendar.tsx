@@ -60,10 +60,84 @@ import { CompleteAppointmentDialog } from "@/components/complete-appointment-dia
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServicePicker } from "@/components/service-picker";
 import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDraggable,
+  useDroppable,
+  rectIntersection,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { MoveAppointmentDialog, type MoveRequestPrev } from "@/components/move-appointment-dialog";
+import {
   TimeStepperWidget, DurationStepperWidget, MiniCalendar,
   parseMDYY, formatMDYY, formatTimeMinutes, formatDurationMinutes,
   parseTimeString, parseDurationString, DatePickerPopover,
 } from "@/components/time-stepper";
+
+/** Wraps an appointment pill so it can be dragged to another day. */
+function DraggableAppt({
+  id,
+  className,
+  style,
+  children,
+}: {
+  id: number;
+  className?: string;
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      className={className}
+      style={{
+        ...style,
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        opacity: isDragging ? 0.6 : undefined,
+        zIndex: isDragging ? 60 : (style?.zIndex as number | undefined),
+        touchAction: "none",
+        cursor: isDragging ? "grabbing" : undefined,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** A calendar day cell/column that accepts dropped appointments. */
+function DroppableDay({
+  dayKey,
+  className,
+  style,
+  onClick,
+  testId,
+  children,
+}: {
+  dayKey: string; // M/D/YY
+  className?: string;
+  style?: React.CSSProperties;
+  onClick?: () => void;
+  testId?: string;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `day:${dayKey}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`${className ?? ""} ${isOver ? "ring-2 ring-inset ring-primary/50 bg-primary/5" : ""}`}
+      style={style}
+      onClick={onClick}
+      data-testid={testId}
+    >
+      {children}
+    </div>
+  );
+}
 
 function isSameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() &&
@@ -423,6 +497,43 @@ export default function CalendarPage() {
 
   function getDateKey(date: Date): string {
     return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  }
+
+  // ── Drag-and-drop: move an appointment to another day ──────────────────────
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+
+  const [calMoveReq, setCalMoveReq] = useState<{
+    appt: Appointment;
+    targetDate: string; // M/D/YY
+    prevAppt: Appointment | null;
+  } | null>(null);
+
+  function handleCalendarDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const overStr = String(over.id);
+    if (!overStr.startsWith("day:")) return;
+    const targetDate = overStr.slice(4);
+    const appt = appointments?.find(a => a.id === Number(active.id));
+    if (!appt) return;
+    const parsed = parseMDYY(targetDate);
+    const key = parsed ? getDateKey(parsed) : "";
+    // Suggest a slot after the last appointment already on the target day
+    const dayList = (appointmentsByDate.get(key) ?? [])
+      .filter(a => a.id !== appt.id && a.status !== "cancelled")
+      .slice()
+      .sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
+    const prevAppt = dayList.length > 0 ? dayList[dayList.length - 1] : null;
+    setCalMoveReq({ appt, targetDate, prevAppt });
+  }
+
+  function customerAddressOf(customerId: number): string | null {
+    const c = customerMap.get(customerId);
+    if (!c) return null;
+    const parts = [c.address, c.city, c.state, c.zipCode].filter(Boolean) as string[];
+    return parts.length > 0 ? parts.join(", ") : null;
   }
 
   /** Add a date key to the work-block exceptions (hides the block for that day). */
@@ -1015,6 +1126,7 @@ export default function CalendarPage() {
   }
 
   return (
+    <DndContext sensors={dndSensors} collisionDetection={rectIntersection} onDragEnd={handleCalendarDragEnd}>
     <div className="p-4 sm:p-6 space-y-4 max-w-6xl mx-auto">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-calendar-title">
@@ -1130,12 +1242,13 @@ export default function CalendarPage() {
                 const isToday = isSameDay(d, today);
                 const isTripDay = !!getTrip(d, trips);
                 return (
-                  <div
+                  <DroppableDay
                     key={key}
+                    dayKey={formatMDYY(d)}
                     className={`relative border-r last:border-r-0 border-border/30 ${isToday ? "bg-primary/5" : isTripDay ? "bg-green-50 dark:bg-green-950/20" : ""}`}
                     style={{ height: (GRID_END_HOUR - GRID_START_HOUR) * HOUR_HEIGHT }}
                     onClick={() => handleDateClick(d)}
-                    data-testid={`week-cell-${key}`}
+                    testId={`week-cell-${key}`}
                   >
                     {/* Hour grid lines */}
                     {Array.from({ length: GRID_END_HOUR - GRID_START_HOUR }, (_, i) => (
@@ -1185,15 +1298,20 @@ export default function CalendarPage() {
                       const cityLastName = [customer?.city, customer?.lastName].filter(Boolean).join(" · ");
                       const fullName = customer ? `${customer.firstName} ${customer.lastName}` : "";
                       return (
-                        <Popover key={appt.id} open={isOpen} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
+                        <DraggableAppt
+                          key={appt.id}
+                          id={appt.id}
+                          className="absolute left-0.5 right-0.5 z-10"
+                          style={{ top, height: Math.max(height, 24) }}
+                        >
+                        <Popover open={isOpen} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
                           <PopoverTrigger asChild>
                             <button
-                              className={`absolute left-0.5 right-0.5 rounded-md px-2 py-1 text-left overflow-hidden cursor-pointer transition-colors z-10 ${
+                              className={`block w-full h-full rounded-md px-2 py-1 text-left overflow-hidden cursor-pointer transition-colors ${
                                 isCompleted
                                   ? "bg-muted text-muted-foreground border border-border/50"
                                   : "bg-sky-500 hover:bg-sky-600 text-white"
                               }`}
-                              style={{ top, height: Math.max(height, 24) }}
                               onClick={(e) => { e.stopPropagation(); setSelectedAppt(appt); }}
                               data-testid={`week-appt-${appt.id}`}
                             >
@@ -1231,9 +1349,10 @@ export default function CalendarPage() {
                             </PopoverPrimitive.Content>
                           </PopoverPrimitive.Portal>
                         </Popover>
+                        </DraggableAppt>
                       );
                     })}
-                  </div>
+                  </DroppableDay>
                 );
               })}
             </div>
@@ -1485,8 +1604,9 @@ export default function CalendarPage() {
                 const hasBusyEvent = dayEventItems.some(({ ev }) => ev.eventType === "personal");
 
                 return (
-                  <div
+                  <DroppableDay
                     key={key}
+                    dayKey={formatMDYY(date)}
                     className={`min-h-[100px] p-1 border border-border/50 rounded-md ${
                       isToday
                         ? "bg-primary/10"
@@ -1496,7 +1616,7 @@ export default function CalendarPage() {
                         ? "bg-green-50 dark:bg-green-950/20"
                         : ""
                     }`}
-                    data-testid={`calendar-cell-${key}`}
+                    testId={`calendar-cell-${key}`}
                   >
                     <div className="flex items-center justify-between gap-1 mb-1">
                       <div className="flex items-center gap-1">
@@ -1557,7 +1677,8 @@ export default function CalendarPage() {
                         const pillLabel = formatPillLabel(appt.time, customer, pianoShort);
                         const isOpen = selectedAppt?.id === appt.id;
                         return (
-                          <Popover key={appt.id} open={isOpen} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
+                          <DraggableAppt key={appt.id} id={appt.id}>
+                          <Popover open={isOpen} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
                             <PopoverTrigger asChild>
                               <button
                                 className={`text-[10px] leading-tight w-full text-left px-1.5 py-0.5 rounded-[3px] truncate cursor-pointer transition-colors ${
@@ -1583,6 +1704,7 @@ export default function CalendarPage() {
                               </PopoverPrimitive.Content>
                             </PopoverPrimitive.Portal>
                           </Popover>
+                          </DraggableAppt>
                         );
                       })}
                       {dayNotes.map((note) => (
@@ -1611,7 +1733,7 @@ export default function CalendarPage() {
                       ))}
                       {dayEventItems.map((item) => renderGridEventItem(item, key))}
                     </div>
-                  </div>
+                  </DroppableDay>
                 );
               })}
             </div>
@@ -2092,6 +2214,48 @@ export default function CalendarPage() {
         onOpenChange={setCreateApptDialogOpen}
         initialDate={createApptInitialDate}
       />
+
+      {/* ── Drag-and-drop reschedule dialog ── */}
+      {calMoveReq && (() => {
+        const cust = customerMap.get(calMoveReq.appt.customerId);
+        const clientName = cust ? `${cust.firstName} ${cust.lastName}` : "Appointment";
+        const targetDay = parseMDYY(calMoveReq.targetDate);
+        const targetLabel = targetDay
+          ? targetDay.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
+          : calMoveReq.targetDate;
+        let prev: MoveRequestPrev | null = null;
+        if (calMoveReq.prevAppt) {
+          const prevCust = customerMap.get(calMoveReq.prevAppt.customerId);
+          const prevEnd = parseTimeString(calMoveReq.prevAppt.time ?? "9:00 AM")
+            + parseDurationString(calMoveReq.prevAppt.duration ?? "1 hr 30 min");
+          prev = {
+            endMinutes: prevEnd,
+            label: `${prevCust ? `${prevCust.firstName} ${prevCust.lastName}` : "previous appointment"} (ends ${formatTimeMinutes(prevEnd)})`,
+            address: customerAddressOf(calMoveReq.prevAppt.customerId),
+          };
+        }
+        return (
+          <MoveAppointmentDialog
+            open={true}
+            onOpenChange={(o) => { if (!o) setCalMoveReq(null); }}
+            clientName={clientName}
+            targetDateLabel={targetLabel}
+            isDayChange={calMoveReq.appt.date !== calMoveReq.targetDate}
+            prev={prev}
+            toAddress={customerAddressOf(calMoveReq.appt.customerId)}
+            fallbackMinutes={parseTimeString(calMoveReq.appt.time ?? "9:00 AM")}
+            onConfirm={(minutes) => {
+              updateAppointmentMutation.mutate({
+                id: calMoveReq.appt.id,
+                data: { date: calMoveReq.targetDate, time: formatTimeMinutes(minutes) },
+              });
+              setCalMoveReq(null);
+            }}
+            isPending={updateAppointmentMutation.isPending}
+          />
+        );
+      })()}
     </div>
+    </DndContext>
   );
 }

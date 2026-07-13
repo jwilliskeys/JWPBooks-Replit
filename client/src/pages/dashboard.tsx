@@ -813,6 +813,37 @@ function MonthlyIncomeChart({
 
 const TRIP_MAX_SLOTS = 20;
 
+/**
+ * Human countdown to a trip's start date: "4 months, 10 days", "12 days",
+ * "Starts tomorrow", "Starts today". Returns null once the trip has begun.
+ */
+function tripCountdown(start: Date): string | null {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const s = new Date(start);
+  s.setHours(0, 0, 0, 0);
+  if (s < today) return null; // already underway
+  const totalDays = Math.round((s.getTime() - today.getTime()) / 86400000);
+  if (totalDays === 0) return "Starts today";
+  if (totalDays === 1) return "Starts tomorrow";
+  // Count whole calendar months, then leftover days
+  let months = 0;
+  const cursor = new Date(today);
+  for (;;) {
+    const next = new Date(cursor);
+    next.setMonth(next.getMonth() + 1);
+    if (next <= s) {
+      months++;
+      cursor.setMonth(cursor.getMonth() + 1);
+    } else break;
+  }
+  const days = Math.round((s.getTime() - cursor.getTime()) / 86400000);
+  const parts: string[] = [];
+  if (months > 0) parts.push(`${months} month${months !== 1 ? "s" : ""}`);
+  if (days > 0) parts.push(`${days} day${days !== 1 ? "s" : ""}`);
+  return `${parts.join(", ")} away`;
+}
+
 function UpcomingTripWidget() {
   const { data: trips, isLoading: tripsLoading } = useQuery<Trip[]>({
     queryKey: ["/api/trips"],
@@ -898,6 +929,24 @@ function UpcomingTripWidget() {
                 <Calendar className="h-3 w-3" />
                 {formatTripDates(upcomingTrip)}
               </p>
+              {(() => {
+                const start = parseDate(upcomingTrip.startDate);
+                if (!start) return null;
+                const label = tripCountdown(start);
+                return (
+                  <span
+                    className={`inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      label
+                        ? "bg-primary/10 text-primary"
+                        : "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
+                    }`}
+                    data-testid="trip-countdown"
+                  >
+                    <Clock className="h-3 w-3" />
+                    {label ?? "Trip in progress"}
+                  </span>
+                );
+              })()}
             </div>
 
             {/* Slots progress */}
@@ -1544,14 +1593,9 @@ export default function Dashboard() {
     <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
-            Dashboard
-          </h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Your piano service business at a glance
-          </p>
-        </div>
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight">
+          JWP Books - Dashboard
+        </h1>
         <Link href="/customers/new">
           <Button data-testid="button-add-customer-dashboard">
             Add Client

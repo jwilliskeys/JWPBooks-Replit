@@ -77,8 +77,10 @@ import {
   KeyboardSensor,
   useSensor,
   useSensors,
+  useDroppable,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import { MoveAppointmentDialog, type MoveRequestPrev } from "@/components/move-appointment-dialog";
 import {
   arrayMove,
   SortableContext,
@@ -474,14 +476,13 @@ interface DayItinerarySectionProps {
   onCompleteAppointment: (appt: TripAppointment) => void;
   onDeleteAppointment: (id: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
-  onReorderAppointments: (updates: { id: number; time: string }[]) => void;
   onMileageReported?: (dateStr: string, miles: number | null) => void;
 }
 
 function DayItinerarySection({
   dateStr, dayDate, dayAppts, customerMap, pianoMap,
   onOpenAddDialog, onOpenEditDialog, onCompleteAppointment, onDeleteAppointment,
-  onConfirmAppointment, onReorderAppointments, onMileageReported,
+  onConfirmAppointment, onMileageReported,
 }: DayItinerarySectionProps) {
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
@@ -530,25 +531,9 @@ function DayItinerarySection({
     ? customerMap.get(dayAppts[0].customerId)?.city || dayAppts[0].serviceArea || ""
     : "";
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldOrder = [...dayAppts];
-    const oldIdx = oldOrder.findIndex(a => a.id === active.id);
-    const newIdx = oldOrder.findIndex(a => a.id === over.id);
-    if (oldIdx < 0 || newIdx < 0) return;
-    const newOrder = arrayMove(oldOrder, oldIdx, newIdx);
-    const times = oldOrder.map(a => a.time);
-    const updates = newOrder
-      .map((appt, i) => ({ id: appt.id, time: times[i] }))
-      .filter((u, i) => u.time !== oldOrder[i].time);
-    if (updates.length > 0) onReorderAppointments(updates);
-  }
+  // Whole day column is a drop target so appointments can be dragged onto
+  // other days (including empty ones). The parent TripPanel owns the DndContext.
+  const { setNodeRef: setDayDropRef, isOver: isDayOver } = useDroppable({ id: `day:${dateStr}` });
 
   return (
     <div className="flex flex-col h-full" data-testid={`itinerary-day-${dateStr}`}>
@@ -576,9 +561,14 @@ function DayItinerarySection({
       </div>
 
       {/* Appointments */}
-      <div className="py-1.5 flex-1 min-h-[100px]">
+      <div
+        ref={setDayDropRef}
+        className={`py-1.5 flex-1 min-h-[100px] rounded-b-lg transition-colors ${isDayOver ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
+      >
         {dayAppts.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-4 px-2">No appointments yet</p>
+          <p className="text-xs text-muted-foreground text-center py-4 px-2">
+            {isDayOver ? "Drop appointment here" : "No appointments yet"}
+          </p>
         ) : (
           <>
             {/* Leave-by row */}
@@ -591,8 +581,7 @@ function DayItinerarySection({
                 )}
               </div>
             )}
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-              <SortableContext items={dayAppts.map(a => a.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={dayAppts.map(a => a.id)} strategy={verticalListSortingStrategy}>
                 {dayAppts.map((appt, i) => (
                   <SortableApptRow
                     key={appt.id}
@@ -613,8 +602,7 @@ function DayItinerarySection({
                     }}
                   />
                 ))}
-              </SortableContext>
-            </DndContext>
+            </SortableContext>
             {/* Return home row */}
             {returnDriveMinutes != null && returnDriveMinutes >= 0 && (
               <div className="flex items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground">
@@ -780,7 +768,7 @@ interface TripPanelProps {
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) => void;
   onDeleteTrip: (id: number) => void;
   deleteIsPending: boolean;
-  onReorderAppointments: (updates: { id: number; time: string }[]) => void;
+  onRequestMove: (appt: TripAppointment, targetDate: string, prevAppt: TripAppointment | null, tripId: number) => void;
 }
 
 function TripPanel({
@@ -796,11 +784,16 @@ function TripPanel({
   onConfirmAppointment,
   onDeleteTrip,
   deleteIsPending,
-  onReorderAppointments,
+  onRequestMove,
 }: TripPanelProps) {
   const { data: tripAppointments } = useQuery<TripAppointment[]>({
     queryKey: ["/api/trips", trip.id, "appointments"],
   });
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   const dates = useMemo(() => getDatesInRange(trip.startDate, trip.endDate), [trip.startDate, trip.endDate]);
 
@@ -835,6 +828,53 @@ function TripPanel({
       const cust = customerMap.get(a.customerId);
       return { time: a.time, duration: a.duration || "2 hours", city: cust?.city || a.serviceArea || "" };
     });
+  }
+
+  function findApptById(id: number): TripAppointment | undefined {
+    return tripAppointments?.find(a => a.id === id);
+  }
+
+  // Drag-and-drop across the whole trip: dropping an appointment after another
+  // one (same day or different day) asks the page to open the reschedule
+  // dialog with a suggested time.
+  function handleTripDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const activeId = Number(active.id);
+    const sourceAppt = findApptById(activeId);
+    if (!sourceAppt) return;
+
+    let targetDate: string;
+    let prevAppt: TripAppointment | null = null;
+    const overIdStr = String(over.id);
+
+    if (overIdStr.startsWith("day:")) {
+      // Dropped on a day column (possibly empty) → goes last that day
+      targetDate = overIdStr.slice(4);
+      const list = (appointmentsByDate.get(targetDate) ?? []).filter(a => a.id !== activeId);
+      prevAppt = list.length > 0 ? list[list.length - 1] : null;
+    } else {
+      const overId = Number(over.id);
+      if (overId === activeId) return;
+      const overAppt = findApptById(overId);
+      if (!overAppt) return;
+      targetDate = overAppt.date;
+      const orig = appointmentsByDate.get(targetDate) ?? [];
+      if (sourceAppt.date === targetDate) {
+        const oldIdx = orig.findIndex(a => a.id === activeId);
+        const newIdx = orig.findIndex(a => a.id === overId);
+        if (oldIdx < 0 || newIdx < 0 || oldIdx === newIdx) return;
+        const result = arrayMove(orig, oldIdx, newIdx);
+        const pos = result.findIndex(a => a.id === activeId);
+        prevAppt = pos > 0 ? result[pos - 1] : null;
+      } else {
+        // Cross-day: dragged item takes the hovered item's slot
+        const list = orig.filter(a => a.id !== activeId);
+        const overIdx = list.findIndex(a => a.id === overId);
+        prevAppt = overIdx > 0 ? list[overIdx - 1] : null;
+      }
+    }
+    onRequestMove(sourceAppt, targetDate, prevAppt, trip.id);
   }
 
   function handleOpenDialog(dateStr: string) {
@@ -1153,6 +1193,7 @@ function TripPanel({
             </div>
 
             {/* ── Day columns (horizontal layout) ─────────────────────────── */}
+            <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleTripDragEnd}>
             <div className="overflow-x-auto pb-3 pt-3 px-3">
               <div className="flex gap-3 items-stretch" style={{ minWidth: "fit-content" }}>
                 {dates.map((dateStr) => {
@@ -1183,7 +1224,6 @@ function TripPanel({
                         onCompleteAppointment={(appt) => onCompleteAppointment(appt, trip.id)}
                         onDeleteAppointment={(id) => onDeleteAppointment(id, trip.id)}
                         onConfirmAppointment={(appt, cust, piano) => onConfirmAppointment(appt, cust, piano, trip.id)}
-                        onReorderAppointments={onReorderAppointments}
                         onMileageReported={handleMileageReported}
                       />
                     </div>
@@ -1191,6 +1231,7 @@ function TripPanel({
                 })}
               </div>
             </div>
+            </DndContext>
 
             {/* ── Flight Info Section ─────────────────────────────────────── */}
             <div className="border-t">
@@ -2028,14 +2069,23 @@ export default function SlcSchedule() {
     },
   });
 
-  const reorderApptsMutation = useMutation({
-    mutationFn: async (updates: { id: number; time: string }[]) => {
-      await Promise.all(updates.map(u => apiRequest("PATCH", `/api/trip-appointments/${u.id}`, { time: u.time })));
+  // Drag-and-drop move: dialog state + PATCH (time and, for cross-day drops, date)
+  const [moveReq, setMoveReq] = useState<{
+    appt: TripAppointment;
+    targetDate: string;
+    prevAppt: TripAppointment | null;
+    tripId: number;
+  } | null>(null);
+
+  const moveApptMutation = useMutation({
+    mutationFn: ({ id, date, time }: { id: number; date: string; time: string; tripId: number }) =>
+      apiRequest("PATCH", `/api/trip-appointments/${id}`, { date, time }),
+    onSuccess: (_res, v) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/trips", v.tripId, "appointments"] });
+      toast({ title: "Appointment moved" });
+      setMoveReq(null);
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
-    },
-    onError: () => toast({ title: "Failed to reorder", variant: "destructive" }),
+    onError: () => toast({ title: "Failed to move appointment", variant: "destructive" }),
   });
 
   const editAppointmentMutation = useMutation({
@@ -2417,11 +2467,53 @@ export default function SlcSchedule() {
               onConfirmAppointment={handleConfirmAppointment}
               onDeleteTrip={(id) => deleteTripMutation.mutate(id)}
               deleteIsPending={deleteTripMutation.isPending}
-              onReorderAppointments={(updates) => reorderApptsMutation.mutate(updates)}
+              onRequestMove={(appt, targetDate, prevAppt, tripId) => setMoveReq({ appt, targetDate, prevAppt, tripId })}
             />
           ))}
         </div>
       )}
+
+      {/* ── Drag-and-drop reschedule dialog ─────────────────────────────────── */}
+      {moveReq && (() => {
+        const cust = customerMap.get(moveReq.appt.customerId);
+        const clientName = cust ? `${cust.firstName} ${cust.lastName}` : "Appointment";
+        const targetDay = parseDateStr(moveReq.targetDate);
+        const targetLabel = targetDay
+          ? targetDay.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
+          : moveReq.targetDate;
+        let prev: MoveRequestPrev | null = null;
+        if (moveReq.prevAppt) {
+          const prevCust = customerMap.get(moveReq.prevAppt.customerId);
+          const prevEnd = parseTimeToMinutes(moveReq.prevAppt.time || "8:00 AM")
+            + parseDurationToMinutes(moveReq.prevAppt.duration || "2 hours");
+          prev = {
+            endMinutes: prevEnd,
+            label: `${prevCust ? `${prevCust.firstName} ${prevCust.lastName}` : "previous appointment"} (ends ${formatTimeMinutes(prevEnd)})`,
+            address: prevCust ? buildCustomerAddress(prevCust) : null,
+          };
+        }
+        return (
+          <MoveAppointmentDialog
+            open={true}
+            onOpenChange={(o) => { if (!o) setMoveReq(null); }}
+            clientName={clientName}
+            targetDateLabel={targetLabel}
+            isDayChange={moveReq.appt.date !== moveReq.targetDate}
+            prev={prev}
+            toAddress={cust ? buildCustomerAddress(cust) : null}
+            fallbackMinutes={parseTimeToMinutes(moveReq.appt.time || "8:00 AM")}
+            onConfirm={(minutes) =>
+              moveApptMutation.mutate({
+                id: moveReq.appt.id,
+                date: moveReq.targetDate,
+                time: formatTimeMinutes(minutes),
+                tripId: moveReq.tripId,
+              })
+            }
+            isPending={moveApptMutation.isPending}
+          />
+        );
+      })()}
 
       {/* ── Create Trip Dialog ──────────────────────────────────────────────── */}
       <Dialog open={createTripDialogOpen} onOpenChange={(open) => {

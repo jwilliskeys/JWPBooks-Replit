@@ -107,6 +107,7 @@ export const appointments = pgTable("appointments", {
   notes: text("notes"),
   isTuning: boolean("is_tuning").default(false),
   status: text("status").default("scheduled"),
+  serviceItems: text("service_items"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

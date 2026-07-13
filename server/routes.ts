@@ -8,6 +8,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { parseDeltaFlightPdf } from "./parsePdf";
+import { researchCityLeads, researchConfigured } from "./research";
 
 const uploadDir = path.join(process.cwd(), "uploads", "pianos");
 if (!fs.existsSync(uploadDir)) {
@@ -1472,6 +1473,62 @@ export async function registerRoutes(
       res.json({ geocoded, failed, remaining: failed });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  // AI lead research: web-searches a city for piano-owning organizations and
+  // inserts them as leads. Registered before "/:id" so the path isn't swallowed.
+  // Requires ANTHROPIC_API_KEY in .env — returns 503 with instructions if unset.
+  app.post("/api/outreach-leads/research", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const city = typeof req.body?.city === "string" ? req.body.city.trim() : "";
+      if (!city || city.length > 60) return res.status(400).json({ message: "A city name is required" });
+      if (!researchConfigured()) {
+        return res.status(503).json({
+          message:
+            "AI research needs an Anthropic API key. Add ANTHROPIC_API_KEY=sk-ant-... to your .env file (get one at console.anthropic.com), restart the app, and try again.",
+        });
+      }
+
+      const found = await researchCityLeads(city);
+
+      // Dedupe against everything already on the list (same name = same org,
+      // regardless of which city it was filed under).
+      const existing = await storage.getOutreachLeads(userId);
+      const existingNames = new Set(existing.map((l) => l.name.trim().toLowerCase()));
+
+      const added: any[] = [];
+      let skipped = 0;
+      for (const lead of found) {
+        if (existingNames.has(lead.name.trim().toLowerCase())) {
+          skipped++;
+          continue;
+        }
+        const created = await storage.createOutreachLead(
+          {
+            leadType: lead.leadType,
+            name: lead.name,
+            city,
+            phone: lead.phone ?? "",
+            email: lead.email ?? "",
+            website: lead.website ?? "",
+            address: lead.address ?? "",
+            status: "Not contacted",
+            pianoCount: lead.pianoCount ?? "",
+            notes: lead.notes ?? "",
+            source: "claude",
+          } as any,
+          userId,
+        );
+        existingNames.add(lead.name.trim().toLowerCase());
+        added.push(created);
+      }
+
+      res.json({ added: added.length, skipped, leads: added });
+    } catch (error: any) {
+      console.error(`[research] failed:`, error?.message ?? error);
+      res.status(500).json({ message: error?.message ?? "Research failed" });
     }
   });
 

@@ -470,6 +470,380 @@ function SortableItemRow({
   );
 }
 
+// ── Self-Scheduler Panel ─────────────────────────────────────────────────────
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+type DayHours = { enabled: boolean; start: string; end: string };
+// Mirrors DEFAULT_AVAILABILITY in server/booking.ts
+const DEFAULT_WEEK: Record<string, DayHours> = {
+  "0": { enabled: true, start: "09:00", end: "16:30" },
+  "1": { enabled: true, start: "16:00", end: "19:00" },
+  "2": { enabled: true, start: "16:00", end: "19:00" },
+  "3": { enabled: true, start: "16:00", end: "19:00" },
+  "4": { enabled: true, start: "16:00", end: "19:00" },
+  "5": { enabled: true, start: "16:00", end: "19:00" },
+  "6": { enabled: true, start: "09:00", end: "16:30" },
+};
+
+function parseWeek(json: string | null | undefined): Record<string, DayHours> {
+  if (!json) return { ...DEFAULT_WEEK };
+  try {
+    const parsed = JSON.parse(json);
+    const out = { ...DEFAULT_WEEK };
+    for (const k of Object.keys(out)) {
+      const d = parsed?.[k];
+      if (d && typeof d.enabled === "boolean" && d.start && d.end) out[k] = { enabled: d.enabled, start: d.start, end: d.end };
+    }
+    return out;
+  } catch {
+    return { ...DEFAULT_WEEK };
+  }
+}
+
+function SelfSchedulerPanel() {
+  const { toast } = useToast();
+  const { data: schedulerData, isLoading: schedulerLoading } = useQuery<SchedulerSettings>({
+    queryKey: ["/api/scheduler-settings"],
+  });
+
+  const defaultForm = {
+    approvalMode: "manual" as string,
+    slotDurationMinutes: "90",
+    slotBufferMinutes: "0",
+    maxPerWeek: "2",
+    bookingHorizonWeeks: "12",
+    showServiceCost: false,
+    showServiceDuration: true,
+    completionRedirectUrl: "",
+    serviceAreaEnabled: false,
+    serviceAreaLat: "",
+    serviceAreaLng: "",
+    serviceAreaRadiusMiles: "40",
+    welcomeMessage: "",
+    reservationCompleteMessage: "",
+    outsideServiceAreaMessage: "",
+    privacyPolicyUrl: "",
+    termsOfServiceUrl: "",
+  };
+
+  const [form, setForm] = useState(defaultForm);
+  const [week, setWeek] = useState<Record<string, DayHours>>({ ...DEFAULT_WEEK });
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (schedulerData) {
+      setWeek(parseWeek(schedulerData.availabilityJson));
+      setForm({
+        approvalMode: schedulerData.approvalMode === "auto" ? "auto" : "manual",
+        slotDurationMinutes: String(schedulerData.slotDurationMinutes ?? 90),
+        slotBufferMinutes: String(schedulerData.slotBufferMinutes ?? 0),
+        maxPerWeek: String(schedulerData.maxPerWeek ?? 2),
+        bookingHorizonWeeks: String(schedulerData.bookingHorizonWeeks ?? 12),
+        showServiceCost: schedulerData.showServiceCost ?? false,
+        showServiceDuration: schedulerData.showServiceDuration ?? true,
+        completionRedirectUrl: schedulerData.completionRedirectUrl ?? "",
+        serviceAreaEnabled: schedulerData.serviceAreaEnabled ?? false,
+        serviceAreaLat: schedulerData.serviceAreaLat ?? "",
+        serviceAreaLng: schedulerData.serviceAreaLng ?? "",
+        serviceAreaRadiusMiles: schedulerData.serviceAreaRadiusMiles ?? "40",
+        welcomeMessage: schedulerData.welcomeMessage ?? "",
+        reservationCompleteMessage: schedulerData.reservationCompleteMessage ?? "",
+        outsideServiceAreaMessage: schedulerData.outsideServiceAreaMessage ?? "",
+        privacyPolicyUrl: schedulerData.privacyPolicyUrl ?? "",
+        termsOfServiceUrl: schedulerData.termsOfServiceUrl ?? "",
+      });
+    }
+  }, [schedulerData]);
+
+  const saveSchedulerMutation = useMutation({
+    mutationFn: (data: typeof form) =>
+      apiRequest("PUT", "/api/scheduler-settings", {
+        ...data,
+        availabilityJson: JSON.stringify(week),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/scheduler-settings"] });
+      toast({ title: "Self-Scheduler settings saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const bookingUrl = `${window.location.origin}/book`;
+  const embedCode = `<!-- JWP booking scheduler -->
+<iframe id="jwp-book" src="${bookingUrl}?embed=true" title="Book a piano appointment"
+style="width:100%;min-height:760px;border:0;border-radius:12px;" loading="lazy"></iframe>
+<script>
+window.addEventListener("message", function (e) {
+  if (e && e.data && e.data.type === "jwp-book-height") {
+    var f = document.getElementById("jwp-book");
+    if (f) f.style.height = Math.max(560, e.data.height + 24) + "px";
+  }
+});
+</script>
+<noscript><a href="${bookingUrl}">Book an appointment</a></noscript>`;
+  const fallbackLink = `<a href="${bookingUrl}" target="_blank" rel="noopener"
+style="display:inline-block;background:#1e293b;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:600;">
+Book an Appointment
+</a>`;
+
+  function handleCopy(text: string) {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
+  }
+
+  function toggle(key: keyof typeof form, val: boolean) {
+    setForm(f => ({ ...f, [key]: val }));
+  }
+  function set(key: keyof typeof form, val: string) {
+    setForm(f => ({ ...f, [key]: val }));
+  }
+
+  if (schedulerLoading) {
+    return <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold flex items-center gap-2">
+          <CalendarCheck className="h-5 w-5 text-primary" /> Self-Scheduler
+        </h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Configure the public booking page that clients use to request appointments.
+        </p>
+      </div>
+
+      {/* ── Booking Link ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-3">
+        <p className="text-sm font-semibold">Your Booking Link</p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-md truncate">{bookingUrl}</code>
+          <Button size="sm" variant="outline" className="gap-1.5 shrink-0" onClick={() => handleCopy(bookingUrl)}>
+            <Copy className="h-3.5 w-3.5" />{copied ? "Copied!" : "Copy"}
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5 shrink-0" asChild>
+            <a href={bookingUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" />Open</a>
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Embed Widget ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-3">
+        <p className="text-sm font-semibold">Embed on johnwillispiano.com</p>
+        <p className="text-xs text-muted-foreground">Paste this snippet into a Code/HTML block on your website. The form auto-sizes to its content, so there's no inner scrollbar on desktop or mobile.</p>
+        <div className="relative">
+          <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre max-h-56">{embedCode}</pre>
+          <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(embedCode)} data-testid="button-copy-embed">
+            <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">If your website builder doesn't allow iframes, use this button that opens the scheduler in a new tab instead:</p>
+        <div className="relative">
+          <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre">{fallbackLink}</pre>
+          <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(fallbackLink)} data-testid="button-copy-fallback-link">
+            <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Approval Mode ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">Auto-approve bookings</p>
+            <p className="text-xs text-muted-foreground">
+              On: a booking instantly becomes a confirmed appointment on your calendar and the slot is locked.
+              Off: it stays a pending request you confirm in one tap (from the dashboard or the email link).
+            </p>
+          </div>
+          <Switch
+            checked={form.approvalMode === "auto"}
+            onCheckedChange={v => setForm(f => ({ ...f, approvalMode: v ? "auto" : "manual" }))}
+            data-testid="switch-approval-mode"
+          />
+        </div>
+      </div>
+
+      {/* ── Availability ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        <div>
+          <p className="text-sm font-semibold">Weekly Availability</p>
+          <p className="text-xs text-muted-foreground">The hours clients can book, per day. Times already taken by appointments or held requests are removed automatically.</p>
+        </div>
+        <div className="space-y-2">
+          {WEEKDAY_NAMES.map((name, i) => {
+            const key = String(i);
+            const day = week[key];
+            return (
+              <div key={key} className="flex items-center gap-3 flex-wrap">
+                <Switch
+                  checked={day.enabled}
+                  onCheckedChange={v => setWeek(w => ({ ...w, [key]: { ...w[key], enabled: v } }))}
+                  data-testid={`switch-avail-${name.toLowerCase()}`}
+                />
+                <span className={`text-sm w-24 ${day.enabled ? "" : "text-muted-foreground line-through"}`}>{name}</span>
+                {day.enabled && (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="time"
+                      value={day.start}
+                      onChange={e => setWeek(w => ({ ...w, [key]: { ...w[key], start: e.target.value } }))}
+                      className="w-28 h-9"
+                      data-testid={`input-avail-start-${name.toLowerCase()}`}
+                    />
+                    <span className="text-xs text-muted-foreground">to</span>
+                    <Input
+                      type="time"
+                      value={day.end}
+                      onChange={e => setWeek(w => ({ ...w, [key]: { ...w[key], end: e.target.value } }))}
+                      className="w-28 h-9"
+                      data-testid={`input-avail-end-${name.toLowerCase()}`}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Appointment length (min)</Label>
+            <Input inputMode="numeric" value={form.slotDurationMinutes} onChange={e => set("slotDurationMinutes", e.target.value)} data-testid="input-slot-duration" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Buffer between (min)</Label>
+            <Input inputMode="numeric" value={form.slotBufferMinutes} onChange={e => set("slotBufferMinutes", e.target.value)} data-testid="input-slot-buffer" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Max bookings / week</Label>
+            <Input inputMode="numeric" value={form.maxPerWeek} onChange={e => set("maxPerWeek", e.target.value)} data-testid="input-max-per-week" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Book ahead (weeks)</Label>
+            <Input inputMode="numeric" value={form.bookingHorizonWeeks} onChange={e => set("bookingHorizonWeeks", e.target.value)} data-testid="input-horizon-weeks" />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">Slot times are generated from these: e.g. 9:00 AM–4:30 PM with 90-minute appointments offers 9:00, 10:30, 12:00, 1:30, and 3:00. Utah trip dates use their own all-day trip schedule.</p>
+      </div>
+
+      {/* ── Behavior ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        <p className="text-sm font-semibold">Behavior</p>
+
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Show service cost to clients</p>
+            <p className="text-xs text-muted-foreground">Display price estimates on the booking form</p>
+          </div>
+          <Switch checked={form.showServiceCost} onCheckedChange={v => toggle("showServiceCost", v)} />
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">Show service duration to clients</p>
+            <p className="text-xs text-muted-foreground">Display estimated appointment length</p>
+          </div>
+          <Switch checked={form.showServiceDuration} onCheckedChange={v => toggle("showServiceDuration", v)} />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium">Completion redirect URL</Label>
+          <Input
+            placeholder="https://johnwillispiano.com/thank-you (leave blank to use built-in confirmation)"
+            value={form.completionRedirectUrl}
+            onChange={e => set("completionRedirectUrl", e.target.value)}
+          />
+        </div>
+      </div>
+
+      {/* ── Service Area ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">Service Area Validation</p>
+            <p className="text-xs text-muted-foreground">Warn clients outside your travel radius</p>
+          </div>
+          <Switch checked={form.serviceAreaEnabled} onCheckedChange={v => toggle("serviceAreaEnabled", v)} />
+        </div>
+
+        {form.serviceAreaEnabled && (
+          <div className="space-y-3 pt-1 border-t">
+            <p className="text-xs text-muted-foreground">Set your home base coordinates and max travel radius. Use <a href="https://maps.google.com" target="_blank" rel="noopener noreferrer" className="underline">Google Maps</a> to find lat/lng (right-click a location → copy coordinates).</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Center Latitude</Label>
+                <Input placeholder="e.g. 42.3601" value={form.serviceAreaLat} onChange={e => set("serviceAreaLat", e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Center Longitude</Label>
+                <Input placeholder="e.g. -71.0589" value={form.serviceAreaLng} onChange={e => set("serviceAreaLng", e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Radius (miles)</Label>
+              <Input placeholder="40" value={form.serviceAreaRadiusMiles} onChange={e => set("serviceAreaRadiusMiles", e.target.value)} className="w-32" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Outside service area message</Label>
+              <Textarea
+                rows={3}
+                placeholder="Unfortunately your address appears to be outside our normal service area. Please contact us directly to discuss options."
+                value={form.outsideServiceAreaMessage}
+                onChange={e => set("outsideServiceAreaMessage", e.target.value)}
+                className="resize-none text-sm"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Page Content ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        <p className="text-sm font-semibold">Page Content</p>
+        <div className="space-y-1.5">
+          <Label className="text-sm">Welcome message</Label>
+          <Textarea
+            rows={3}
+            placeholder="e.g. Welcome! I'm John Willis, a piano technician serving Greater Boston. Fill out the form below and I'll be in touch within one business day."
+            value={form.welcomeMessage}
+            onChange={e => set("welcomeMessage", e.target.value)}
+            className="resize-none text-sm"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-sm">Reservation complete message</Label>
+          <Textarea
+            rows={3}
+            placeholder="e.g. Your request has been received! I'll review it and reach out shortly to confirm your appointment time."
+            value={form.reservationCompleteMessage}
+            onChange={e => set("reservationCompleteMessage", e.target.value)}
+            className="resize-none text-sm"
+          />
+        </div>
+      </div>
+
+      {/* ── Legal ── */}
+      <div className="rounded-xl border bg-card p-4 space-y-4">
+        <p className="text-sm font-semibold">Legal Notices</p>
+        <div className="space-y-1.5">
+          <Label className="text-sm">Privacy Policy URL</Label>
+          <Input placeholder="https://johnwillispiano.com/privacy" value={form.privacyPolicyUrl} onChange={e => set("privacyPolicyUrl", e.target.value)} />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-sm">Terms of Service URL</Label>
+          <Input placeholder="https://johnwillispiano.com/terms" value={form.termsOfServiceUrl} onChange={e => set("termsOfServiceUrl", e.target.value)} />
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-1">
+        <Button onClick={() => saveSchedulerMutation.mutate(form)} disabled={saveSchedulerMutation.isPending}>
+          {saveSchedulerMutation.isPending ? "Saving…" : "Save Self-Scheduler Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
@@ -893,384 +1267,17 @@ export default function SettingsPage() {
     );
   }
 
-  // ── Self-Scheduler Panel ─────────────────────────────────────────────────────
-  const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  type DayHours = { enabled: boolean; start: string; end: string };
-  // Mirrors DEFAULT_AVAILABILITY in server/booking.ts
-  const DEFAULT_WEEK: Record<string, DayHours> = {
-    "0": { enabled: true, start: "09:00", end: "16:30" },
-    "1": { enabled: true, start: "16:00", end: "19:00" },
-    "2": { enabled: true, start: "16:00", end: "19:00" },
-    "3": { enabled: true, start: "16:00", end: "19:00" },
-    "4": { enabled: true, start: "16:00", end: "19:00" },
-    "5": { enabled: true, start: "16:00", end: "19:00" },
-    "6": { enabled: true, start: "09:00", end: "16:30" },
-  };
 
-  function parseWeek(json: string | null | undefined): Record<string, DayHours> {
-    if (!json) return { ...DEFAULT_WEEK };
-    try {
-      const parsed = JSON.parse(json);
-      const out = { ...DEFAULT_WEEK };
-      for (const k of Object.keys(out)) {
-        const d = parsed?.[k];
-        if (d && typeof d.enabled === "boolean" && d.start && d.end) out[k] = { enabled: d.enabled, start: d.start, end: d.end };
-      }
-      return out;
-    } catch {
-      return { ...DEFAULT_WEEK };
-    }
-  }
-
-  function SelfSchedulerPanel() {
-    const { data: schedulerData, isLoading: schedulerLoading } = useQuery<SchedulerSettings>({
-      queryKey: ["/api/scheduler-settings"],
-    });
-
-    const defaultForm = {
-      approvalMode: "manual" as string,
-      slotDurationMinutes: "90",
-      slotBufferMinutes: "0",
-      maxPerWeek: "2",
-      bookingHorizonWeeks: "12",
-      showServiceCost: false,
-      showServiceDuration: true,
-      completionRedirectUrl: "",
-      serviceAreaEnabled: false,
-      serviceAreaLat: "",
-      serviceAreaLng: "",
-      serviceAreaRadiusMiles: "40",
-      welcomeMessage: "",
-      reservationCompleteMessage: "",
-      outsideServiceAreaMessage: "",
-      privacyPolicyUrl: "",
-      termsOfServiceUrl: "",
-    };
-
-    const [form, setForm] = useState(defaultForm);
-    const [week, setWeek] = useState<Record<string, DayHours>>({ ...DEFAULT_WEEK });
-    const [copied, setCopied] = useState(false);
-
-    useEffect(() => {
-      if (schedulerData) {
-        setWeek(parseWeek(schedulerData.availabilityJson));
-        setForm({
-          approvalMode: schedulerData.approvalMode === "auto" ? "auto" : "manual",
-          slotDurationMinutes: String(schedulerData.slotDurationMinutes ?? 90),
-          slotBufferMinutes: String(schedulerData.slotBufferMinutes ?? 0),
-          maxPerWeek: String(schedulerData.maxPerWeek ?? 2),
-          bookingHorizonWeeks: String(schedulerData.bookingHorizonWeeks ?? 12),
-          showServiceCost: schedulerData.showServiceCost ?? false,
-          showServiceDuration: schedulerData.showServiceDuration ?? true,
-          completionRedirectUrl: schedulerData.completionRedirectUrl ?? "",
-          serviceAreaEnabled: schedulerData.serviceAreaEnabled ?? false,
-          serviceAreaLat: schedulerData.serviceAreaLat ?? "",
-          serviceAreaLng: schedulerData.serviceAreaLng ?? "",
-          serviceAreaRadiusMiles: schedulerData.serviceAreaRadiusMiles ?? "40",
-          welcomeMessage: schedulerData.welcomeMessage ?? "",
-          reservationCompleteMessage: schedulerData.reservationCompleteMessage ?? "",
-          outsideServiceAreaMessage: schedulerData.outsideServiceAreaMessage ?? "",
-          privacyPolicyUrl: schedulerData.privacyPolicyUrl ?? "",
-          termsOfServiceUrl: schedulerData.termsOfServiceUrl ?? "",
-        });
-      }
-    }, [schedulerData]);
-
-    const saveSchedulerMutation = useMutation({
-      mutationFn: (data: typeof form) =>
-        apiRequest("PUT", "/api/scheduler-settings", {
-          ...data,
-          availabilityJson: JSON.stringify(week),
-        }),
-      onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: ["/api/scheduler-settings"] });
-        toast({ title: "Self-Scheduler settings saved" });
-      },
-      onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-    });
-
-    const bookingUrl = `${window.location.origin}/book`;
-    const embedCode = `<!-- JWP booking scheduler -->
-<iframe id="jwp-book" src="${bookingUrl}?embed=true" title="Book a piano appointment"
-  style="width:100%;min-height:760px;border:0;border-radius:12px;" loading="lazy"></iframe>
-<script>
-  window.addEventListener("message", function (e) {
-    if (e && e.data && e.data.type === "jwp-book-height") {
-      var f = document.getElementById("jwp-book");
-      if (f) f.style.height = Math.max(560, e.data.height + 24) + "px";
-    }
-  });
-</script>
-<noscript><a href="${bookingUrl}">Book an appointment</a></noscript>`;
-    const fallbackLink = `<a href="${bookingUrl}" target="_blank" rel="noopener"
-  style="display:inline-block;background:#1e293b;color:#fff;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:600;">
-  Book an Appointment
-</a>`;
-
-    function handleCopy(text: string) {
-      navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    }
-
-    function toggle(key: keyof typeof form, val: boolean) {
-      setForm(f => ({ ...f, [key]: val }));
-    }
-    function set(key: keyof typeof form, val: string) {
-      setForm(f => ({ ...f, [key]: val }));
-    }
-
-    if (schedulerLoading) {
-      return <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}</div>;
-    }
-
-    return (
-      <div className="space-y-6">
-        <div>
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <CalendarCheck className="h-5 w-5 text-primary" /> Self-Scheduler
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Configure the public booking page that clients use to request appointments.
-          </p>
-        </div>
-
-        {/* ── Booking Link ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-3">
-          <p className="text-sm font-semibold">Your Booking Link</p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-md truncate">{bookingUrl}</code>
-            <Button size="sm" variant="outline" className="gap-1.5 shrink-0" onClick={() => handleCopy(bookingUrl)}>
-              <Copy className="h-3.5 w-3.5" />{copied ? "Copied!" : "Copy"}
-            </Button>
-            <Button size="sm" variant="outline" className="gap-1.5 shrink-0" asChild>
-              <a href={bookingUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="h-3.5 w-3.5" />Open</a>
-            </Button>
-          </div>
-        </div>
-
-        {/* ── Embed Widget ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-3">
-          <p className="text-sm font-semibold">Embed on johnwillispiano.com</p>
-          <p className="text-xs text-muted-foreground">Paste this snippet into a Code/HTML block on your website. The form auto-sizes to its content, so there's no inner scrollbar on desktop or mobile.</p>
-          <div className="relative">
-            <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre max-h-56">{embedCode}</pre>
-            <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(embedCode)} data-testid="button-copy-embed">
-              <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">If your website builder doesn't allow iframes, use this button that opens the scheduler in a new tab instead:</p>
-          <div className="relative">
-            <pre className="text-xs bg-muted px-3 py-3 rounded-md overflow-x-auto whitespace-pre">{fallbackLink}</pre>
-            <Button size="sm" variant="outline" className="absolute top-2 right-2 gap-1.5 text-xs" onClick={() => handleCopy(fallbackLink)} data-testid="button-copy-fallback-link">
-              <Copy className="h-3 w-3" />{copied ? "Copied!" : "Copy"}
-            </Button>
-          </div>
-        </div>
-
-        {/* ── Approval Mode ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">Auto-approve bookings</p>
-              <p className="text-xs text-muted-foreground">
-                On: a booking instantly becomes a confirmed appointment on your calendar and the slot is locked.
-                Off: it stays a pending request you confirm in one tap (from the dashboard or the email link).
-              </p>
-            </div>
-            <Switch
-              checked={form.approvalMode === "auto"}
-              onCheckedChange={v => setForm(f => ({ ...f, approvalMode: v ? "auto" : "manual" }))}
-              data-testid="switch-approval-mode"
-            />
-          </div>
-        </div>
-
-        {/* ── Availability ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-4">
-          <div>
-            <p className="text-sm font-semibold">Weekly Availability</p>
-            <p className="text-xs text-muted-foreground">The hours clients can book, per day. Times already taken by appointments or held requests are removed automatically.</p>
-          </div>
-          <div className="space-y-2">
-            {WEEKDAY_NAMES.map((name, i) => {
-              const key = String(i);
-              const day = week[key];
-              return (
-                <div key={key} className="flex items-center gap-3 flex-wrap">
-                  <Switch
-                    checked={day.enabled}
-                    onCheckedChange={v => setWeek(w => ({ ...w, [key]: { ...w[key], enabled: v } }))}
-                    data-testid={`switch-avail-${name.toLowerCase()}`}
-                  />
-                  <span className={`text-sm w-24 ${day.enabled ? "" : "text-muted-foreground line-through"}`}>{name}</span>
-                  {day.enabled && (
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="time"
-                        value={day.start}
-                        onChange={e => setWeek(w => ({ ...w, [key]: { ...w[key], start: e.target.value } }))}
-                        className="w-28 h-9"
-                        data-testid={`input-avail-start-${name.toLowerCase()}`}
-                      />
-                      <span className="text-xs text-muted-foreground">to</span>
-                      <Input
-                        type="time"
-                        value={day.end}
-                        onChange={e => setWeek(w => ({ ...w, [key]: { ...w[key], end: e.target.value } }))}
-                        className="w-28 h-9"
-                        data-testid={`input-avail-end-${name.toLowerCase()}`}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Appointment length (min)</Label>
-              <Input inputMode="numeric" value={form.slotDurationMinutes} onChange={e => set("slotDurationMinutes", e.target.value)} data-testid="input-slot-duration" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Buffer between (min)</Label>
-              <Input inputMode="numeric" value={form.slotBufferMinutes} onChange={e => set("slotBufferMinutes", e.target.value)} data-testid="input-slot-buffer" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Max bookings / week</Label>
-              <Input inputMode="numeric" value={form.maxPerWeek} onChange={e => set("maxPerWeek", e.target.value)} data-testid="input-max-per-week" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs">Book ahead (weeks)</Label>
-              <Input inputMode="numeric" value={form.bookingHorizonWeeks} onChange={e => set("bookingHorizonWeeks", e.target.value)} data-testid="input-horizon-weeks" />
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">Slot times are generated from these: e.g. 9:00 AM–4:30 PM with 90-minute appointments offers 9:00, 10:30, 12:00, 1:30, and 3:00. Utah trip dates use their own all-day trip schedule.</p>
-        </div>
-
-        {/* ── Behavior ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-4">
-          <p className="text-sm font-semibold">Behavior</p>
-
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">Show service cost to clients</p>
-              <p className="text-xs text-muted-foreground">Display price estimates on the booking form</p>
-            </div>
-            <Switch checked={form.showServiceCost} onCheckedChange={v => toggle("showServiceCost", v)} />
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium">Show service duration to clients</p>
-              <p className="text-xs text-muted-foreground">Display estimated appointment length</p>
-            </div>
-            <Switch checked={form.showServiceDuration} onCheckedChange={v => toggle("showServiceDuration", v)} />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-sm font-medium">Completion redirect URL</Label>
-            <Input
-              placeholder="https://johnwillispiano.com/thank-you (leave blank to use built-in confirmation)"
-              value={form.completionRedirectUrl}
-              onChange={e => set("completionRedirectUrl", e.target.value)}
-            />
-          </div>
-        </div>
-
-        {/* ── Service Area ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold">Service Area Validation</p>
-              <p className="text-xs text-muted-foreground">Warn clients outside your travel radius</p>
-            </div>
-            <Switch checked={form.serviceAreaEnabled} onCheckedChange={v => toggle("serviceAreaEnabled", v)} />
-          </div>
-
-          {form.serviceAreaEnabled && (
-            <div className="space-y-3 pt-1 border-t">
-              <p className="text-xs text-muted-foreground">Set your home base coordinates and max travel radius. Use <a href="https://maps.google.com" target="_blank" rel="noopener noreferrer" className="underline">Google Maps</a> to find lat/lng (right-click a location → copy coordinates).</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Center Latitude</Label>
-                  <Input placeholder="e.g. 42.3601" value={form.serviceAreaLat} onChange={e => set("serviceAreaLat", e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Center Longitude</Label>
-                  <Input placeholder="e.g. -71.0589" value={form.serviceAreaLng} onChange={e => set("serviceAreaLng", e.target.value)} />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Radius (miles)</Label>
-                <Input placeholder="40" value={form.serviceAreaRadiusMiles} onChange={e => set("serviceAreaRadiusMiles", e.target.value)} className="w-32" />
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-xs">Outside service area message</Label>
-                <Textarea
-                  rows={3}
-                  placeholder="Unfortunately your address appears to be outside our normal service area. Please contact us directly to discuss options."
-                  value={form.outsideServiceAreaMessage}
-                  onChange={e => set("outsideServiceAreaMessage", e.target.value)}
-                  className="resize-none text-sm"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Page Content ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-4">
-          <p className="text-sm font-semibold">Page Content</p>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Welcome message</Label>
-            <Textarea
-              rows={3}
-              placeholder="e.g. Welcome! I'm John Willis, a piano technician serving Greater Boston. Fill out the form below and I'll be in touch within one business day."
-              value={form.welcomeMessage}
-              onChange={e => set("welcomeMessage", e.target.value)}
-              className="resize-none text-sm"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Reservation complete message</Label>
-            <Textarea
-              rows={3}
-              placeholder="e.g. Your request has been received! I'll review it and reach out shortly to confirm your appointment time."
-              value={form.reservationCompleteMessage}
-              onChange={e => set("reservationCompleteMessage", e.target.value)}
-              className="resize-none text-sm"
-            />
-          </div>
-        </div>
-
-        {/* ── Legal ── */}
-        <div className="rounded-xl border bg-card p-4 space-y-4">
-          <p className="text-sm font-semibold">Legal Notices</p>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Privacy Policy URL</Label>
-            <Input placeholder="https://johnwillispiano.com/privacy" value={form.privacyPolicyUrl} onChange={e => set("privacyPolicyUrl", e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Terms of Service URL</Label>
-            <Input placeholder="https://johnwillispiano.com/terms" value={form.termsOfServiceUrl} onChange={e => set("termsOfServiceUrl", e.target.value)} />
-          </div>
-        </div>
-
-        <div className="flex justify-end pt-1">
-          <Button onClick={() => saveSchedulerMutation.mutate(form)} disabled={saveSchedulerMutation.isPending}>
-            {saveSchedulerMutation.isPending ? "Saving…" : "Save Self-Scheduler Settings"}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  function ActivePanel() {
-    if (activeSection === "payment-methods") return <PaymentMethodsPanel />;
-    if (activeSection === "master-service-list") return <MasterServiceListPanel />;
-    if (activeSection === "company-profile") return <StubPanel title="Company Profile" description="Your business name, address, and contact info shown on invoices." />;
-    if (activeSection === "scheduling") return <StubPanel title="Scheduling" description="Default appointment duration, buffer time, and calendar preferences." />;
+  // NOTE: the hook-less panels are invoked as plain functions (not JSX components).
+  // Rendering them as <PaymentMethodsPanel /> remounted the whole form on every parent
+  // re-render (new function identity each render), which dropped input focus after each
+  // keystroke and closed the iOS keyboard. SelfSchedulerPanel has its own hooks, so it
+  // lives at module level (stable identity) and is rendered as a real component.
+  function activePanel() {
+    if (activeSection === "payment-methods") return PaymentMethodsPanel();
+    if (activeSection === "master-service-list") return MasterServiceListPanel();
+    if (activeSection === "company-profile") return StubPanel({ title: "Company Profile", description: "Your business name, address, and contact info shown on invoices." });
+    if (activeSection === "scheduling") return StubPanel({ title: "Scheduling", description: "Default appointment duration, buffer time, and calendar preferences." });
     if (activeSection === "self-scheduler") return <SelfSchedulerPanel />;
     return null;
   }
@@ -1322,13 +1329,13 @@ export default function SettingsPage() {
           ))}
         </div>
         <div className="p-4">
-          <ActivePanel />
+          {activePanel()}
         </div>
       </div>
 
       {/* ── Right content ── */}
       <main className="hidden sm:block flex-1 overflow-y-auto p-6 max-w-3xl">
-        <ActivePanel />
+        {activePanel()}
       </main>
 
       <ServiceDialog
