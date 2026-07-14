@@ -101,6 +101,7 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "invoices" ADD COLUMN IF NOT EXISTS "payment_method" text;
       ALTER TABLE "business_expenses" ADD COLUMN IF NOT EXISTS "receipt_url" text;
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "service_items" text;
+      ALTER TABLE "service_records" ADD COLUMN IF NOT EXISTS "pianoscope" text;
       CREATE TABLE IF NOT EXISTS "inspections" (
         "id" serial PRIMARY KEY NOT NULL,
         "user_id" text,

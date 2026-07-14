@@ -24,6 +24,7 @@ import InvoicesPage from "@/pages/invoices";
 import InvoiceDetailPage from "@/pages/invoice-detail";
 import SettingsPage from "@/pages/settings";
 import PianoDetail from "@/pages/piano-detail";
+import ImportPianoscopePage from "@/pages/import-pianoscope";
 import PianosPage from "@/pages/pianos";
 import FinancesPage from "@/pages/finances";
 import InspectionsPage from "@/pages/inspections";
@@ -40,6 +41,7 @@ function Router() {
       <Route path="/customers" component={Customers} />
       <Route path="/customers/new" component={CustomerForm} />
       <Route path="/customers/:id" component={CustomerDetail} />
+      <Route path="/pianos/import-pianoscope" component={ImportPianoscopePage} />
       <Route path="/pianos/:id" component={PianoDetail} />
       <Route path="/pianos" component={PianosPage} />
       <Route path="/appointments" component={AppointmentsPage} />

@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
-import { Search, ChevronDown, ArrowUpDown, ArrowUp, ArrowDown, Music2 } from "lucide-react";
+import { Search, ChevronDown, ArrowUpDown, ArrowUp, ArrowDown, Music2, Upload } from "lucide-react";
 import type { Piano, Customer } from "@shared/schema";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
@@ -292,6 +292,9 @@ export default function PianosPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5">
         <h1 className="text-2xl font-bold tracking-tight flex-1">Pianos</h1>
+        <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => navigate("/pianos/import-pianoscope")} data-testid="button-import-pianoscope">
+          <Upload className="h-3.5 w-3.5" /> Import Pianoscope
+        </Button>
         <div className="relative flex-1 sm:max-w-xs">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input

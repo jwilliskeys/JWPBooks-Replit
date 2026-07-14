@@ -486,7 +486,7 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
       const record = await storage.createServiceRecord(parsed.data);
-      if (req.body.serviceType === "tuning" && req.body.serviceDate) {
+      if (/tuning/i.test(req.body.serviceType || "") && req.body.serviceDate) {
         await storage.updatePiano(pianoId, { lastTuned: req.body.serviceDate });
         await storage.syncCustomerFromPianos(piano.customerId);
       }

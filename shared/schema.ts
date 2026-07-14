@@ -68,6 +68,7 @@ export const serviceRecords = pgTable("service_records", {
   services: text("services").default("[]"),
   isTuning: boolean("is_tuning").default(false),
   appointmentId: integer("appointment_id"),
+  pianoscope: text("pianoscope"), // JSON summary parsed from an uploaded .pianoscope file
   createdAt: timestamp("created_at").defaultNow(),
 });
 
