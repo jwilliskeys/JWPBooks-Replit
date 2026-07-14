@@ -649,7 +649,7 @@ export default function PianoDetail() {
         </nav>
 
         {/* Action buttons */}
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">
           <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={openEdit} data-testid="button-edit-piano">
             <Edit className="h-3.5 w-3.5" /> Edit
           </Button>
@@ -717,7 +717,7 @@ export default function PianoDetail() {
       <div className="grid lg:grid-cols-[2fr_3fr] gap-5 items-start">
 
         {/* ══ LEFT PANEL ══════════════════════════════════════════════════ */}
-        <div className="space-y-4">
+        <div className="space-y-4 min-w-0">
 
           {/* Piano header */}
           <div className={`text-center pb-1 ${isInactive ? "opacity-70" : ""}`} data-testid="piano-hero-card">
@@ -949,10 +949,10 @@ export default function PianoDetail() {
         </div>
 
         {/* ══ RIGHT PANEL: Timeline ════════════════════════════════════════ */}
-        <div>
-          <div className="flex items-center justify-between mb-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
             <h2 className="text-base font-semibold">Timeline</h2>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setShowAppointmentDialog(true)} data-testid="button-new-appt">
                 <Plus className="h-3 w-3" /> Appointment
               </Button>

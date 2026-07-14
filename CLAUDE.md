@@ -12,6 +12,10 @@ Diagnosis note for future me: my FIRST guess was the missing `credentials: "incl
 4. **Verified**: `npx tsc --noEmit` clean.
 5. **Note (not changed):** `finances.tsx` receipt upload has the SAME two latent issues — the `e.target.value=""` FileList race AND a bare-`fetch` missing `credentials`. Fix next time finances is touched.
 
+## Recent changes (July 13, 2026 — piano-detail mobile overflow fix)
+
+1. **Fixed horizontal overflow on the piano profile on phones.** The Timeline header button row (`Appointment` / `Service Note` / `Import Pianoscope` / `Inspect` — 4 buttons) was a non-wrapping flex row, so `Inspect` ran off the right edge on a ~390px screen. Header is now `flex flex-wrap items-center justify-between gap-2` and the button group `flex flex-wrap items-center gap-1.5` so buttons wrap under the title. Also: top action bar (`Edit`/`Invoice`/status/…) changed from `shrink-0` to `flex-wrap … sm:shrink-0` so it wraps instead of overflowing; left panel + right (timeline) panel got `min-w-0` so grid children can't force horizontal scroll. Purely className changes, `tsc` clean. (User reported it on phone; the client-not-found / missing-photo / missing-report symptoms they also mentioned turned out to be transient and self-resolved — not code bugs.)
+
 ## Recent changes (July 13, 2026 — bulk Pianoscope importer + fingerprint matching, later)
 
 1. **Graph theme fixed.** `PianoscopeGraph` (`pianoscope-report.tsx`) now paints its dark-gray background as an SVG `<rect fill="#242426">` (the `bg-black` wrapper class wasn't rendering inside the light dialog). Target tuning curve = **white**, measured pitch line + dots = **yellow (#ffd60a)** with a thin dark outline for readability, A4 dot stays green. Wrapper div + caption use inline dark styles; legend swatches updated (yellow dot / white line).
