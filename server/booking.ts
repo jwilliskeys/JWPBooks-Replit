@@ -141,7 +141,9 @@ export function resolveBookingConfig(settings: SchedulerSettings | undefined | n
     slotDurationMinutes: settings?.slotDurationMinutes ?? 90,
     slotBufferMinutes: settings?.slotBufferMinutes ?? 0,
     maxPerWeek: settings?.maxPerWeek ?? 2,
-    bookingHorizonWeeks: settings?.bookingHorizonWeeks ?? 12,
+    // Clamped to 2–52 weeks: a stray "1" here once made the public calendar
+    // show zero bookable dates (the whole horizon fell inside a blocked week).
+    bookingHorizonWeeks: Math.min(52, Math.max(2, settings?.bookingHorizonWeeks ?? 12)),
   };
 }
 
@@ -154,7 +156,11 @@ export function generateDaySlotStarts(dayOfWeek: number, config: BookingConfig):
   const start = parseTimeToMinutes(day.start);
   const end = parseTimeToMinutes(day.end);
   if (start == null || end == null || end <= start) return [];
-  const step = config.slotDurationMinutes + config.slotBufferMinutes;
+  // NOTE: slotBufferMinutes deliberately does NOT space out the offered start
+  // times — it's commute padding around EXISTING appointments (see
+  // busyIntervalsForDate). An empty day still offers back-to-back start times;
+  // once one is booked, the buffer carves out the hour around it.
+  const step = config.slotDurationMinutes;
   const slots: number[] = [];
   for (let t = start; t + config.slotDurationMinutes <= end; t += Math.max(step, 15)) {
     slots.push(t);
@@ -186,11 +192,16 @@ export function busyIntervalsForDate(
     const start = parseTimeToMinutes(it.time);
     if (start == null) continue;
     const dur = parseDurationToMinutes(it.duration, config.slotDurationMinutes);
-    let pad = 0;
+    // Commute padding on BOTH sides of every busy item: Boston appointments
+    // get the flat slotBufferMinutes (e.g. 60 — city driving); Utah trip
+    // appointments use the larger of that and the estimated drive time
+    // between the appointment's service area and the visitor.
+    let drivePad = 0;
     if (visitor && it.area) {
-      pad = driveMinutesToVisitor(it.area, visitor.lat, visitor.lng);
+      drivePad = driveMinutesToVisitor(it.area, visitor.lat, visitor.lng);
     }
-    out.push([start - pad, start + dur + config.slotBufferMinutes + pad]);
+    const pad = Math.max(drivePad, config.slotBufferMinutes);
+    out.push([start - pad, start + dur + pad]);
   }
   return out;
 }

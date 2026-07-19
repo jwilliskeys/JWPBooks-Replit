@@ -392,6 +392,22 @@ export default function BookPage() {
     }
   }, [slotsData]);
 
+  // The date the visitor originally picked in Step 3 (their "preferred" date).
+  // form.preferredDate changes when they pick an alternative slot in Step 4;
+  // this anchor keeps Step 4 rendering the "closest openings" view around the
+  // date they actually asked for (Gazelle-style).
+  const [anchorDate, setAnchorDate] = useState("");
+
+  // Brief "finding the best available times…" search animation on entering Step 4
+  const [slotSearching, setSlotSearching] = useState(false);
+  useEffect(() => {
+    if (step === 4) {
+      setSlotSearching(true);
+      const t = setTimeout(() => setSlotSearching(false), 900);
+      return () => clearTimeout(t);
+    }
+  }, [step]);
+
   // ── Address selection ────────────────────────────────────────────────────
   const handleAddressSelect = useCallback((address: string, lat: string, lng: string) => {
     setF("streetAddress", address);
@@ -553,6 +569,7 @@ export default function BookPage() {
         setConflictMessage(err.message);
         setF("preferredDate", "");
         setF("preferredTime", "");
+        setAnchorDate("");
         queryClient.invalidateQueries({ queryKey: ["/api/booking/available-slots"] });
         setStep(3);
       }
@@ -619,6 +636,18 @@ export default function BookPage() {
 
   const monthLabel = new Date(selectedMonth.year, selectedMonth.month, 1)
     .toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  /** "Sat, Jul 18, 2026" — used for alternative-day column headers */
+  function fmtDayShort(dateStr: string): string {
+    return new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", {
+      weekday: "short", month: "short", day: "numeric", year: "numeric",
+    });
+  }
+  function diffDaysAbs(a: string, b: string): number {
+    return Math.abs(
+      (new Date(a + "T00:00:00").getTime() - new Date(b + "T00:00:00").getTime()) / 86400000,
+    );
+  }
 
   function canGoNextMonth() {
     const cur = new Date(selectedMonth.year, selectedMonth.month + 1, 1);
@@ -1120,10 +1149,14 @@ export default function BookPage() {
 
         {slotsEnabled && !slotsData?.message && (
           <>
+            <p className="text-sm text-slate-600">
+              Pick the date you'd prefer. If nothing is open that day, we'll find the closest available times for you.
+            </p>
+
             {/* Legend */}
             <div className="flex gap-4 text-xs text-slate-500 flex-wrap">
               <span className="flex items-center gap-1.5">
-                <span className="w-4 h-4 rounded-full bg-slate-900 inline-block" /> Available
+                <span className="w-4 h-4 rounded-lg bg-slate-100 border border-slate-300 inline-block" /> Open
               </span>
               <span className="flex items-center gap-1.5">
                 <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-400" /> Recommended — efficient routing
@@ -1171,7 +1204,7 @@ export default function BookPage() {
                 const isSelected = form.preferredDate === dateStr;
                 const dayNum = parseInt(dateStr.split("-")[2], 10);
 
-                if (isPast || !avail) {
+                if (isPast) {
                   return (
                     <div
                       key={dateStr}
@@ -1182,22 +1215,33 @@ export default function BookPage() {
                   );
                 }
 
+                // Every future date is pickable — it's the visitor's PREFERRED
+                // date. Days with confirmed openings get the filled style; other
+                // days are lighter but still clickable (Step 4 then offers the
+                // closest available times instead of dead-ending).
                 return (
                   <button
                     key={dateStr}
                     type="button"
-                    onClick={() => { setF("preferredDate", dateStr); setF("preferredTime", ""); setConflictMessage(null); }}
-                    className={`relative aspect-square flex items-center justify-center rounded-lg text-sm font-semibold transition-all ${
+                    onClick={() => {
+                      setF("preferredDate", dateStr);
+                      setF("preferredTime", "");
+                      setAnchorDate(dateStr);
+                      setConflictMessage(null);
+                    }}
+                    className={`relative aspect-square flex items-center justify-center rounded-lg text-sm transition-all ${
                       isSelected
-                        ? "bg-slate-900 text-white"
-                        : "bg-slate-100 text-slate-800 hover:bg-slate-200"
+                        ? "bg-slate-900 text-white font-semibold"
+                        : avail
+                          ? "bg-slate-100 text-slate-800 font-semibold hover:bg-slate-200"
+                          : "text-slate-400 hover:bg-slate-50"
                     }`}
                   >
                     {dayNum}
-                    {avail.isRecommended && !isSelected && (
+                    {avail?.isRecommended && !isSelected && (
                       <Star className="absolute top-0.5 right-0.5 h-2.5 w-2.5 text-amber-400 fill-amber-400" />
                     )}
-                    {avail.isTripDate && !isSelected && (
+                    {avail?.isTripDate && !isSelected && (
                       <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-blue-500" />
                     )}
                   </button>
@@ -1207,7 +1251,7 @@ export default function BookPage() {
 
             {form.preferredDate && (
               <p className="text-sm text-center text-slate-600">
-                Selected: <strong>{availableByDate[form.preferredDate]?.dayLabel ?? form.preferredDate}</strong>
+                Selected: <strong>{availableByDate[form.preferredDate]?.dayLabel ?? fmtDayShort(form.preferredDate)}</strong>
               </p>
             )}
             {errors.preferredDate && <p className="text-xs text-red-500 text-center">{errors.preferredDate}</p>}
@@ -1219,50 +1263,123 @@ export default function BookPage() {
 
   // ── Step 4: Select a Time ─────────────────────────────────────────────────
   function StepTime() {
-    const selected = availableByDate[form.preferredDate];
-    const slots = selected?.slots ?? [];
+    // The date picked in Step 3 (anchor) drives this step's layout, so picking
+    // an alternative slot below doesn't flip the view mid-selection.
+    const anchor = anchorDate || form.preferredDate;
+    const anchorAvail = availableByDate[anchor];
+    const anchorOpen = (anchorAvail?.slots.length ?? 0) > 0;
+    const allOpenDays = (slotsData?.availableDates ?? []).filter(d => d.slots.length > 0);
+
+    // Day columns (Gazelle-style): always a horizontal, scrollable row of open
+    // days, each listing ALL of its times. If the preferred date is open it
+    // leads the row; otherwise the row is the nearest open days around it.
+    const dayColumns = anchorOpen
+      ? allOpenDays.filter(d => d.date >= anchor).slice(0, 10)
+      : [...allOpenDays]
+          .sort((a, b) => diffDaysAbs(a.date, anchor) - diffDaysAbs(b.date, anchor))
+          .slice(0, 10)
+          .sort((a, b) => (a.date < b.date ? -1 : 1));
+
+    // "First choice" star: the preferred day's first time if it's open;
+    // otherwise the closest day to the preferred date, with recommended
+    // (efficient-routing) days winning — its first slot.
+    let firstChoice: { date: string; slot: string } | null = null;
+    if (anchorOpen) {
+      firstChoice = { date: anchor, slot: anchorAvail!.slots[0] };
+    } else if (dayColumns.length > 0) {
+      const best = [...dayColumns].sort((a, b) => {
+        if (a.isRecommended !== b.isRecommended) return a.isRecommended ? -1 : 1;
+        return diffDaysAbs(a.date, anchor) - diffDaysAbs(b.date, anchor);
+      })[0];
+      firstChoice = { date: best.date, slot: best.slots[0] };
+    }
+
+    if (slotSearching) {
+      return (
+        <div className="space-y-4">
+          <h2 className="text-xl font-bold text-slate-900">Choose an Appointment Time</h2>
+          <div className="rounded-xl bg-slate-50 p-8 text-center space-y-3">
+            <p className="text-sm text-slate-600 font-medium">
+              Finding the best available times near {fmtDayShort(anchor)}…
+            </p>
+            <div className="h-1.5 w-full max-w-xs mx-auto rounded-full bg-slate-200 overflow-hidden">
+              <div className="h-full w-1/2 rounded-full bg-slate-900 animate-pulse" />
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="space-y-4">
-        <h2 className="text-xl font-bold text-slate-900">Select a Time</h2>
-        {form.preferredDate && (
-          <p className="text-sm text-slate-600">
-            Available times for <strong>{selected?.dayLabel ?? form.preferredDate}</strong>
-          </p>
+        <h2 className="text-xl font-bold text-slate-900">Choose an Appointment Time</h2>
+
+        {/* Day columns — every open day shows ALL its times; scroll right for more */}
+        {dayColumns.length > 0 && (
+          <>
+            {anchorOpen ? (
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Here are the openings on <strong>{fmtDayShort(anchor)}</strong> and the days after
+                it — scroll right for more options. The time with a gold star{" "}
+                <Star className="inline h-3.5 w-3.5 text-amber-500 fill-amber-400 -mt-0.5" /> would
+                be our first choice.
+              </p>
+            ) : (
+              <p className="text-sm text-slate-600 leading-relaxed">
+                We looked but couldn't find an opening on <strong>{fmtDayShort(anchor)}</strong>.
+                Here are the closest openings that might work — scroll right for more options. The
+                time with a gold star{" "}
+                <Star className="inline h-3.5 w-3.5 text-amber-500 fill-amber-400 -mt-0.5" /> would
+                be our first choice.
+              </p>
+            )}
+            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+              {dayColumns.map(day => (
+                <div key={day.date} className="min-w-[150px] flex-1 shrink-0 space-y-2">
+                  <p className="text-xs font-bold text-slate-700 text-center whitespace-nowrap flex items-center justify-center gap-1">
+                    {fmtDayShort(day.date)}
+                    {day.isRecommended && (
+                      <Star className="h-3 w-3 text-amber-500 fill-amber-400 shrink-0" />
+                    )}
+                  </p>
+                  {day.slots.map(slot => {
+                    const isSelected = form.preferredDate === day.date && form.preferredTime === slot;
+                    const isStar = firstChoice?.date === day.date && firstChoice?.slot === slot;
+                    return (
+                      <button
+                        key={slot}
+                        type="button"
+                        onClick={() => { setF("preferredDate", day.date); setF("preferredTime", slot); }}
+                        className={`w-full flex items-center justify-center gap-1.5 px-2 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all ${
+                          isSelected
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                        }`}
+                      >
+                        {isStar && !isSelected && (
+                          <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-400 shrink-0" />
+                        )}
+                        {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                        {slot}
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+            {form.preferredDate && form.preferredTime && (
+              <p className="text-sm text-center text-slate-600">
+                Selected: <strong>{fmtDayShort(form.preferredDate)} at {form.preferredTime}</strong>
+              </p>
+            )}
+          </>
         )}
 
-        {slots.length === 0 ? (
+        {/* Nothing open anywhere in the booking window */}
+        {dayColumns.length === 0 && (
           <div className="text-sm text-slate-500 bg-slate-50 rounded-lg p-6 text-center">
-            No times available for this date. Go back and pick a different date.
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-2">
-            {slots.map(slot => {
-              const isSelected = form.preferredTime === slot;
-              const isRec = selected?.isRecommended;
-              return (
-                <button
-                  key={slot}
-                  type="button"
-                  onClick={() => setF("preferredTime", slot)}
-                  className={`flex items-center justify-between gap-2 px-4 py-3 rounded-xl border-2 text-sm font-semibold transition-all ${
-                    isSelected
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <Clock className="h-3.5 w-3.5 opacity-60" /> {slot}
-                  </span>
-                  {isRec && !isSelected && (
-                    <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
-                      ★ Suggested
-                    </span>
-                  )}
-                  {isSelected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
-                </button>
-              );
-            })}
+            No online openings are available right now. Please contact John directly and he'll
+            find a time that works.
           </div>
         )}
 

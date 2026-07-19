@@ -711,7 +711,7 @@ Book an Appointment
             <Input inputMode="numeric" value={form.slotDurationMinutes} onChange={e => set("slotDurationMinutes", e.target.value)} data-testid="input-slot-duration" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Buffer between (min)</Label>
+            <Label className="text-xs">Buffer around appts (min)</Label>
             <Input inputMode="numeric" value={form.slotBufferMinutes} onChange={e => set("slotBufferMinutes", e.target.value)} data-testid="input-slot-buffer" />
           </div>
           <div className="space-y-1.5">

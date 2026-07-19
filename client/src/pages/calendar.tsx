@@ -268,9 +268,11 @@ export default function CalendarPage() {
   const [completeDialogAppt, setCompleteDialogAppt] = useState<Appointment | null>(null);
   const [createApptDialogOpen, setCreateApptDialogOpen] = useState(false);
   const [createApptInitialDate, setCreateApptInitialDate] = useState("");
-  const [calendarView, setCalendarView] = useState<"month" | "week" | "day">("month");
+  const [calendarView, setCalendarView] = useState<"month" | "week" | "day" | "year">("month");
   const [weekOffset, setWeekOffset] = useState(0);
   const [dayOffset, setDayOffset] = useState(0);
+  // Day tapped in the mobile month grid (drives the day agenda panel below the grid)
+  const [pickedDay, setPickedDay] = useState<Date | null>(null);
 
   const { data: appointments, isLoading: loadingAppts } = useQuery<Appointment[]>({
     queryKey: ["/api/appointments"],
@@ -987,16 +989,15 @@ export default function CalendarPage() {
     );
   }
 
-  const monthDaysForAgenda = calendarDays.filter((d): d is Date => d !== null);
-
-  const agendaDays = monthDaysForAgenda.filter((date) => {
-    const key = getDateKey(date);
-    return (
-      (appointmentsByDate.get(key)?.length ?? 0) > 0 ||
-      (notesByDate.get(key)?.length ?? 0) > 0 ||
-      (eventsByDate.get(key)?.length ?? 0) > 0
-    );
-  });
+  // Which day the mobile month grid has selected: the tapped day if it's in the
+  // visible month, otherwise today (if visible), otherwise the 1st of the month.
+  const dayInCurrentMonth = (d: Date) => d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+  const displayPickedDay =
+    pickedDay && dayInCurrentMonth(pickedDay)
+      ? pickedDay
+      : dayInCurrentMonth(today)
+      ? today
+      : new Date(currentYear, currentMonth, 1);
 
   const selectedDateLabel = selectedDate
     ? `${MONTH_NAMES[selectedDate.getMonth()]} ${selectedDate.getDate()}, ${selectedDate.getFullYear()}`
@@ -1125,6 +1126,95 @@ export default function CalendarPage() {
     );
   }
 
+  /** Renders one day's appointments/notes/events as a card (mobile month panel, week, day views) */
+  function renderDayAgendaCard(date: Date) {
+    const key = getDateKey(date);
+    const dayAppts = (appointmentsByDate.get(key) ?? []).slice().sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
+    const dayNotes = notesByDate.get(key) ?? [];
+    const dayEventItems = eventsByDate.get(key) ?? [];
+    const isToday = isSameDay(date, today);
+    const apptCount = dayAppts.filter((a) => a.status !== "cancelled").length;
+    const isEmpty = dayAppts.length === 0 && dayNotes.length === 0 && dayEventItems.length === 0;
+
+    return (
+      <Card key={key} data-testid={`agenda-day-${key}`}>
+        <CardContent className="py-3 px-4">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className={`text-sm font-semibold ${isToday ? "text-primary" : ""}`}>
+                {DAY_NAMES[date.getDay()]}, {MONTH_NAMES[date.getMonth()]} {date.getDate()}
+              </span>
+              <span className="text-xs text-muted-foreground shrink-0">
+                {apptCount} appointment{apptCount === 1 ? "" : "s"}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1 h-7"
+              onClick={() => handleDateClick(date)}
+              data-testid={`button-add-note-${key}`}
+            >
+              <Plus className="h-4 w-4" />
+              Add
+            </Button>
+          </div>
+          <div className="space-y-1">
+            {isEmpty && (
+              <p className="text-xs text-muted-foreground py-2">Nothing scheduled — tap Add to book.</p>
+            )}
+            {dayAppts.map((appt) => {
+              const customer = customerMap.get(appt.customerId);
+              const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+              const pianoLabel = piano ? ([piano.make, piano.model].filter(Boolean).join(" ") || null) : null;
+              const isCompleted = appt.status === "completed";
+              const isCancelled = appt.status === "cancelled";
+              return (
+                <div
+                  key={appt.id}
+                  className={`flex items-center gap-2 text-xs p-1.5 rounded-md cursor-pointer hover:bg-muted/50 ${isCompleted || isCancelled ? "opacity-60" : ""}`}
+                  onClick={() => setSelectedAppt(appt)}
+                  data-testid={`calendar-appointment-${appt.id}`}
+                >
+                  <Clock className="h-3 w-3 shrink-0 text-sky-500" />
+                  <span className={isCompleted || isCancelled ? "line-through" : ""}>
+                    {formatPillLabel(appt.time, customer ? { city: customer.city, state: customer.state, lastName: `${customer.firstName} ${customer.lastName}` } : undefined, pianoLabel)}
+                  </span>
+                  {isCancelled && <span className="text-[10px] text-destructive uppercase tracking-wide">cancelled</span>}
+                </div>
+              );
+            })}
+            {dayNotes.map((note) => (
+              <div
+                key={note.id}
+                className="flex items-center justify-between gap-1 text-xs p-1.5 rounded-md"
+                data-testid={`calendar-note-${note.id}`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <StickyNote className="h-3 w-3 shrink-0 text-amber-500 dark:text-amber-400" />
+                  <span className="italic text-muted-foreground truncate">{note.title}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteNoteMutation.mutate(note.id);
+                  }}
+                  data-testid={`button-delete-note-${note.id}`}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+            ))}
+            {dayEventItems.map((item) => renderAgendaEventItem(item))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <DndContext sensors={dndSensors} collisionDetection={rectIntersection} onDragEnd={handleCalendarDragEnd}>
     <div className="p-4 sm:p-6 space-y-4 max-w-6xl mx-auto">
@@ -1135,7 +1225,7 @@ export default function CalendarPage() {
         <div className="flex items-center gap-2 flex-wrap">
           {/* View switcher */}
           <div className="flex rounded-md border border-border overflow-hidden text-xs">
-            {(["month", "week", "day"] as const).map((v) => (
+            {(["day", "week", "month", "year"] as const).map((v) => (
               <button
                 key={v}
                 onClick={() => setCalendarView(v)}
@@ -1157,7 +1247,8 @@ export default function CalendarPage() {
               variant="ghost"
               size="icon"
               onClick={() => {
-                if (calendarView === "month") prevMonth();
+                if (calendarView === "year") setCurrentYear(currentYear - 1);
+                else if (calendarView === "month") prevMonth();
                 else if (calendarView === "week") setWeekOffset(weekOffset - 1);
                 else setDayOffset(dayOffset - 1);
               }}
@@ -1176,12 +1267,14 @@ export default function CalendarPage() {
                   : `${sm} ${s.getDate()} – ${em} ${e.getDate()}, ${e.getFullYear()}`;
               })()}
               {calendarView === "day" && `${DAY_NAMES[dayViewDate.getDay()]}, ${MONTH_NAMES[dayViewDate.getMonth()]} ${dayViewDate.getDate()}`}
+              {calendarView === "year" && `${currentYear}`}
             </span>
             <Button
               variant="ghost"
               size="icon"
               onClick={() => {
-                if (calendarView === "month") nextMonth();
+                if (calendarView === "year") setCurrentYear(currentYear + 1);
+                else if (calendarView === "month") nextMonth();
                 else if (calendarView === "week") setWeekOffset(weekOffset + 1);
                 else setDayOffset(dayOffset + 1);
               }}
@@ -1496,90 +1589,156 @@ export default function CalendarPage() {
       )}
 
       {/* ═══════════ MONTH VIEW ═══════════ */}
-      {isMobile ? (
-        <div className="space-y-3" data-testid="calendar-agenda-view">
-          {agendaDays.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <Calendar className="h-10 w-10 mx-auto mb-3 opacity-30" />
-              <p className="text-sm">No events this month</p>
-            </div>
-          ) : (
-            agendaDays.map((date) => {
-              const key = getDateKey(date);
-              const dayAppts = (appointmentsByDate.get(key) ?? []).slice().sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
-              const dayNotes = notesByDate.get(key) ?? [];
-              const dayEventItems = eventsByDate.get(key) ?? [];
-              const isToday = isSameDay(date, today);
-
-              return (
-                <Card key={key} data-testid={`agenda-day-${key}`}>
-                  <CardContent className="py-3 px-4">
-                    <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className={`text-sm font-semibold ${isToday ? "text-primary" : ""}`}>
-                        {DAY_NAMES[date.getDay()]}, {MONTH_NAMES[date.getMonth()]} {date.getDate()}
-                      </span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDateClick(date)}
-                        data-testid={`button-add-note-${key}`}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <div className="space-y-1">
-                      {dayAppts.map((appt) => {
-                        const customer = customerMap.get(appt.customerId);
-                        const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
-                        const pianoLabel = piano ? ([piano.make, piano.model].filter(Boolean).join(" ") || null) : null;
-                        const isCompleted = appt.status === "completed";
-                        return (
-                          <div
-                            key={appt.id}
-                            className={`flex items-center gap-2 text-xs p-1.5 rounded-md cursor-pointer hover:bg-muted/50 ${isCompleted ? "opacity-60" : ""}`}
-                            onClick={() => setSelectedAppt(appt)}
-                            data-testid={`calendar-appointment-${appt.id}`}
-                          >
-                            <Clock className="h-3 w-3 shrink-0 text-sky-500" />
-                            <span className={isCompleted ? "line-through" : ""}>
-                              {formatPillLabel(appt.time, customer ? { city: customer.city, state: customer.state, lastName: `${customer.firstName} ${customer.lastName}` } : undefined, pianoLabel)}
-                            </span>
-                          </div>
-                        );
-                      })}
-                      {dayNotes.map((note) => (
-                        <div
-                          key={note.id}
-                          className="flex items-center justify-between gap-1 text-xs p-1.5 rounded-md"
-                          data-testid={`calendar-note-${note.id}`}
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <StickyNote className="h-3 w-3 shrink-0 text-amber-500 dark:text-amber-400" />
-                            <span className="italic text-muted-foreground truncate">{note.title}</span>
-                          </div>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="shrink-0"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteNoteMutation.mutate(note.id);
-                            }}
-                            data-testid={`button-delete-note-${note.id}`}
-                          >
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      ))}
-                      {dayEventItems.map((item) => renderAgendaEventItem(item))}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
+      {/* ═══════════ MOBILE · DAY ═══════════ */}
+      {isMobile && calendarView === "day" && (
+        <div className="space-y-3" data-testid="calendar-day-agenda">
+          {renderDayAgendaCard(dayViewDate)}
         </div>
-      ) : calendarView === "month" ? (
+      )}
+
+      {/* ═══════════ MOBILE · WEEK ═══════════ */}
+      {isMobile && calendarView === "week" && (
+        <div className="space-y-3" data-testid="calendar-week-agenda">
+          {weekDays.map((d) => renderDayAgendaCard(d))}
+        </div>
+      )}
+
+      {/* ═══════════ MOBILE · MONTH (grid + tap-a-day) ═══════════ */}
+      {isMobile && calendarView === "month" && (
+        <div className="space-y-3" data-testid="calendar-month-mobile">
+          <Card>
+            <CardContent className="p-2">
+              <div className="grid grid-cols-7 gap-0.5">
+                {DAY_NAMES.map((day) => (
+                  <div key={day} className="text-center text-[10px] font-medium text-muted-foreground py-1">
+                    {day.slice(0, 1)}
+                  </div>
+                ))}
+                {calendarDays.map((date, idx) => {
+                  if (!date) return <div key={`empty-${idx}`} className="aspect-square" />;
+                  const key = getDateKey(date);
+                  const dayAppts = appointmentsByDate.get(key) ?? [];
+                  const activeAppts = dayAppts.filter((a) => a.status !== "cancelled");
+                  const cancelledCount = dayAppts.length - activeAppts.length;
+                  const hasNote = (notesByDate.get(key)?.length ?? 0) > 0;
+                  const hasBusyEvent = (eventsByDate.get(key) ?? []).some(({ ev }) => ev.eventType === "personal");
+                  const isToday = isSameDay(date, today);
+                  const isPicked = isSameDay(date, displayPickedDay);
+                  const isTripDay = !!getTrip(date, trips);
+                  const dotCount = Math.min(activeAppts.length, 4);
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setPickedDay(date)}
+                      className={`aspect-square flex flex-col items-center justify-start pt-1 rounded-md transition-colors ${
+                        isPicked
+                          ? "bg-muted ring-2 ring-primary"
+                          : isTripDay
+                          ? "bg-green-50 dark:bg-green-950/20"
+                          : hasBusyEvent
+                          ? "bg-violet-50 dark:bg-violet-950/20"
+                          : "hover:bg-muted/50"
+                      }`}
+                      data-testid={`month-cell-${key}`}
+                    >
+                      <span
+                        className={`flex items-center justify-center h-6 w-6 rounded-full text-xs font-medium ${
+                          isToday ? "bg-primary text-primary-foreground" : ""
+                        }`}
+                      >
+                        {date.getDate()}
+                      </span>
+                      <div className="flex items-center justify-center gap-[2px] mt-0.5 h-2">
+                        {Array.from({ length: dotCount }).map((_, i) => (
+                          <span key={i} className="h-1 w-1 rounded-full bg-sky-500" />
+                        ))}
+                        {activeAppts.length === 0 && cancelledCount > 0 && (
+                          <span className="h-1 w-1 rounded-full bg-muted-foreground/40" />
+                        )}
+                        {activeAppts.length === 0 && cancelledCount === 0 && hasNote && (
+                          <span className="h-1 w-1 rounded-full bg-amber-400" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+          {renderDayAgendaCard(displayPickedDay)}
+        </div>
+      )}
+
+      {/* ═══════════ YEAR VIEW (mobile + desktop) ═══════════ */}
+      {calendarView === "year" && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" data-testid="calendar-year-view">
+          {Array.from({ length: 12 }).map((_, m) => {
+            const first = new Date(currentYear, m, 1);
+            const startOffset = first.getDay();
+            const totalDays = new Date(currentYear, m + 1, 0).getDate();
+            const cells: (Date | null)[] = [];
+            for (let i = 0; i < startOffset; i++) cells.push(null);
+            for (let d = 1; d <= totalDays; d++) cells.push(new Date(currentYear, m, d));
+            let monthCount = 0;
+            for (let d = 1; d <= totalDays; d++) {
+              const k = getDateKey(new Date(currentYear, m, d));
+              monthCount += appointmentsByDate.get(k)?.filter((a) => a.status !== "cancelled").length ?? 0;
+            }
+            const isCurrentMonth = m === today.getMonth() && currentYear === today.getFullYear();
+            return (
+              <Card
+                key={m}
+                className={`cursor-pointer hover:border-primary transition-colors ${isCurrentMonth ? "border-primary/50" : ""}`}
+                onClick={() => {
+                  setCurrentMonth(m);
+                  setCalendarView("month");
+                }}
+                data-testid={`year-month-${m}`}
+              >
+                <CardContent className="p-3">
+                  <div className="flex items-baseline justify-between mb-2">
+                    <span className="text-sm font-semibold">{MONTH_NAMES[m]}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {monthCount} appt{monthCount === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-7 gap-[2px]">
+                    {cells.map((date, i) => {
+                      if (!date) return <div key={`e-${i}`} className="aspect-square" />;
+                      const k = getDateKey(date);
+                      const c = appointmentsByDate.get(k)?.filter((a) => a.status !== "cancelled").length ?? 0;
+                      const isToday = isSameDay(date, today);
+                      const shade =
+                        c === 0
+                          ? ""
+                          : c === 1
+                          ? "bg-sky-200 dark:bg-sky-900/50"
+                          : c === 2
+                          ? "bg-sky-300 dark:bg-sky-800/70"
+                          : c === 3
+                          ? "bg-sky-400 dark:bg-sky-700/80"
+                          : "bg-sky-500 dark:bg-sky-600";
+                      return (
+                        <div
+                          key={i}
+                          className={`aspect-square rounded-[2px] flex items-center justify-center text-[8px] leading-none ${shade} ${
+                            isToday ? "ring-1 ring-primary" : ""
+                          } ${c >= 3 ? "text-white" : "text-muted-foreground"}`}
+                        >
+                          {date.getDate()}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ═══════════ MONTH VIEW (desktop grid) ═══════════ */}
+      {!isMobile && calendarView === "month" && (
         <Card data-testid="calendar-grid-view">
           <CardContent className="p-2 sm:p-4">
             <div className="grid grid-cols-7 gap-px">
@@ -1755,7 +1914,7 @@ export default function CalendarPage() {
             </div>
           </CardContent>
         </Card>
-      ) : null}
+      )}
 
       {/* Appointment Detail Dialog — mobile only; desktop uses per-pill Popovers */}
       <Dialog open={isMobile && selectedAppt !== null} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
