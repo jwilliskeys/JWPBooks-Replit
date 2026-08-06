@@ -9,6 +9,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { CommandPalette } from "@/components/command-palette";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { useScrollRestoration } from "@/hooks/use-scroll-restoration";
 import { Search } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -137,7 +138,12 @@ function AppShell() {
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
               >
-                <Router />
+                {/* Inside the keyed motion.div, so navigating to another page
+                    remounts (and therefore resets) the boundary automatically.
+                    Sidebar + header stay usable when a page crashes. */}
+                <ErrorBoundary>
+                  <Router />
+                </ErrorBoundary>
               </motion.div>
             </AnimatePresence>
           </main>
@@ -156,7 +162,9 @@ function App() {
     return (
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
-          <BookPage />
+          <ErrorBoundary area="the booking page">
+            <BookPage />
+          </ErrorBoundary>
           <Toaster />
         </TooltipProvider>
       </QueryClientProvider>

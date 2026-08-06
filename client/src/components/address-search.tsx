@@ -12,13 +12,36 @@ export interface PlaceAddressResult {
   zipCode: string;
 }
 
+/**
+ * Shape returned by GET /api/places/autocomplete.
+ *
+ * NOTE (Aug 5, 2026): the server migrated to Places API (New) on Jul 6, 2026 and
+ * emits `mainText`/`secondaryText`. This component still declared the LEGACY
+ * `structured_formatting.main_text` shape, so rendering a suggestion threw
+ * "Cannot read properties of undefined" and — with no error boundary — blanked
+ * the whole app. Both shapes are accepted now, and every field is optional so a
+ * missing one can never crash the render again.
+ */
 interface Prediction {
   place_id: string;
-  description: string;
-  structured_formatting: {
-    main_text: string;
-    secondary_text: string;
+  description?: string;
+  mainText?: string;
+  secondaryText?: string;
+  /** Legacy Places API shape — tolerated, no longer required. */
+  structured_formatting?: {
+    main_text?: string;
+    secondary_text?: string;
   };
+}
+
+/** Primary line of a suggestion, whichever API shape it arrived in. */
+function predMainText(p: Prediction): string {
+  return p.mainText || p.structured_formatting?.main_text || p.description || "";
+}
+
+/** Secondary (city/state) line of a suggestion, whichever shape it arrived in. */
+function predSecondaryText(p: Prediction): string {
+  return p.secondaryText || p.structured_formatting?.secondary_text || "";
 }
 
 // ─── Debounce hook ───────────────────────────────────────────────────────────
@@ -56,6 +79,9 @@ export function AddressSearch({
   const [activeIdx, setActiveIdx] = useState(-1);
   // True after user has picked a suggestion — suppresses further API calls
   const [locked, setLocked] = useState(initialValue.length > 0);
+  // Places lookup errored — tell the user to type it in below rather than
+  // silently doing nothing (or, previously, blanking the page).
+  const [lookupFailed, setLookupFailed] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const debouncedQuery = useDebounce(query, 320);
 
@@ -68,11 +94,14 @@ export function AddressSearch({
     }
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/places/autocomplete?input=${encodeURIComponent(debouncedQuery)}`)
-      .then((r) => r.json())
+    fetch(`/api/places/autocomplete?input=${encodeURIComponent(debouncedQuery)}`, {
+      credentials: "include",
+    })
+      .then((r) => (r.ok ? r.json() : { predictions: [] }))
       .then((data: { predictions?: Prediction[] }) => {
         if (cancelled) return;
-        const preds = data.predictions ?? [];
+        // Drop anything without a place_id — it can't be looked up anyway.
+        const preds = (data.predictions ?? []).filter((p) => p && p.place_id);
         setPredictions(preds);
         setOpen(preds.length > 0);
         setActiveIdx(-1);
@@ -104,16 +133,31 @@ export function AddressSearch({
 
   const handleSelect = useCallback(
     async (pred: Prediction) => {
-      setQuery(pred.description);
+      setQuery(pred.description || predMainText(pred));
       setOpen(false);
       setLocked(true);
       setLoading(true);
+      setLookupFailed(false);
       try {
         const res = await fetch(
           `/api/places/details?place_id=${encodeURIComponent(pred.place_id)}`,
+          { credentials: "include" },
         );
-        const result = (await res.json()) as PlaceAddressResult;
-        onSelect(result);
+        // A non-OK response body is {error: "..."} — never a usable address.
+        // Surface it inline instead of writing undefined into the form fields.
+        if (!res.ok) {
+          setLookupFailed(true);
+          return;
+        }
+        const result = (await res.json()) as Partial<PlaceAddressResult>;
+        onSelect({
+          street: result.street ?? "",
+          city: result.city ?? "",
+          state: result.state ?? "",
+          zipCode: result.zipCode ?? "",
+        });
+      } catch {
+        setLookupFailed(true);
       } finally {
         setLoading(false);
       }
@@ -142,6 +186,7 @@ export function AddressSearch({
     setPredictions([]);
     setOpen(false);
     setLocked(false);
+    setLookupFailed(false);
   };
 
   return (
@@ -154,6 +199,7 @@ export function AddressSearch({
           onChange={(e) => {
             setQuery(e.target.value);
             setLocked(false);
+            setLookupFailed(false);
           }}
           onKeyDown={handleKeyDown}
           onFocus={() => {
@@ -204,10 +250,10 @@ export function AddressSearch({
               <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
                 <div className="font-medium leading-snug">
-                  {pred.structured_formatting.main_text}
+                  {predMainText(pred)}
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {pred.structured_formatting.secondary_text}
+                  {predSecondaryText(pred)}
                 </div>
               </div>
             </button>
@@ -216,6 +262,13 @@ export function AddressSearch({
             Don&apos;t see it? Fill in manually below.
           </div>
         </div>
+      )}
+
+      {lookupFailed && (
+        <p className="mt-1.5 text-xs text-destructive">
+          Couldn&apos;t look up that address. Type the street, city, state and ZIP
+          into the fields below instead — they save the same way.
+        </p>
       )}
     </div>
   );
