@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { StepperGroup } from "@/components/time-stepper";
 import {
   Dialog,
   DialogContent,
@@ -83,7 +84,6 @@ export function EditServiceDialog({ open, onOpenChange, line, onSave }: EditServ
     onOpenChange(false);
   }
 
-  const stepBtn = "h-5 px-1.5 text-[10px] font-semibold rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-none";
   const durH = Math.floor(durationMinutes / 60);
   const durM = durationMinutes % 60;
   const durLabel = durH > 0 ? (durM > 0 ? `${durH}h ${durM}m` : `${durH}h`) : `${durM}m`;
@@ -173,22 +173,13 @@ export function EditServiceDialog({ open, onOpenChange, line, onSave }: EditServ
           {/* Duration stepper */}
           <div className="space-y-1.5 col-span-2 sm:col-span-1">
             <Label className="text-sm">Duration</Label>
-            <div className="flex items-center gap-1">
-              <div className="flex flex-col gap-0.5">
-                <button type="button" className={stepBtn} onClick={() => setDurationMinutes((d) => Math.min(d + 60, 12 * 60))}>+1h</button>
-                <button type="button" className={stepBtn} onClick={() => setDurationMinutes((d) => Math.max(d - 60, 0))}>-1h</button>
-              </div>
-              <span
-                className="flex-1 text-sm font-semibold px-3 py-2 rounded border bg-background text-left tabular-nums"
-                data-testid="text-edit-service-duration"
-              >
-                {durLabel}
-              </span>
-              <div className="flex flex-col gap-0.5">
-                <button type="button" className={stepBtn} onClick={() => setDurationMinutes((d) => Math.min(d + 5, 12 * 60))}>+5m</button>
-                <button type="button" className={stepBtn} onClick={() => setDurationMinutes((d) => Math.max(d - 5, 0))}>-5m</button>
-              </div>
-            </div>
+            <StepperGroup
+              display={durLabel}
+              onStep={(d) => setDurationMinutes((v) => Math.min(Math.max(v + d, 0), 12 * 60))}
+              className="w-full"
+              displayClassName="flex-1"
+              testIdPrefix="edit-service-duration"
+            />
             <p className="text-xs text-muted-foreground">Adds to the appointment's total length.</p>
           </div>
 

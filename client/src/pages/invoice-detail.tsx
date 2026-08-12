@@ -31,6 +31,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { Invoice, Customer, Piano, Appointment, ServiceCatalogItem, UserSettings, CustomerContact } from "@shared/schema";
+import { clientName } from "@shared/client-name";
 
 const COMPANY_NAME = "John Willis Piano";
 const COMPANY_ADDRESS = "14 Murdock St. APT #3-4\nSomerville, MA 02145";
@@ -309,7 +310,7 @@ export default function InvoiceDetailPage() {
       pianoId: appointmentData.pianoId ?? null,
       invoiceDate: appointmentData.date,
       dueDate: appointmentData.date,
-      customerName: customer ? `${customer.firstName} ${customer.lastName}` : "",
+      customerName: customer ? clientName(customer) : "",
       customerEmail: customer?.email ?? "",
       customerAddress: custAddr,
       customerPhone: customer?.phone ?? "",
@@ -761,7 +762,7 @@ export default function InvoiceDetailPage() {
                     setForm(f => ({
                       ...f,
                       customerId: cust.id,
-                      customerName: `${cust.firstName} ${cust.lastName}`,
+                      customerName: clientName(cust),
                       customerEmail: cust.email ?? "",
                       customerPhone: cust.phone ?? "",
                       customerAddress: addr,
@@ -774,10 +775,10 @@ export default function InvoiceDetailPage() {
                   <SelectContent className="max-h-60">
                     {(customers ?? [])
                       .slice()
-                      .sort((a, b) => a.lastName.localeCompare(b.lastName))
+                      .sort((a, b) => clientName(a, "").localeCompare(clientName(b, "")))
                       .map(c => (
                         <SelectItem key={c.id} value={String(c.id)}>
-                          {c.lastName}, {c.firstName}
+                          {clientName(c)}
                         </SelectItem>
                       ))}
                   </SelectContent>

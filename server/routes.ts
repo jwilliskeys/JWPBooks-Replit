@@ -3,12 +3,14 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
 import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema, insertMileageLogSchema, insertBusinessExpenseSchema, insertOutreachLeadSchema, insertInspectionSchema, insertBankAccountSchema, insertBankTransactionSchema, publicBookingRequestSchema } from "@shared/schema";
+import { clientName } from "@shared/client-name";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { parseDeltaFlightPdf } from "./parsePdf";
 import { researchCityLeads, researchConfigured } from "./research";
+import * as ics from "./ics";
 
 const uploadDir = path.join(process.cwd(), "uploads", "pianos");
 if (!fs.existsSync(uploadDir)) {
@@ -163,7 +165,7 @@ async function autoCreateInvoiceForAppointment(
     lineItems: JSON.stringify(lineItems),
     subtotal: formatMoney(subtotal),
     total: formatMoney(subtotal),
-    customerName: `${customer.firstName} ${customer.lastName}`,
+    customerName: clientName(customer),
     customerEmail: customer.email ?? "",
     customerAddress,
     customerPhone: customer.phone ?? "",
@@ -190,6 +192,8 @@ export async function registerRoutes(
     // Address autocomplete for the public booking page (server-side Google key)
     if (req.path === "/places/autocomplete" && req.method === "GET") return next();
     if (req.path === "/places/details" && req.method === "GET") return next();
+    // Public read-only calendar subscription feed (HMAC token in the path)
+    if (/^\/feed\/[A-Za-z0-9]+\.ics$/.test(req.path) && req.method === "GET") return next();
     return isAuthenticated(req, res, next);
   });
 
@@ -455,6 +459,61 @@ export async function registerRoutes(
     }
   });
 
+  // Move a piano to a different client, taking its history with it.
+  app.post("/api/pianos/:id/reassign", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      const newCustomerId = parseInt(req.body?.customerId);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      if (isNaN(newCustomerId)) return res.status(400).json({ message: "Pick a client to move this piano to." });
+
+      const piano = await storage.getPiano(id);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+
+      const newOwner = await storage.getCustomer(newCustomerId);
+      if (!newOwner) return res.status(404).json({ message: "Client not found" });
+      if (newOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      if (newCustomerId === piano.customerId) {
+        return res.status(400).json({ message: "That piano already belongs to this client." });
+      }
+
+      const moved = await storage.reassignPiano(id, newCustomerId);
+      if (!moved) return res.status(404).json({ message: "Piano not found" });
+      res.json({ success: true, moved, piano: await storage.getPiano(id) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Fold a duplicate piano record into this one.
+  app.post("/api/pianos/:id/merge", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const keepId = parseInt(req.params.id);
+      const mergeId = parseInt(req.body?.mergePianoId);
+      if (isNaN(keepId)) return res.status(400).json({ message: "Invalid ID" });
+      if (isNaN(mergeId)) return res.status(400).json({ message: "Pick a piano to merge in." });
+      if (keepId === mergeId) return res.status(400).json({ message: "Pick two different pianos." });
+
+      const keeper = await storage.getPiano(keepId);
+      const loser = await storage.getPiano(mergeId);
+      if (!keeper || !loser) return res.status(404).json({ message: "Piano not found" });
+      const keeperOwner = await storage.getCustomer(keeper.customerId);
+      const loserOwner = await storage.getCustomer(loser.customerId);
+      if (!keeperOwner || keeperOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      if (!loserOwner || loserOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+
+      const merged = await storage.mergePianos(keepId, mergeId);
+      if (!merged) return res.status(404).json({ message: "Piano not found" });
+      res.json({ success: true, merged, piano: await storage.getPiano(keepId) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/pianos/:id/services", async (req, res) => {
     try {
       const userId = getUserId(req);
@@ -630,6 +689,341 @@ export async function registerRoutes(
     }
   });
 
+  // ====================================================================
+  // Calendar sync: Gazelle (Falcetti Pianos) import + aggregate export
+  // ====================================================================
+  const calendarSyncFilePath = path.join(process.cwd(), "data", "calendar-sync.json");
+  const DEFAULT_GAZELLE_URL =
+    "https://gazelleapp.io/calendars/cal_Vbjkk6bCA026IxGFv3mJFf2Kq9xe5lmdKJYteA5VpkEx.ics";
+
+  function readCalendarSync(): { gazelleUrl: string; falcettiEnabled: boolean } {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(calendarSyncFilePath, "utf8"));
+      return {
+        gazelleUrl: typeof parsed.gazelleUrl === "string" ? parsed.gazelleUrl : "",
+        falcettiEnabled: parsed.falcettiEnabled !== false,
+      };
+    } catch {
+      return { gazelleUrl: DEFAULT_GAZELLE_URL, falcettiEnabled: true };
+    }
+  }
+  function writeCalendarSync(data: { gazelleUrl: string; falcettiEnabled: boolean }) {
+    if (!fs.existsSync(path.join(process.cwd(), "data"))) {
+      fs.mkdirSync(path.join(process.cwd(), "data"), { recursive: true });
+    }
+    fs.writeFileSync(calendarSyncFilePath, JSON.stringify(data, null, 2));
+  }
+  // Seed on first boot so the Falcetti feed works immediately.
+  if (!fs.existsSync(calendarSyncFilePath)) {
+    writeCalendarSync({ gazelleUrl: DEFAULT_GAZELLE_URL, falcettiEnabled: true });
+  }
+
+  // Cache the parsed Gazelle feed for 10 minutes (it changes slowly).
+  let gazelleCache: { url: string; fetchedAt: number; events: ics.RawEvent[] } | null = null;
+  async function loadGazelleEvents(url: string): Promise<ics.RawEvent[]> {
+    if (!url) return [];
+    const now = Date.now();
+    if (gazelleCache && gazelleCache.url === url && now - gazelleCache.fetchedAt < 10 * 60 * 1000) {
+      return gazelleCache.events;
+    }
+    const resp = await fetch(url, { headers: { "User-Agent": "JWP-Books/1.0 (+calendar-sync)" } });
+    if (!resp.ok) throw new Error(`Gazelle feed responded ${resp.status}`);
+    const text = await resp.text();
+    const events = ics.parseICS(text);
+    gazelleCache = { url, fetchedAt: now, events };
+    return events;
+  }
+
+  // Stable secret token for the public subscription URL (no DB storage needed).
+  async function calendarFeedToken(): Promise<string> {
+    const { createHmac } = await import("crypto");
+    const secret = process.env.SESSION_SECRET || process.env.DATABASE_URL || "jwp-books";
+    return createHmac("sha256", secret).update("calendar-feed-v1").digest("hex").slice(0, 40);
+  }
+
+  // Owner-only: current sync settings + the subscription URLs for the phone.
+  app.get("/api/calendar-sync-settings", async (req, res) => {
+    try {
+      const cfg = readCalendarSync();
+      const token = await calendarFeedToken();
+      const base = appBaseUrl(req);
+      res.json({
+        gazelleUrl: cfg.gazelleUrl,
+        falcettiEnabled: cfg.falcettiEnabled,
+        feedUrl: `${base}/api/feed/${token}.ics`,
+        webcalUrl: `${base.replace(/^https?:/i, "webcal:")}/api/feed/${token}.ics`,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/calendar-sync-settings", async (req, res) => {
+    try {
+      const cur = readCalendarSync();
+      const next = {
+        gazelleUrl:
+          typeof req.body.gazelleUrl === "string" ? req.body.gazelleUrl.trim() : cur.gazelleUrl,
+        falcettiEnabled:
+          req.body.falcettiEnabled !== undefined ? !!req.body.falcettiEnabled : cur.falcettiEnabled,
+      };
+      writeCalendarSync(next);
+      gazelleCache = null; // force a refetch with the new URL
+      res.json(next);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Owner-only: Falcetti occurrences for the calendar's visible window.
+  app.get("/api/external-calendar/events", async (req, res) => {
+    try {
+      const cfg = readCalendarSync();
+      if (!cfg.gazelleUrl || cfg.falcettiEnabled === false) {
+        return res.json({ events: [], configured: !!cfg.gazelleUrl });
+      }
+      const start = req.query.start
+        ? new Date(String(req.query.start) + "T00:00:00")
+        : new Date(Date.now() - 90 * 24 * 3600 * 1000);
+      const end = req.query.end
+        ? new Date(String(req.query.end) + "T23:59:59")
+        : new Date(Date.now() + 400 * 24 * 3600 * 1000);
+      let raw: ics.RawEvent[];
+      try {
+        raw = await loadGazelleEvents(cfg.gazelleUrl);
+      } catch (err: any) {
+        return res.json({ events: [], configured: true, error: err.message });
+      }
+      const events = ics.expandFeed(raw, start, end).map((o) => ({
+        uid: o.uid,
+        title: o.title,
+        description: o.description || null,
+        location: o.location || null,
+        date: ics.naiveToMDYY(o.start),
+        startTime: o.allDay ? null : ics.naiveToTimeLabel(o.start),
+        endTime: o.allDay ? null : ics.naiveToTimeLabel(o.end),
+        isAllDay: o.allDay,
+        source: "falcetti",
+      }));
+      res.json({ events, configured: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ---- Aggregate export feed (public, token-gated) --------------------
+  const jsNaive = (js: Date, allDay = false): ics.NaiveDateTime => ({
+    y: js.getFullYear(),
+    mo: js.getMonth() + 1,
+    d: js.getDate(),
+    h: js.getHours(),
+    mi: js.getMinutes(),
+    allDay,
+  });
+  function feedNowStamp(): string {
+    return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  }
+  function foldICS(lines: string[]): string {
+    const out: string[] = [];
+    for (const line of lines) {
+      if (line.length <= 74) {
+        out.push(line);
+        continue;
+      }
+      out.push(line.slice(0, 74));
+      let rest = line.slice(74);
+      while (rest.length > 73) {
+        out.push(" " + rest.slice(0, 73));
+        rest = rest.slice(73);
+      }
+      if (rest.length) out.push(" " + rest);
+    }
+    return out.join("\r\n") + "\r\n";
+  }
+
+  async function buildAggregateFeed(): Promise<string> {
+    const booking = await import("./booking");
+    const repeat = await import("@shared/appointment-repeat");
+    const { db: drizzleDb } = await import("./db");
+    const { calendarEvents } = await import("@shared/schema");
+    const { eq: eqOp } = await import("drizzle-orm");
+
+    const winStart = new Date();
+    winStart.setDate(winStart.getDate() - 45);
+    winStart.setHours(0, 0, 0, 0);
+    const winEnd = new Date();
+    winEnd.setDate(winEnd.getDate() + 365);
+
+    const lines: string[] = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//JWP Books//Calendar Feed//EN",
+      "CALSCALE:GREGORIAN",
+      "METHOD:PUBLISH",
+      "X-WR-CALNAME:JWP Books",
+      "X-WR-TIMEZONE:America/New_York",
+      "X-PUBLISHED-TTL:PT30M",
+      "REFRESH-INTERVAL;VALUE=DURATION:PT30M",
+    ];
+    const stamp = feedNowStamp();
+    const emit = (
+      uid: string,
+      title: string,
+      start: ics.NaiveDateTime,
+      end: ics.NaiveDateTime,
+      category: string,
+      notes?: string | null,
+    ) => {
+      lines.push("BEGIN:VEVENT");
+      lines.push(`UID:${uid}`);
+      lines.push(`DTSTAMP:${stamp}`);
+      if (start.allDay) {
+        lines.push(`DTSTART;VALUE=DATE:${ics.naiveToICSDate(start)}`);
+        lines.push(`DTEND;VALUE=DATE:${ics.naiveToICSDate(end)}`);
+      } else {
+        lines.push(`DTSTART:${ics.naiveToICSStamp(start)}`);
+        lines.push(`DTEND:${ics.naiveToICSStamp(end)}`);
+      }
+      lines.push(`SUMMARY:${ics.icsEscape(title)}`);
+      if (notes) lines.push(`DESCRIPTION:${ics.icsEscape(notes)}`);
+      lines.push(`CATEGORIES:${ics.icsEscape(category)}`);
+      lines.push("END:VEVENT");
+    };
+
+    const ownerUserId = await resolveOwnerUserId();
+
+    // 1) JWP appointments (expanded across repeats)
+    if (ownerUserId) {
+      const customers = await storage.getCustomers(ownerUserId);
+      const custName = new Map(
+        customers.map((c) => [c.id, clientName(c, "Client")] as const),
+      );
+      const appts = await storage.getAppointments(ownerUserId);
+      for (const a of appts) {
+        if (a.status === "cancelled") continue;
+        const title = a.title || custName.get(a.customerId) || "Appointment";
+        const notes = a.servicesRequested || a.notes || null;
+        const mins = booking.parseTimeToMinutes(a.time);
+        const dur = booking.parseDurationToMinutes(a.duration, 90);
+        const dates = repeat.expandAppointmentDates(a as any, winStart, winEnd);
+        dates.forEach((dObj, i) => {
+          const uid = `jwp-appt-${a.id}-${i}@jwpbooks`;
+          if (a.isAllDay || mins == null) {
+            const endJs = new Date(dObj);
+            endJs.setDate(endJs.getDate() + 1);
+            emit(uid, title, jsNaive(dObj, true), jsNaive(endJs, true), "JWP Appointment", notes);
+          } else {
+            const startJs = new Date(dObj);
+            startJs.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+            const endJs = new Date(startJs.getTime() + dur * 60000);
+            emit(uid, title, jsNaive(startJs), jsNaive(endJs), "JWP Appointment", notes);
+          }
+        });
+      }
+
+      // 2) Trip Planner appointments
+      const trips = await storage.getTrips(ownerUserId);
+      for (const trip of trips) {
+        const tripAppts = await storage.getTripAppointments(trip.id);
+        for (const ta of tripAppts) {
+          if (ta.status === "cancelled") continue;
+          const ymd = booking.normalizeDateStr(ta.date);
+          if (!ymd) continue;
+          const dObj = new Date(ymd + "T00:00:00");
+          if (dObj < winStart || dObj > winEnd) continue;
+          const title =
+            (custName.get(ta.customerId) || "Trip appointment") +
+            (trip.name ? ` (${trip.name})` : "");
+          const mins = booking.parseTimeToMinutes(ta.time);
+          const dur = booking.parseDurationToMinutes(ta.duration, 120);
+          const uid = `jwp-trip-${ta.id}@jwpbooks`;
+          if (mins == null) {
+            const endJs = new Date(dObj);
+            endJs.setDate(endJs.getDate() + 1);
+            emit(uid, title, jsNaive(dObj, true), jsNaive(endJs, true), "JWP Trip", ta.servicesRequested);
+          } else {
+            const startJs = new Date(dObj);
+            startJs.setHours(Math.floor(mins / 60), mins % 60, 0, 0);
+            const endJs = new Date(startJs.getTime() + dur * 60000);
+            emit(uid, title, jsNaive(startJs), jsNaive(endJs), "JWP Trip", ta.servicesRequested);
+          }
+        }
+      }
+
+      // 3) Personal calendar events (skip memo-only notes)
+      const events = await drizzleDb
+        .select()
+        .from(calendarEvents)
+        .where(eqOp(calendarEvents.userId, ownerUserId));
+      for (const ev of events) {
+        if (ev.eventType === "memo") continue;
+        const ymd = booking.normalizeDateStr(ev.date);
+        if (!ymd) continue;
+        const startDay = new Date(ymd + "T00:00:00");
+        if (startDay > winEnd) continue;
+        const endYmd = booking.normalizeDateStr(ev.endDate) ?? ymd;
+        const endDay = new Date(endYmd + "T00:00:00");
+        if (endDay < winStart) continue;
+        const uid = `jwp-event-${ev.id}@jwpbooks`;
+        const startMins = booking.parseTimeToMinutes(ev.startTime);
+        if (ev.isAllDay || startMins == null) {
+          const endExclusive = new Date(endDay);
+          endExclusive.setDate(endExclusive.getDate() + 1);
+          emit(uid, ev.title, jsNaive(startDay, true), jsNaive(endExclusive, true), "Personal", ev.notes);
+        } else {
+          const endMins = booking.parseTimeToMinutes(ev.endTime) ?? startMins + 60;
+          const startJs = new Date(startDay);
+          startJs.setHours(Math.floor(startMins / 60), startMins % 60, 0, 0);
+          const endJs = new Date(startDay);
+          endJs.setHours(Math.floor(endMins / 60), endMins % 60, 0, 0);
+          if (endJs <= startJs) endJs.setTime(startJs.getTime() + 60 * 60000);
+          emit(uid, ev.title, jsNaive(startJs), jsNaive(endJs), "Personal", ev.notes);
+        }
+      }
+    }
+
+    // 4) Falcetti (Gazelle) shifts
+    const cfg = readCalendarSync();
+    if (cfg.gazelleUrl && cfg.falcettiEnabled !== false) {
+      try {
+        const raw = await loadGazelleEvents(cfg.gazelleUrl);
+        for (const o of ics.expandFeed(raw, winStart, winEnd)) {
+          const uid = `falcetti-${o.uid}-${ics.naiveToICSDate(o.start)}@jwpbooks`;
+          const title = o.title.startsWith("Falcetti") ? o.title : `Falcetti: ${o.title}`;
+          const notes = [o.location, o.description].filter(Boolean).join("\n") || null;
+          if (o.allDay) {
+            const endJs = new Date(o.end.y, o.end.mo - 1, o.end.d + 1);
+            emit(uid, title, o.start, jsNaive(endJs, true), "Falcetti", notes);
+          } else {
+            emit(uid, title, o.start, o.end, "Falcetti", notes);
+          }
+        }
+      } catch {
+        /* feed unreachable — skip Falcetti layer, keep the rest of the feed valid */
+      }
+    }
+
+    lines.push("END:VCALENDAR");
+    return foldICS(lines);
+  }
+
+  app.get("/api/feed/:file", async (req, res) => {
+    try {
+      const token = String(req.params.file).replace(/\.ics$/i, "");
+      const expected = await calendarFeedToken();
+      if (token !== expected) {
+        return res.status(403).type("text/plain").send("Invalid calendar feed token.");
+      }
+      const body = await buildAggregateFeed();
+      res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+      res.setHeader("Content-Disposition", 'inline; filename="jwp-books.ics"');
+      res.setHeader("Cache-Control", "public, max-age=600");
+      res.send(body);
+    } catch (error: any) {
+      res.status(500).type("text/plain").send(error.message);
+    }
+  });
+
   app.get("/api/appointments", async (req, res) => {
     try {
       const userId = getUserId(req);
@@ -759,6 +1153,8 @@ export async function registerRoutes(
         humidity: string;
         temperature: string;
         services: string;
+        pianoscope?: string | null;
+        serviceType?: string | null;
       }
       const sanitizedPianoRecords = (Array.isArray(pianoRecords) ? pianoRecords : []).filter((rec: PianoRecordPayload) => {
         if (rec.pianoId === null || rec.pianoId === undefined) return true;
@@ -1976,22 +2372,45 @@ export async function registerRoutes(
 
   /**
    * GET /api/booking/services
-   * Returns the client-facing service list for the public booking form.
-   * Deliberately a fixed list (per Willis) — the service_groups table holds
-   * internal category names (Field Service, Institutional, …) that aren't
-   * meaningful to customers.
+   * Returns the client-facing service list for the public booking form:
+   * every active master-service-list item marked Self-Schedulable, with its
+   * price and description. Falls back to a generic list if none are marked,
+   * so the form never renders empty.
    */
-  const PUBLIC_BOOKING_SERVICES = [
-    "Standard Tuning",
-    "Major Tuning (Pitch Correction)",
-    "Cleaning",
-    "Repairs",
-    "Regulation",
-    "Voicing",
-    "Inspection",
+  const FALLBACK_BOOKING_SERVICES = [
+    { name: "Standard Tuning", price: "", description: "" },
+    { name: "Repairs", price: "", description: "" },
+    { name: "Regulation", price: "", description: "" },
+    { name: "Voicing", price: "", description: "" },
   ];
   app.get("/api/booking/services", async (_req, res) => {
-    res.json({ services: PUBLIC_BOOKING_SERVICES });
+    try {
+      const ownerUserId = await resolveOwnerUserId();
+      if (!ownerUserId) return res.json({ services: FALLBACK_BOOKING_SERVICES });
+      const catalog = await storage.getServiceCatalog(ownerUserId);
+      const services = catalog
+        .filter(c => c.selfSchedulable && c.isActive !== false)
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name))
+        .map(c => {
+          // description column may hold JSON {t: serviceType, d: text} (settings encoding)
+          let desc = c.description ?? "";
+          try {
+            const parsed = JSON.parse(desc);
+            if (parsed && typeof parsed === "object" && ("d" in parsed || "t" in parsed)) {
+              desc = parsed.d ?? "";
+            }
+          } catch { /* plain text — keep as is */ }
+          const costNum = parseFloat(String(c.defaultCost ?? "").replace(/[^0-9.]/g, ""));
+          return {
+            name: c.name.trim(),
+            price: Number.isFinite(costNum) && costNum > 0 ? `$${costNum.toFixed(0)}` : "",
+            description: desc,
+          };
+        });
+      res.json({ services: services.length > 0 ? services : FALLBACK_BOOKING_SERVICES });
+    } catch {
+      res.json({ services: FALLBACK_BOOKING_SERVICES });
+    }
   });
 
   /**
@@ -2048,7 +2467,16 @@ export async function registerRoutes(
     const todayStr = booking.toLocalYMD(new Date());
 
     const existingAppts = await drizzleDb
-      .select({ date: appointments.date, time: appointments.time, duration: appointments.duration, status: appointments.status })
+      .select({
+        date: appointments.date,
+        time: appointments.time,
+        duration: appointments.duration,
+        status: appointments.status,
+        isAllDay: appointments.isAllDay,
+        endDate: appointments.endDate,
+        repeatFrequency: appointments.repeatFrequency,
+        repeatEndDate: appointments.repeatEndDate,
+      })
       .from(appointments)
       .where(eqOp(appointments.userId, ownerUserId));
 
@@ -2066,13 +2494,27 @@ export async function registerRoutes(
     // NOTE: every stored date goes through normalizeDateStr — the calendar
     // saves "7/11/26" while this engine works in "2026-07-11"; comparing them
     // raw made every busy lookup miss (the July 11 double-booking bug).
+    // Repeating appointments are expanded into every occurrence within the
+    // booking horizon, and all-day appointments block their whole day(s).
+    const repeat = await import("@shared/appointment-repeat");
+    const todayDate = new Date();
+    todayDate.setHours(0, 0, 0, 0);
+    const horizonEndDate = new Date(todayDate);
+    horizonEndDate.setDate(horizonEndDate.getDate() + config.bookingHorizonWeeks * 7 + 14);
     for (const a of existingAppts) {
-      const date = booking.normalizeDateStr(a.date);
-      if (!date || date < todayStr || a.status === "cancelled") continue;
-      (busyByDate[date] ??= []).push({ time: a.time, duration: a.duration });
-      apptCountByDate[date] = (apptCountByDate[date] ?? 0) + 1;
-      const wk = booking.isoWeekKey(date);
-      countByWeek[wk] = (countByWeek[wk] ?? 0) + 1;
+      if (a.status === "cancelled") continue;
+      for (const d of repeat.expandAppointmentDates(a, todayDate, horizonEndDate)) {
+        const date = booking.toLocalYMD(d);
+        if (date < todayStr) continue;
+        if (a.isAllDay) {
+          blockedDates.add(date);
+          continue;
+        }
+        (busyByDate[date] ??= []).push({ time: a.time, duration: a.duration });
+        apptCountByDate[date] = (apptCountByDate[date] ?? 0) + 1;
+        const wk = booking.isoWeekKey(date);
+        countByWeek[wk] = (countByWeek[wk] ?? 0) + 1;
+      }
     }
     // Pending requests with a chosen slot HOLD that slot until approved/declined
     for (const r of pendingReqs) {
@@ -2736,13 +3178,75 @@ export async function registerRoutes(
     return createHmac("sha256", secret).update(`approve:${requestId}`).digest("hex");
   }
 
-  /** Create/find customer + create appointment from a booking request (shared by all approval paths). */
+  /** "2026-08-29" (or already "8/29/26") → "8/29/26" — the app's native appointment date format. */
+  function toAppointmentDate(raw: string): string {
+    const iso = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (iso) {
+      const [, y, m, d] = iso;
+      return `${parseInt(m, 10)}/${parseInt(d, 10)}/${y.slice(2)}`;
+    }
+    return raw;
+  }
+
+  /** "16:00" / "09:00" (or already "4:00 PM") → "4:00 PM" — the app's native appointment time format. */
+  function toAppointmentTime(raw: string): string {
+    const t24 = raw.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (t24) {
+      let h = parseInt(t24[1], 10);
+      const ampm = h >= 12 ? "PM" : "AM";
+      if (h === 0) h = 12;
+      else if (h > 12) h -= 12;
+      return `${h}:${t24[2]} ${ampm}`;
+    }
+    return raw.trim();
+  }
+
+  /** Pull "Piano: Make Model | Room: X | Year: Y | Notes: Z" details the /book form packs into preferredTimes. */
+  function parseBookingPianoDetails(preferredTimes: string | null | undefined): {
+    makeModel?: string; room?: string; year?: string;
+  } {
+    if (!preferredTimes) return {};
+    const out: { makeModel?: string; room?: string; year?: string } = {};
+    for (const part of preferredTimes.split("|").map(s => s.trim())) {
+      if (/^Piano:/i.test(part)) out.makeModel = part.replace(/^Piano:\s*/i, "");
+      else if (/^Room:/i.test(part)) out.room = part.replace(/^Room:\s*/i, "");
+      else if (/^Year:/i.test(part)) out.year = part.replace(/^Year:\s*/i, "");
+    }
+    return out;
+  }
+
+  /**
+   * Create/link customer + piano + create an itemized appointment from a booking
+   * request (shared by all approval paths: dashboard modal, quick-approve email
+   * link, and auto-approve mode).
+   *
+   * opts.customerId — link to this existing client instead of name-matching/creating.
+   * opts.pianoId    — attach this existing piano.
+   * opts.createPiano — create a new piano from the request's piano info (default
+   *                    true when no pianoId is given).
+   */
   async function convertBookingRequestToAppointment(
     existing: import("@shared/schema").BookingRequest,
     userId: string,
-    opts: { date: string; time: string; duration?: string; notes?: string },
+    opts: {
+      date: string; time: string; duration?: string; notes?: string;
+      customerId?: number; pianoId?: number; createPiano?: boolean;
+    },
   ) {
-    let customer = await storage.findCustomerByName(existing.firstName, existing.lastName, userId);
+    const date = toAppointmentDate(opts.date);
+    const time = toAppointmentTime(opts.time);
+
+    // ── Customer: explicit link > name match > create new ──────────────────
+    let customer: import("@shared/schema").Customer | undefined;
+    if (opts.customerId) {
+      customer = await storage.getCustomer(opts.customerId);
+      if (!customer || customer.userId !== userId) {
+        throw new Error("Selected client not found");
+      }
+    }
+    if (!customer) {
+      customer = await storage.findCustomerByName(existing.firstName, existing.lastName, userId);
+    }
     if (!customer) {
       customer = await storage.createCustomer({
         firstName: existing.firstName,
@@ -2758,14 +3262,73 @@ export async function registerRoutes(
       }, userId);
     }
 
+    // ── Piano: explicit link > create from the request's piano info ────────
+    let piano: import("@shared/schema").Piano | undefined;
+    if (opts.pianoId) {
+      piano = await storage.getPiano(opts.pianoId);
+      if (!piano || piano.customerId !== customer.id) {
+        throw new Error("Selected piano doesn't belong to that client");
+      }
+    } else if (opts.createPiano === true || (opts.createPiano !== false && existing.pianoType)) {
+      const details = parseBookingPianoDetails(existing.preferredTimes);
+      // "Steinway Model M" → make = first word, model = the rest
+      const mm = (details.makeModel ?? "").trim();
+      const make = mm ? mm.split(/\s+/)[0] : undefined;
+      const model = mm ? mm.split(/\s+/).slice(1).join(" ") || undefined : undefined;
+      piano = await storage.createPiano({
+        customerId: customer.id,
+        pianoType: existing.pianoType || undefined,
+        make,
+        model,
+        year: details.year || undefined,
+        location: details.room || undefined,
+        lastTuned: existing.lastTuned || undefined,
+      });
+      await storage.syncCustomerFromPianos(customer.id);
+    }
+
+    // ── Service line: match the request's service against the catalog ──────
+    const serviceName = existing.serviceRequested || "Standard Tuning";
+    const catalog = await storage.getServiceCatalog(userId);
+    const catalogMatch = catalog.find(
+      c => c.name.trim().toLowerCase() === serviceName.trim().toLowerCase(),
+    );
+    const eachAmount = catalogMatch?.defaultCost
+      ? parseFloat(String(catalogMatch.defaultCost).replace(/[^0-9.]/g, "")) || 0
+      : 0;
+    const catDurMins = (() => {
+      const s = catalogMatch?.defaultDuration ?? "";
+      let total = 0;
+      const hr = s.match(/(\d+(?:\.\d+)?)\s*h/i);
+      const min = s.match(/(\d+)\s*m/i);
+      if (hr) total += Math.round(parseFloat(hr[1]) * 60);
+      if (min) total += parseInt(min[1]);
+      return total;
+    })();
+    const isTuning = catalogMatch ? !!catalogMatch.isTuning : /tuning/i.test(serviceName);
+    const line = {
+      lineId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: catalogMatch?.name ?? serviceName,
+      expenseType: "Fixed Rate Labor",
+      quantity: 1,
+      eachAmount,
+      durationMinutes: catDurMins || 90,
+      isTuning,
+      isTaxable: false,
+    };
+    const serviceItems = JSON.stringify([{ pianoId: piano?.id ?? null, lines: [line] }]);
+
     const appointment = await storage.createAppointment({
       customerId: customer.id,
-      date: opts.date,
-      time: opts.time,
-      duration: opts.duration ?? "2 hours",
-      isTuning: true,
-      servicesRequested: existing.serviceRequested || "Standard Tuning",
-      notes: opts.notes ?? `From booking request submitted by ${existing.firstName} ${existing.lastName}.`,
+      pianoId: piano?.id ?? undefined,
+      date,
+      time,
+      duration: opts.duration ?? (catDurMins ? `${Math.floor(catDurMins / 60)} hr ${catDurMins % 60 ? `${catDurMins % 60} min` : ""}`.trim() : "1 hr 30 min"),
+      isTuning,
+      servicesRequested: line.name,
+      priceEstimate: eachAmount > 0 ? `$${eachAmount.toFixed(2)}` : undefined,
+      serviceItems,
+      notes: opts.notes || `From booking request submitted by ${existing.firstName} ${existing.lastName}.`,
       status: "scheduled",
     }, userId);
 
@@ -2775,7 +3338,7 @@ export async function registerRoutes(
       convertedAppointmentId: appointment.id,
     });
 
-    return { request: updated, customer, appointment };
+    return { request: updated, customer, piano, appointment };
   }
 
   /** Base URL of the deployed app, for links in emails. */
@@ -2928,7 +3491,10 @@ export async function registerRoutes(
     try {
       const userId = getUserId(req);
       const id = parseInt(req.params.id as string);
-      const body = req.body as { date?: string; time?: string; duration?: string; notes?: string };
+      const body = req.body as {
+        date?: string; time?: string; duration?: string; notes?: string;
+        customerId?: number; pianoId?: number; createPiano?: boolean;
+      };
 
       const all = await storage.getBookingRequests(userId);
       const existing = all.find(r => r.id === id);
@@ -2945,6 +3511,9 @@ export async function registerRoutes(
         time,
         duration: body.duration,
         notes: body.notes,
+        customerId: typeof body.customerId === "number" ? body.customerId : undefined,
+        pianoId: typeof body.pianoId === "number" ? body.pianoId : undefined,
+        createPiano: body.createPiano,
       });
 
       // Email the client their confirmation (fire-and-forget)

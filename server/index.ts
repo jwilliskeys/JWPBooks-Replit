@@ -102,6 +102,13 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "business_expenses" ADD COLUMN IF NOT EXISTS "receipt_url" text;
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "service_items" text;
       ALTER TABLE "service_records" ADD COLUMN IF NOT EXISTS "pianoscope" text;
+      ALTER TABLE "service_catalog" ADD COLUMN IF NOT EXISTS "self_schedulable" boolean DEFAULT false;
+      ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "title" text;
+      ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "travel_mode" text;
+      ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "is_all_day" boolean DEFAULT false;
+      ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "end_date" text;
+      ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "repeat_frequency" text;
+      ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "repeat_end_date" text;
       CREATE TABLE IF NOT EXISTS "inspections" (
         "id" serial PRIMARY KEY NOT NULL,
         "user_id" text,

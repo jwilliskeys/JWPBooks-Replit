@@ -1,5 +1,6 @@
 import { db } from "./db";
 import { eq, and, asc, desc, ne } from "drizzle-orm";
+import { clientName } from "@shared/client-name";
 import {
   customers,
   pianos,
@@ -64,6 +65,126 @@ import {
   type InsertOutreachLead,
 } from "@shared/schema";
 
+// ─── Piano reassign / merge helpers ──────────────────────────────────────────
+// An appointment records its pianos in two places: the pianoId column (the
+// first/primary piano, kept for legacy screens) and the serviceItems JSON,
+// which is an array of { pianoId, lines } groups — one per piano on the visit.
+
+type ServiceItemGroupish = { pianoId: number | null; lines?: unknown[] };
+
+function parseServiceItems(raw: string | null | undefined): ServiceItemGroupish[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ServiceItemGroupish[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** True if this appointment also covers pianos other than `pianoId`. */
+function appointmentTouchesOtherPianos(raw: string | null | undefined, pianoId: number): boolean {
+  const groups = parseServiceItems(raw);
+  if (!groups) return false;
+  return groups.some(g => g.pianoId != null && g.pianoId !== pianoId);
+}
+
+/**
+ * Swap `fromId` for `toId` inside a serviceItems JSON string, folding the two
+ * groups together if the appointment somehow listed both pianos. Returns the
+ * original string untouched when nothing referenced `fromId`, so callers can
+ * use identity to detect "no change".
+ */
+function rewritePianoInServiceItems(raw: string | null | undefined, fromId: number, toId: number): string | null {
+  const groups = parseServiceItems(raw);
+  if (!groups) return raw ?? null;
+  if (!groups.some(g => g.pianoId === fromId)) return raw ?? null;
+
+  const out: ServiceItemGroupish[] = [];
+  for (const g of groups) {
+    const pianoId = g.pianoId === fromId ? toId : g.pianoId;
+    const existing = pianoId != null ? out.find(o => o.pianoId === pianoId) : undefined;
+    if (existing) {
+      existing.lines = [...(existing.lines ?? []), ...(g.lines ?? [])];
+    } else {
+      out.push({ ...g, pianoId, lines: [...(g.lines ?? [])] });
+    }
+  }
+  return JSON.stringify(out);
+}
+
+function newerDateStr(a: string | null | undefined, b: string | null | undefined): string | null {
+  const ts = (s: string | null | undefined): number => {
+    if (!s) return NaN;
+    const parts = s.split("/");
+    if (parts.length !== 3) return NaN;
+    let year = parseInt(parts[2]);
+    if (year < 100) year += 2000;
+    return new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1])).getTime();
+  };
+  const ta = ts(a), tb = ts(b);
+  if (isNaN(ta)) return b ?? null;
+  if (isNaN(tb)) return a ?? null;
+  return ta >= tb ? (a ?? null) : (b ?? null);
+}
+
+/**
+ * Build the patch that folds `loser`'s details into `keeper`: the keeper's own
+ * values always win, blanks get backfilled from the duplicate, photos and tags
+ * combine, notes are appended under a divider, and any "yes" flag stays "yes".
+ */
+function mergePianoFields(keeper: Piano, loser: Piano): Partial<InsertPiano> {
+  const fill = <T,>(k: T | null | undefined, l: T | null | undefined): T | null =>
+    (k === null || k === undefined || k === "" ? (l ?? null) : k) as T | null;
+
+  const notes = [keeper.notes?.trim(), loser.notes?.trim()].filter(Boolean);
+  const mergedNotes = notes.length > 1
+    ? `${notes[0]}\n\n— merged from duplicate piano record —\n${notes[1]}`
+    : (notes[0] ?? null);
+
+  const tags = Array.from(new Set([...(keeper.tags ?? []), ...(loser.tags ?? [])]));
+  const photos = [...(keeper.photos ?? []), ...(loser.photos ?? []).filter(p => !(keeper.photos ?? []).includes(p))];
+
+  return {
+    make: fill(keeper.make, loser.make),
+    model: fill(keeper.model, loser.model),
+    pianoType: fill(keeper.pianoType, loser.pianoType),
+    year: fill(keeper.year, loser.year),
+    serialNumber: fill(keeper.serialNumber, loser.serialNumber),
+    location: fill(keeper.location, loser.location),
+    caseColor: fill(keeper.caseColor, loser.caseColor),
+    caseFinish: fill(keeper.caseFinish, loser.caseFinish),
+    size: fill(keeper.size, loser.size),
+    useType: fill(keeper.useType, loser.useType),
+    tuningInterval: fill(keeper.tuningInterval, loser.tuningInterval),
+    lastTuned: newerDateStr(keeper.lastTuned, loser.lastTuned),
+    notes: mergedNotes,
+    tags: tags.length ? tags : null,
+    photos: photos.length ? photos : null,
+    onConsignment: !!(keeper.onConsignment || loser.onConsignment),
+    hasIvory: !!(keeper.hasIvory || loser.hasIvory),
+    needsRepair: !!(keeper.needsRepair || loser.needsRepair),
+    totalLoss: !!(keeper.totalLoss || loser.totalLoss),
+    playerInstalled: !!(keeper.playerInstalled || loser.playerInstalled),
+    pianoLifeSaver: !!(keeper.pianoLifeSaver || loser.pianoLifeSaver),
+    rentalPiano: !!(keeper.rentalPiano || loser.rentalPiano),
+    isActive: keeper.isActive !== false,
+  };
+}
+
+export interface PianoMergeCounts {
+  serviceRecords: number;
+  appointments: number;
+  tripAppointments: number;
+  invoices: number;
+  inspections: number;
+}
+
+export interface PianoMoveCounts extends PianoMergeCounts {
+  /** Shared visits left with the original client because they cover other pianos too. */
+  skippedShared: number;
+}
+
 export interface IStorage {
   getCustomers(userId: string): Promise<Customer[]>;
   getCustomer(id: number): Promise<Customer | undefined>;
@@ -77,6 +198,8 @@ export interface IStorage {
   updatePiano(id: number, data: Partial<InsertPiano>): Promise<Piano | undefined>;
   deletePiano(id: number): Promise<boolean>;
   getAllPianos(userId: string): Promise<Piano[]>;
+  reassignPiano(pianoId: number, newCustomerId: number): Promise<PianoMoveCounts | null>;
+  mergePianos(keepId: number, mergeId: number): Promise<PianoMergeCounts | null>;
   getServiceRecords(customerId: number): Promise<ServiceRecord[]>;
   getServiceRecordsByPiano(pianoId: number): Promise<ServiceRecord[]>;
   createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord>;
@@ -257,6 +380,172 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(customers, and(eq(pianos.customerId, customers.id), eq(customers.userId, userId)))
       .orderBy(pianos.createdAt);
     return results.map(r => r.piano);
+  }
+
+  // ─── Reassign / merge ─────────────────────────────────────────────────────
+  //
+  // Two related maintenance operations on pianos:
+  //   reassignPiano  — this piano now belongs to a different client.
+  //   mergePianos    — two rows are really the same instrument; fold one in.
+  //
+  // Both have to chase every table that carries a piano_id: service_records,
+  // appointments (including the serviceItems JSON, which holds a pianoId per
+  // group), trip_appointments, invoices, and inspections.
+
+  /**
+   * Move `pianoId` to `newCustomerId`, dragging its whole paper trail along.
+   *
+   * Appointments (and the invoices generated from them) that ALSO cover other
+   * pianos belonging to the original client are deliberately left behind — a
+   * joint visit was billed to that client and shouldn't be silently rewritten.
+   * The counts returned say what moved and what was skipped.
+   */
+  async reassignPiano(pianoId: number, newCustomerId: number): Promise<PianoMoveCounts | null> {
+    const piano = await this.getPiano(pianoId);
+    if (!piano) return null;
+    const oldCustomerId = piano.customerId;
+    if (oldCustomerId === newCustomerId) {
+      return { serviceRecords: 0, appointments: 0, tripAppointments: 0, invoices: 0, inspections: 0, skippedShared: 0 };
+    }
+    const newCustomer = await this.getCustomer(newCustomerId);
+    if (!newCustomer) return null;
+
+    const counts = { serviceRecords: 0, appointments: 0, tripAppointments: 0, invoices: 0, inspections: 0, skippedShared: 0 };
+
+    await db.update(pianos).set({ customerId: newCustomerId }).where(eq(pianos.id, pianoId));
+
+    const svc = await db.update(serviceRecords)
+      .set({ customerId: newCustomerId })
+      .where(eq(serviceRecords.pianoId, pianoId))
+      .returning({ id: serviceRecords.id });
+    counts.serviceRecords = svc.length;
+
+    // Appointments: only move the ones that are about this piano alone.
+    const appts = await db.select().from(appointments).where(eq(appointments.pianoId, pianoId));
+    const movedApptIds = new Set<number>();
+    for (const a of appts) {
+      if (appointmentTouchesOtherPianos(a.serviceItems, pianoId)) {
+        counts.skippedShared++;
+        continue;
+      }
+      await db.update(appointments).set({ customerId: newCustomerId }).where(eq(appointments.id, a.id));
+      movedApptIds.add(a.id);
+      counts.appointments++;
+    }
+
+    const tripAppts = await db.update(tripAppointments)
+      .set({ customerId: newCustomerId })
+      .where(eq(tripAppointments.pianoId, pianoId))
+      .returning({ id: tripAppointments.id });
+    counts.tripAppointments = tripAppts.length;
+
+    // Invoices: skip any tied to an appointment we deliberately left behind.
+    const customerAddress = [newCustomer.address, newCustomer.city, newCustomer.state, newCustomer.zipCode]
+      .filter(Boolean).join(", ");
+    const invs = await db.select().from(invoices).where(eq(invoices.pianoId, pianoId));
+    for (const inv of invs) {
+      if (inv.appointmentId && !movedApptIds.has(inv.appointmentId)) continue;
+      await db.update(invoices).set({
+        customerId: newCustomerId,
+        customerName: clientName(newCustomer),
+        customerEmail: newCustomer.email ?? "",
+        customerAddress,
+        customerPhone: newCustomer.phone ?? "",
+      }).where(eq(invoices.id, inv.id));
+      counts.invoices++;
+    }
+
+    const insp = await db.update(inspections)
+      .set({ customerId: newCustomerId })
+      .where(eq(inspections.pianoId, pianoId))
+      .returning({ id: inspections.id });
+    counts.inspections = insp.length;
+
+    await this.syncCustomerFromPianos(oldCustomerId);
+    await this.syncCustomerFromPianos(newCustomerId);
+    return counts;
+  }
+
+  /**
+   * Fold `mergeId` into `keepId`: every record pointed at the duplicate is
+   * repointed at the keeper, blank fields on the keeper are backfilled from
+   * the duplicate, photos/tags are combined, then the duplicate row is removed.
+   *
+   * Deliberately does NOT go through deletePiano() — that wipes service
+   * records, which by this point belong to the keeper.
+   */
+  async mergePianos(keepId: number, mergeId: number): Promise<PianoMergeCounts | null> {
+    if (keepId === mergeId) return null;
+    const keeper = await this.getPiano(keepId);
+    const loser = await this.getPiano(mergeId);
+    if (!keeper || !loser) return null;
+    const keeperCustomer = await this.getCustomer(keeper.customerId);
+    if (!keeperCustomer) return null;
+    const crossClient = keeper.customerId !== loser.customerId;
+
+    const counts = { serviceRecords: 0, appointments: 0, tripAppointments: 0, invoices: 0, inspections: 0 };
+    const ownerPatch = crossClient ? { customerId: keeper.customerId } : {};
+
+    const svc = await db.update(serviceRecords)
+      .set({ pianoId: keepId, ...ownerPatch })
+      .where(eq(serviceRecords.pianoId, mergeId))
+      .returning({ id: serviceRecords.id });
+    counts.serviceRecords = svc.length;
+
+    // Appointments carry the piano twice: the pianoId column and the
+    // serviceItems JSON. Rewrite both, collapsing duplicate groups.
+    const appts = await db.select().from(appointments).where(eq(appointments.pianoId, mergeId));
+    for (const a of appts) {
+      await db.update(appointments)
+        .set({ pianoId: keepId, serviceItems: rewritePianoInServiceItems(a.serviceItems, mergeId, keepId), ...ownerPatch })
+        .where(eq(appointments.id, a.id));
+      counts.appointments++;
+    }
+    // Multi-piano appointments whose pianoId column points elsewhere.
+    const otherAppts = await db.select().from(appointments).where(eq(appointments.customerId, loser.customerId));
+    for (const a of otherAppts) {
+      if (a.pianoId === mergeId) continue;
+      const rewritten = rewritePianoInServiceItems(a.serviceItems, mergeId, keepId);
+      if (rewritten === a.serviceItems) continue;
+      await db.update(appointments).set({ serviceItems: rewritten }).where(eq(appointments.id, a.id));
+    }
+
+    const tripAppts = await db.update(tripAppointments)
+      .set({ pianoId: keepId, ...ownerPatch })
+      .where(eq(tripAppointments.pianoId, mergeId))
+      .returning({ id: tripAppointments.id });
+    counts.tripAppointments = tripAppts.length;
+
+    const invoicePatch = crossClient
+      ? {
+          pianoId: keepId,
+          customerId: keeper.customerId,
+          customerName: clientName(keeperCustomer),
+          customerEmail: keeperCustomer.email ?? "",
+          customerAddress: [keeperCustomer.address, keeperCustomer.city, keeperCustomer.state, keeperCustomer.zipCode]
+            .filter(Boolean).join(", "),
+          customerPhone: keeperCustomer.phone ?? "",
+        }
+      : { pianoId: keepId };
+    const invs = await db.update(invoices)
+      .set(invoicePatch)
+      .where(eq(invoices.pianoId, mergeId))
+      .returning({ id: invoices.id });
+    counts.invoices = invs.length;
+
+    const insp = await db.update(inspections)
+      .set({ pianoId: keepId, ...ownerPatch })
+      .where(eq(inspections.pianoId, mergeId))
+      .returning({ id: inspections.id });
+    counts.inspections = insp.length;
+
+    await db.update(pianos).set(mergePianoFields(keeper, loser)).where(eq(pianos.id, keepId));
+    await db.delete(pianos).where(eq(pianos.id, mergeId));
+
+    await this.syncPianoLastTuned(keepId);
+    await this.syncCustomerFromPianos(keeper.customerId);
+    if (crossClient) await this.syncCustomerFromPianos(loser.customerId);
+    return counts;
   }
 
   async getServiceRecords(customerId: number): Promise<ServiceRecord[]> {
@@ -631,6 +920,10 @@ export class DatabaseStorage implements IStorage {
       humidity: string;
       temperature: string;
       services: string;
+      /** JSON summary parsed from an attached .pianoscope tuning file */
+      pianoscope?: string | null;
+      /** e.g. "Fine Tuning" / "Pitch Raise + Fine Tuning" (from the pianoscope file) */
+      serviceType?: string | null;
     }>;
     miscServices: string;
     appointmentDate: string;
@@ -642,7 +935,7 @@ export class DatabaseStorage implements IStorage {
         .where(eq(appointments.id, appointmentId));
 
       for (const rec of data.pianoRecords) {
-        const serviceType = rec.isTuning ? "tuning" : "service";
+        const serviceType = rec.serviceType || (rec.isTuning ? "tuning" : "service");
         await tx.insert(serviceRecords).values({
           customerId: data.customerId,
           pianoId: rec.pianoId ?? null,
@@ -655,6 +948,7 @@ export class DatabaseStorage implements IStorage {
           services: rec.services || "[]",
           isTuning: rec.isTuning,
           appointmentId,
+          pianoscope: rec.pianoscope || null,
         });
 
         if (rec.isTuning && rec.pianoId) {

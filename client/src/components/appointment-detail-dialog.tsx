@@ -16,8 +16,27 @@ import {
 } from "@/components/ui/select";
 import {
   Calendar, Clock, Music, Pencil, FileText, CheckCircle,
-  Trash2, ExternalLink, MapPin, User, X,
+  Trash2, ExternalLink, MapPin, User, X, Car, Repeat, Copy,
 } from "lucide-react";
+import {
+  SectionBar,
+  PianoCard,
+  PianoPickerView,
+  ClientSearchBox,
+  DetailsFields,
+  DateTimeFields,
+  repeatLabel,
+  type PianoSection,
+} from "./appointment-editor";
+import {
+  DatePickerPopover,
+  StepperGroup,
+  formatTimeMinutes,
+  formatDurationMinutes,
+  parseTimeString,
+  DEFAULT_TIME_MINUTES,
+} from "./time-stepper";
+import { parseDurationToMinutes } from "@/lib/scheduling";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn, formatPhone } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -39,6 +58,7 @@ import {
   formatLineSubline,
   formatLineDuration,
 } from "@/lib/service-lines";
+import { clientName } from "@shared/client-name";
 
 interface Props {
   appointment: Appointment | null;
@@ -47,16 +67,37 @@ interface Props {
 }
 
 type FormState = {
-  date: string;
-  time: string;
-  duration: string;
-  servicesRequested: string;
-  priceEstimate: string;
+  customerId: number;
+  title: string;
   notes: string;
+  travelMode: string;
   status: string;
-  pianoId: number | null;
-  isTuning: boolean;
+  date: string;              // M/D/YY
+  isAllDay: boolean;
+  endDate: string;           // M/D/YY or "" (multi-day all-day)
+  repeatFrequency: string;   // "none" | weekly | biweekly | monthly | …
+  repeatEndDate: string;     // M/D/YY or ""
+  timeMinutes: number;
+  durationMinutes: number;
 };
+
+function formFromAppointment(a: Appointment): FormState {
+  const t = parseTimeString(a.time ?? "");
+  return {
+    customerId: a.customerId,
+    title: a.title ?? "",
+    notes: a.notes ?? "",
+    travelMode: a.travelMode ?? "Driving",
+    status: a.status ?? "scheduled",
+    date: a.date ?? "",
+    isAllDay: a.isAllDay ?? false,
+    endDate: a.endDate ?? "",
+    repeatFrequency: a.repeatFrequency ?? "none",
+    repeatEndDate: a.repeatEndDate ?? "",
+    timeMinutes: t >= 0 ? t : DEFAULT_TIME_MINUTES,
+    durationMinutes: parseDurationToMinutes(a.duration || "1 hr 30 min") || 90,
+  };
+}
 
 function invoiceStatusBadge(status: string | null | undefined) {
   switch (status) {
@@ -77,30 +118,27 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const [localAppt, setLocalAppt] = useState<Appointment | null>(null);
   const [localCreatedInvoice, setLocalCreatedInvoice] = useState<Invoice | null>(null);
   const [form, setForm] = useState<FormState>({
-    date: "", time: "", duration: "",
-    servicesRequested: "", priceEstimate: "", notes: "", status: "scheduled",
-    pianoId: null, isTuning: false,
+    customerId: 0, title: "", notes: "", travelMode: "Driving", status: "scheduled",
+    date: "", isAllDay: false, endDate: "", repeatFrequency: "none", repeatEndDate: "",
+    timeMinutes: DEFAULT_TIME_MINUTES, durationMinutes: 90,
   });
   // Itemized pianos + services (new-style appointments). null = legacy free-text.
   const [editGroups, setEditGroups] = useState<ServiceItemGroup[] | null>(null);
+  const [resetClientMode, setResetClientMode] = useState(false);
+  const [showEditPianoPicker, setShowEditPianoPicker] = useState(false);
+  // Clone: duplicate this appointment onto another date
+  const [showClone, setShowClone] = useState(false);
+  const [cloneDate, setCloneDate] = useState("");
   const { toast } = useToast();
 
   useEffect(() => {
     if (appointment) {
       setLocalAppt(appointment);
-      setForm({
-        date: appointment.date ?? "",
-        time: appointment.time ?? "",
-        duration: appointment.duration ?? "",
-        servicesRequested: appointment.servicesRequested ?? "",
-        priceEstimate: appointment.priceEstimate ?? "",
-        notes: appointment.notes ?? "",
-        status: appointment.status ?? "scheduled",
-        pianoId: appointment.pianoId ?? null,
-        isTuning: appointment.isTuning ?? false,
-      });
+      setForm(formFromAppointment(appointment));
       setEditGroups(parseServiceItems(appointment.serviceItems));
       setEditMode(false);
+      setResetClientMode(false);
+      setShowEditPianoPicker(false);
       setLocalCreatedInvoice(null);
     }
   }, [appointment?.id]);
@@ -116,6 +154,12 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const pianoLabel = piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : null;
   const customerPianos = allPianos?.filter(p => p.customerId === displayed?.customerId && p.isActive !== false) ?? [];
 
+  // Edit-mode client (may differ from the saved one after "Reset Client")
+  const editCustomerId = form.customerId || displayed?.customerId || 0;
+  const editCustomer = customers?.find(c => c.id === editCustomerId);
+  const editClientPianos = allPianos?.filter(p => p.customerId === editCustomerId && p.isActive !== false) ?? [];
+  const pianoById = new Map((allPianos ?? []).map(p => [p.id, p]));
+
   const linkedInvoice = localCreatedInvoice
     ?? allInvoices?.find(inv => inv.appointmentId === displayed?.id)
     ?? null;
@@ -128,7 +172,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
     : null;
 
   const updateMutation = useMutation({
-    mutationFn: (data: Partial<FormState> & { serviceItems?: string }) =>
+    mutationFn: (data: Record<string, unknown>) =>
       apiRequest("PATCH", `/api/appointments/${displayed?.id}`, data),
     onSuccess: async (res) => {
       const updated = await res.json();
@@ -139,6 +183,33 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
       toast({ title: "Appointment updated" });
     },
     onError: () => toast({ title: "Failed to update", variant: "destructive" }),
+  });
+
+  const cloneMutation = useMutation({
+    mutationFn: (newDate: string) =>
+      apiRequest("POST", "/api/appointments", {
+        customerId: displayed?.customerId,
+        pianoId: displayed?.pianoId ?? undefined,
+        date: newDate,
+        time: displayed?.time,
+        duration: displayed?.duration ?? undefined,
+        servicesRequested: displayed?.servicesRequested ?? undefined,
+        priceEstimate: displayed?.priceEstimate ?? undefined,
+        notes: displayed?.notes ?? undefined,
+        isTuning: displayed?.isTuning ?? false,
+        serviceItems: displayed?.serviceItems ?? undefined,
+        title: displayed?.title ?? undefined,
+        travelMode: displayed?.travelMode ?? undefined,
+        isAllDay: displayed?.isAllDay ?? false,
+        status: "scheduled",
+      }),
+    onSuccess: (_res, newDate) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      setShowClone(false);
+      setCloneDate("");
+      toast({ title: `Cloned to ${newDate}` });
+    },
+    onError: () => toast({ title: "Failed to clone", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -165,7 +236,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
       const invoiceNumber = String(numData.nextNumber ?? "1");
 
       const customerName = customer
-        ? `${customer.firstName} ${customer.lastName}`
+        ? clientName(customer)
         : "";
       const rawPrice = parseFloat(displayed?.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
       const priceStr = `$${rawPrice.toFixed(2)}`;
@@ -206,21 +277,63 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
   const isScheduled = displayed.status === "scheduled" || !displayed.status;
 
   function handleSave() {
-    if (editGroups && editGroups.length > 0) {
-      // Itemized mode: recompute the summary fields from the service lines
-      const names = groupsServiceNames(editGroups);
-      const total = groupsTotal(editGroups);
-      updateMutation.mutate({
-        ...form,
-        servicesRequested: names.join(", "),
-        priceEstimate: total > 0 ? formatMoney(total) : "",
-        isTuning: groupsHaveTuning(editGroups),
-        pianoId: editGroups.find(g => g.pianoId != null)?.pianoId ?? null,
-        serviceItems: serializeServiceItems(editGroups),
-      });
-    } else {
-      updateMutation.mutate(form);
+    // Price estimate is ALWAYS the sum of the service lines — never hand-edited.
+    const groups = editGroups ?? [];
+    const names = groupsServiceNames(groups);
+    const total = groupsTotal(groups);
+    updateMutation.mutate({
+      customerId: form.customerId || displayed?.customerId,
+      title: form.title.trim() || null,
+      notes: form.notes || null,
+      travelMode: form.travelMode,
+      status: form.status,
+      date: form.date,
+      time: form.isAllDay ? "9:00 AM" : formatTimeMinutes(form.timeMinutes),
+      duration: formatDurationMinutes(form.durationMinutes),
+      isAllDay: form.isAllDay,
+      endDate: form.isAllDay && form.endDate && form.endDate !== form.date ? form.endDate : null,
+      repeatFrequency: form.repeatFrequency !== "none" ? form.repeatFrequency : null,
+      repeatEndDate: form.repeatFrequency !== "none" && form.repeatEndDate ? form.repeatEndDate : null,
+      servicesRequested: names.join(", ") || null,
+      priceEstimate: total > 0 ? formatMoney(total) : null,
+      isTuning: groupsHaveTuning(groups),
+      pianoId: groups.find(g => g.pianoId != null)?.pianoId ?? null,
+      serviceItems: serializeServiceItems(groups),
+    });
+  }
+
+  /** Enter edit mode; legacy free-text appointments get auto-itemized so
+   *  services are always editable line items. */
+  function enterEditMode() {
+    if (!parseServiceItems(displayed?.serviceItems)) itemizeLegacy();
+    setResetClientMode(false);
+    setShowEditPianoPicker(false);
+    setEditMode(true);
+  }
+
+  function cancelEdit() {
+    if (displayed) {
+      setForm(formFromAppointment(displayed));
+      setEditGroups(parseServiceItems(displayed.serviceItems));
     }
+    setEditMode(false);
+  }
+
+  /** Reset Client: link this appointment to a different client (clears pianos). */
+  function pickNewClient(c: Customer) {
+    setForm(f => ({ ...f, customerId: c.id }));
+    setEditGroups([]);
+    setResetClientMode(false);
+  }
+
+  function addPianoGroup(p: Piano) {
+    const defaultSvc = catalog?.find(s => s.isDefault && s.isActive !== false);
+    setEditGroups(gs => [...(gs ?? []), { pianoId: p.id, lines: defaultSvc ? [lineFromCatalog(defaultSvc)] : [] }]);
+    setShowEditPianoPicker(false);
+  }
+
+  function addMiscGroup() {
+    setEditGroups(gs => [...(gs ?? []), { pianoId: null, lines: [] }]);
   }
 
   /** Convert a legacy free-text appointment into itemized piano/service lines. */
@@ -296,249 +409,240 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
               "data-[state=open]:animate-in data-[state=closed]:animate-out",
               "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
               "sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2",
-              "sm:max-w-lg sm:w-full sm:rounded-2xl sm:max-h-[88vh]",
+              editMode ? "sm:max-w-3xl" : "sm:max-w-lg",
+              "sm:w-full sm:rounded-2xl sm:max-h-[88vh]",
               "duration-200 flex flex-col"
             )}
           >
             <DialogPrimitive.Title className="sr-only">Appointment Details</DialogPrimitive.Title>
 
             {editMode ? (
-              <div className="overflow-y-auto flex-1">
-                <div className="p-5 space-y-3">
-                  <div className="flex items-center justify-between mb-1">
-                    <h2 className="text-base font-semibold">Edit Appointment</h2>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 px-2 text-xs"
-                        onClick={() => {
-                          setForm({
-                            date: displayed.date ?? "",
-                            time: displayed.time ?? "",
-                            duration: displayed.duration ?? "",
-                            servicesRequested: displayed.servicesRequested ?? "",
-                            priceEstimate: displayed.priceEstimate ?? "",
-                            notes: displayed.notes ?? "",
-                            status: displayed.status ?? "scheduled",
-                            pianoId: displayed.pianoId ?? null,
-                            isTuning: displayed.isTuning ?? false,
-                          });
-                          setEditGroups(parseServiceItems(displayed.serviceItems));
-                          setEditMode(false);
-                        }}
-                        data-testid="button-cancel-appt-edit"
-                      >
-                        Cancel
-                      </Button>
-                      <DialogPrimitive.Close
-                        className="rounded-lg p-1.5 opacity-60 hover:opacity-100 hover:bg-muted transition-opacity focus:outline-none focus:ring-2 focus:ring-ring"
-                        data-testid="button-close-appt-dialog-edit"
-                      >
-                        <X className="h-4 w-4" />
-                        <span className="sr-only">Close</span>
-                      </DialogPrimitive.Close>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Date</Label>
-                      <Input
-                        value={form.date}
-                        onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
-                        placeholder="M/D/YY"
-                        className="h-8 text-sm"
-                        data-testid="input-appt-date"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs">Time</Label>
-                      <Input
-                        value={form.time}
-                        onChange={e => setForm(f => ({ ...f, time: e.target.value }))}
-                        placeholder="10:00 AM"
-                        className="h-8 text-sm"
-                        data-testid="input-appt-time"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Duration</Label>
-                      <Input
-                        value={form.duration}
-                        onChange={e => setForm(f => ({ ...f, duration: e.target.value }))}
-                        placeholder="1.5 hr"
-                        className="h-8 text-sm"
-                        data-testid="input-appt-duration"
-                      />
-                    </div>
-                    {!editGroups && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Price Estimate</Label>
-                        <Input
-                          value={form.priceEstimate}
-                          onChange={e => setForm(f => ({ ...f, priceEstimate: e.target.value }))}
-                          placeholder="$150"
-                          className="h-8 text-sm"
-                          data-testid="input-appt-price"
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs">Status</Label>
-                    <Select value={form.status} onValueChange={v => setForm(f => ({ ...f, status: v }))}>
-                      <SelectTrigger className="h-8 text-sm" data-testid="select-appt-status">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="scheduled">Scheduled</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                        <SelectItem value="no-show">No-show</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {editGroups ? (
-                    <div className="space-y-2">
-                      <Label className="text-xs">Pianos &amp; Services</Label>
-                      {editGroups.map((g, gi) => {
-                        const gPiano = g.pianoId ? allPianos?.find(p => p.id === g.pianoId) : null;
-                        const gLabel = g.pianoId == null
-                          ? "Misc / Standalone Services"
-                          : gPiano
-                            ? [gPiano.year, gPiano.make, gPiano.model].filter(Boolean).join(" ") || `Piano #${g.pianoId}`
-                            : `Piano #${g.pianoId}`;
-                        return (
-                          <div key={`${g.pianoId ?? "misc"}-${gi}`} className="rounded-lg border p-2.5 space-y-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-sm font-semibold flex items-center gap-1.5">
-                                <Music className="h-3.5 w-3.5 text-muted-foreground" />
-                                {gLabel}
-                              </span>
-                              {editGroups.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => setEditGroups(gs => gs!.filter((_, i) => i !== gi))}
-                                  className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                                  title="Remove piano from appointment"
-                                  data-testid={`button-remove-edit-group-${gi}`}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </div>
-                            <ServiceLineEditor
-                              lines={g.lines}
-                              onChange={lines => setEditGroups(gs => gs!.map((gg, i) => i === gi ? { ...gg, lines } : gg))}
-                            />
-                            {g.lines.length > 1 && (
-                              <div className="flex justify-end text-xs text-muted-foreground">
-                                Subtotal&nbsp;<span className="font-semibold text-foreground tabular-nums">{formatMoney(linesTotal(g.lines))}</span>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                      <Select value="" onValueChange={addEditGroup}>
-                        <SelectTrigger className="h-8 text-sm" data-testid="select-add-piano-to-appt">
-                          <SelectValue placeholder="+ Add a piano to this appointment…" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {customerPianos
-                            .filter(p => !editGroups.some(g => g.pianoId === p.id))
-                            .map(p => (
-                              <SelectItem key={p.id} value={String(p.id)}>
-                                {[p.year, p.make, p.model].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                              </SelectItem>
-                            ))}
-                          {!editGroups.some(g => g.pianoId == null) && (
-                            <SelectItem value="misc">Misc / standalone services</SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <div className="flex justify-end text-sm">
-                        <span className="text-muted-foreground">Total&nbsp;</span>
-                        <span className="font-semibold tabular-nums">{formatMoney(groupsTotal(editGroups))}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between">
-                          <Label className="text-xs">Services Requested</Label>
+              <div className="overflow-y-auto flex-1 flex flex-col">
+                <div className="px-5 pt-4 pb-3 flex items-center justify-between border-b shrink-0">
+                  <h2 className="text-lg font-bold">Edit Appointment</h2>
+                  <DialogPrimitive.Close
+                    className="rounded-lg p-1.5 opacity-60 hover:opacity-100 hover:bg-muted transition-opacity focus:outline-none focus:ring-2 focus:ring-ring"
+                    data-testid="button-close-appt-dialog-edit"
+                  >
+                    <X className="h-4 w-4" />
+                    <span className="sr-only">Close</span>
+                  </DialogPrimitive.Close>
+                </div>
+
+                <div className="flex-1 overflow-y-auto">
+                  <div className="grid sm:grid-cols-2 sm:divide-x min-h-full">
+
+                    {/* ══ LEFT: status, details, date & time ══ */}
+                    <div className="p-5 space-y-4">
+                      {form.status === "completed" && (
+                        <div className="flex items-center justify-between gap-2 rounded-lg bg-green-100 dark:bg-green-900/25 px-3 py-2.5 text-sm text-green-900 dark:text-green-200">
+                          <span>This appointment has been marked as complete.</span>
                           <Button
-                            type="button"
                             size="sm"
-                            variant="ghost"
-                            className="h-6 px-2 text-xs text-primary"
-                            onClick={itemizeLegacy}
-                            data-testid="button-itemize-services"
+                            className="h-7 text-xs bg-green-600 hover:bg-green-700 shrink-0"
+                            onClick={() => setForm(f => ({ ...f, status: "scheduled" }))}
+                            data-testid="button-undo-complete"
                           >
-                            Itemize services
+                            Undo
                           </Button>
                         </div>
-                        <Textarea
-                          value={form.servicesRequested}
-                          onChange={e => setForm(f => ({ ...f, servicesRequested: e.target.value }))}
-                          className="text-sm resize-none h-16"
-                          placeholder="Services..."
-                          data-testid="input-appt-services"
-                        />
-                      </div>
-                      {customerPianos.length > 0 && (
-                        <div className="space-y-1">
-                          <Label className="text-xs">Piano</Label>
-                          <Select
-                            value={form.pianoId ? String(form.pianoId) : "none"}
-                            onValueChange={v => setForm(f => ({ ...f, pianoId: v === "none" ? null : parseInt(v) }))}
+                      )}
+                      {(form.status === "cancelled" || form.status === "no-show") && (
+                        <div className="flex items-center justify-between gap-2 rounded-lg bg-red-100 dark:bg-red-900/25 px-3 py-2.5 text-sm text-red-900 dark:text-red-200">
+                          <span>This appointment is marked {form.status === "no-show" ? "as a no-show" : "cancelled"}.</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs shrink-0"
+                            onClick={() => setForm(f => ({ ...f, status: "scheduled" }))}
+                            data-testid="button-restore-appt"
                           >
-                            <SelectTrigger className="h-8 text-sm" data-testid="select-appt-piano">
-                              <SelectValue placeholder="No specific piano" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No specific piano</SelectItem>
-                              {customerPianos.map(p => (
-                                <SelectItem key={p.id} value={String(p.id)}>
-                                  {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            Restore
+                          </Button>
                         </div>
                       )}
-                      <div className="flex items-center gap-2 pt-1">
-                        <Checkbox
-                          id="edit-is-tuning"
-                          checked={form.isTuning}
-                          onCheckedChange={v => setForm(f => ({ ...f, isTuning: !!v }))}
-                          data-testid="checkbox-edit-is-tuning"
-                        />
-                        <label htmlFor="edit-is-tuning" className="text-sm cursor-pointer select-none">
-                          This appointment includes a tuning
-                        </label>
-                      </div>
-                    </>
-                  )}
-                  <div className="space-y-1">
-                    <Label className="text-xs">Notes</Label>
-                    <Textarea
-                      value={form.notes}
-                      onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                      className="text-sm resize-none h-16"
-                      placeholder="Notes..."
-                      data-testid="input-appt-notes"
-                    />
+                      {displayed.createdAt && (
+                        <div className="rounded-lg bg-sky-100/70 dark:bg-sky-900/20 px-3 py-2.5 text-sm text-sky-900 dark:text-sky-200">
+                          This appointment was created on{" "}
+                          {new Date(displayed.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.
+                        </div>
+                      )}
+
+                      <SectionBar title="Details" />
+
+                      {/* SHARED Details block — same component as every other appointment window */}
+                      <DetailsFields
+                        title={form.title}
+                        onTitle={v => setForm(f => ({ ...f, title: v }))}
+                        titlePlaceholder={editCustomer ? clientName(editCustomer) : "Appointment title"}
+                        notes={form.notes}
+                        onNotes={v => setForm(f => ({ ...f, notes: v }))}
+                        travelMode={form.travelMode}
+                        onTravelMode={v => setForm(f => ({ ...f, travelMode: v }))}
+                        testIdPrefix="edit"
+                      />
+
+                      <SectionBar title="Date &amp; Time" />
+
+                      {/* SHARED Date & Time block */}
+                      <DateTimeFields
+                        value={{
+                          date: form.date,
+                          isAllDay: form.isAllDay,
+                          endDate: form.endDate,
+                          timeMinutes: form.timeMinutes,
+                          durationMinutes: form.durationMinutes,
+                          repeatFrequency: form.repeatFrequency,
+                          repeatEndDate: form.repeatEndDate,
+                        }}
+                        onChange={patch => setForm(f => ({ ...f, ...patch }))}
+                        testIdPrefix="edit"
+                      />
+                    </div>
+
+                    {/* ══ RIGHT: client + pianos & services ══ */}
+                    <div className="p-5 space-y-4">
+                      <SectionBar title="Client Information">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={resetClientMode ? "outline" : "secondary"}
+                          className="h-7 text-xs"
+                          onClick={() => setResetClientMode(v => !v)}
+                          data-testid="button-reset-client"
+                        >
+                          {resetClientMode ? "Keep Current Client" : "Reset Client"}
+                        </Button>
+                      </SectionBar>
+
+                      {resetClientMode ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground">
+                            Pick a different client for this appointment. Pianos below will reset.
+                          </p>
+                          <ClientSearchBox customers={customers} onSelect={pickNewClient} autoFocus />
+                        </div>
+                      ) : editCustomer ? (
+                        <div className="flex items-start gap-3 p-3 rounded-lg border bg-muted/20">
+                          <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                            <User className="h-4 w-4 text-primary" />
+                          </div>
+                          <div className="min-w-0">
+                            <Link href={`/customers/${editCustomer.id}`} onClick={() => onOpenChange(false)}>
+                              <p className="font-semibold text-sm leading-tight hover:underline cursor-pointer flex items-center gap-1">
+                                {clientName(editCustomer)}
+                                <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                              </p>
+                            </Link>
+                            {(editCustomer.address || editCustomer.city) && (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {[editCustomer.address, editCustomer.city, editCustomer.state, editCustomer.zipCode].filter(Boolean).join(", ")}
+                              </p>
+                            )}
+                            {editCustomer.phone && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{formatPhone(editCustomer.phone)}</p>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {showEditPianoPicker ? (
+                        <div className="h-[360px] flex flex-col">
+                          <PianoPickerView
+                            pianos={editClientPianos.filter(p => !(editGroups ?? []).some(g => g.pianoId === p.id))}
+                            onSelect={addPianoGroup}
+                            onClose={() => setShowEditPianoPicker(false)}
+                          />
+                        </div>
+                      ) : (
+                        <>
+                          <SectionBar title="Pianos &amp; Services">
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => setShowEditPianoPicker(true)}
+                              data-testid="button-edit-add-piano"
+                            >
+                              Add Piano
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={addMiscGroup}
+                              data-testid="button-edit-add-misc"
+                            >
+                              Add Misc Service
+                            </Button>
+                          </SectionBar>
+
+                          <div className="space-y-2">
+                            {(editGroups ?? []).length === 0 ? (
+                              <p className="text-sm text-muted-foreground text-center py-4">
+                                No pianos or services yet — add one above.
+                              </p>
+                            ) : (
+                              (editGroups ?? []).map((g, gi) => {
+                                const sec: PianoSection = {
+                                  sectionId: `${g.pianoId ?? "misc"}-${gi}`,
+                                  pianoId: g.pianoId,
+                                  lines: g.lines,
+                                  isMisc: g.pianoId == null,
+                                };
+                                return (
+                                  <PianoCard
+                                    key={sec.sectionId}
+                                    section={sec}
+                                    piano={g.pianoId != null ? pianoById.get(g.pianoId) : undefined}
+                                    onUpdate={patch => {
+                                      if (patch.lines) {
+                                        setEditGroups(gs => gs!.map((gg, i) => i === gi ? { ...gg, lines: patch.lines! } : gg));
+                                      }
+                                    }}
+                                    onRemove={() => setEditGroups(gs => gs!.filter((_, i) => i !== gi))}
+                                    showRemove
+                                    onNavigate={() => onOpenChange(false)}
+                                  />
+                                );
+                              })
+                            )}
+                          </div>
+
+                          {/* Price estimate = sum of services, never hand-edited */}
+                          <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-muted/40 border text-sm">
+                            <span className="text-muted-foreground">Price estimate (sum of services)</span>
+                            <span className="font-semibold tabular-nums" data-testid="text-edit-price-estimate">
+                              {formatMoney(groupsTotal(editGroups ?? []))}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </div>
+                </div>
+
+                {/* Footer */}
+                <div className="shrink-0 border-t bg-background px-5 py-3 flex items-center justify-between gap-2">
                   <Button
-                    onClick={handleSave}
-                    disabled={updateMutation.isPending}
-                    className="w-full"
-                    data-testid="button-save-appt"
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                    onClick={handleDelete}
+                    disabled={deleteMutation.isPending}
+                    data-testid="button-edit-delete-appt"
                   >
-                    {updateMutation.isPending ? "Saving…" : "Save Changes"}
+                    <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Delete
                   </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={cancelEdit} data-testid="button-cancel-appt-edit">
+                      Cancel
+                    </Button>
+                    <Button size="sm" onClick={handleSave} disabled={updateMutation.isPending} data-testid="button-save-appt">
+                      {updateMutation.isPending ? "Saving…" : "Save"}
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -558,22 +662,41 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   {customer ? (
                     <Link href={`/customers/${customer.id}`} onClick={() => onOpenChange(false)}>
                       <h2 className="text-xl font-bold text-foreground hover:underline cursor-pointer leading-tight" data-testid="link-appt-customer">
-                        {customer.firstName} {customer.lastName}
+                        {clientName(customer)}
                       </h2>
                     </Link>
                   ) : (
                     <h2 className="text-xl font-bold text-foreground leading-tight">Appointment</h2>
                   )}
+                  {displayed.title && displayed.title !== clientName(customer, "") && (
+                    <p className="text-sm text-foreground/70 mt-0.5">{displayed.title}</p>
+                  )}
 
                   <div className="mt-3 space-y-1.5 text-sm text-foreground/80">
                     <div className="flex items-center gap-2">
                       <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
-                      <span>{displayed.date}</span>
+                      <span>
+                        {displayed.date}
+                        {displayed.isAllDay && displayed.endDate ? ` – ${displayed.endDate}` : ""}
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
                       <Clock className="h-3.5 w-3.5 text-primary shrink-0" />
-                      <span>{displayed.time}{displayed.duration ? ` (${displayed.duration})` : ""}</span>
+                      <span>
+                        {displayed.isAllDay
+                          ? "All day"
+                          : `${displayed.time}${displayed.duration ? ` (${displayed.duration})` : ""}`}
+                      </span>
                     </div>
+                    {repeatLabel(displayed.repeatFrequency) && (
+                      <div className="flex items-center gap-2">
+                        <Repeat className="h-3.5 w-3.5 text-primary shrink-0" />
+                        <span>
+                          Repeats {repeatLabel(displayed.repeatFrequency).toLowerCase()}
+                          {displayed.repeatEndDate ? ` until ${displayed.repeatEndDate}` : ""}
+                        </span>
+                      </div>
+                    )}
                     {customerAddress && mapsUrl && (
                       <div className="flex items-center gap-2">
                         <MapPin className="h-3.5 w-3.5 text-primary shrink-0" />
@@ -614,7 +737,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                     size="sm"
                     variant="outline"
                     className="shrink-0"
-                    onClick={() => setEditMode(true)}
+                    onClick={enterEditMode}
                     data-testid="button-edit-appt"
                   >
                     <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
@@ -630,6 +753,15 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                       <CheckCircle className="h-3.5 w-3.5 mr-1.5" /> Complete
                     </Button>
                   )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={() => setShowClone(v => !v)}
+                    data-testid="button-clone-appt-dialog"
+                  >
+                    <Copy className="h-3.5 w-3.5 mr-1.5" /> Clone
+                  </Button>
                   {linkedInvoice ? (
                     <Link href={`/invoices/${linkedInvoice.id}`} onClick={() => onOpenChange(false)}>
                       <Button size="sm" variant="outline" className="shrink-0" data-testid="button-open-invoice-action">
@@ -661,6 +793,26 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                   </Button>
                 </div>
 
+                {/* ── Clone row (toggled by the Clone button) ── */}
+                {showClone && (
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-muted/30 shrink-0 flex-wrap">
+                    <span className="text-xs text-muted-foreground">Clone this appointment to</span>
+                    <DatePickerPopover
+                      value={cloneDate || displayed.date}
+                      onChange={setCloneDate}
+                    />
+                    <Button
+                      size="sm"
+                      className="h-7 text-xs"
+                      disabled={!cloneDate || cloneMutation.isPending}
+                      onClick={() => cloneMutation.mutate(cloneDate)}
+                      data-testid="button-clone-confirm"
+                    >
+                      {cloneMutation.isPending ? "Cloning…" : "Clone"}
+                    </Button>
+                  </div>
+                )}
+
                 {/* ── Body ── */}
                 <div className="overflow-y-auto flex-1 divide-y divide-border">
 
@@ -674,7 +826,7 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                             <User className="h-4 w-4 text-primary" />
                           </div>
                           <div>
-                            <p className="text-sm font-semibold">{customer.firstName} {customer.lastName}</p>
+                            <p className="text-sm font-semibold">{clientName(customer)}</p>
                             {customer.phone && <p className="text-xs text-muted-foreground">{formatPhone(customer.phone)}</p>}
                           </div>
                           <ExternalLink className="h-3.5 w-3.5 text-muted-foreground ml-auto shrink-0" />

@@ -8,6 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { formatTimeMinutes, formatDurationMinutes } from "@/components/time-stepper";
+import {
+  SectionBar,
+  DateTimeFields,
+  fromInputDate,
+  todayMDYY,
+  type ApptDateTime,
+} from "@/components/appointment-editor";
 import { Link } from "wouter";
 import {
   ArrowRight,
@@ -39,13 +48,15 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import type { Customer, Appointment, Invoice, BookingRequest, Trip, TripAppointment } from "@shared/schema";
+import type { Customer, Appointment, Invoice, BookingRequest, Trip, TripAppointment, Piano } from "@shared/schema";
+import { appointmentOccursOn } from "@shared/appointment-repeat";
 import {
   getServiceArea,
   parseTimeToMinutes,
   minutesToTimeStr,
   parseDurationToMinutes,
 } from "@/lib/scheduling";
+import { clientName } from "@shared/client-name";
 
 // Primary home base (Somerville). Only swaps to the Centerville, UT base
 // below during SLC trip days — see isSLCDay in TodayItinerary.
@@ -211,7 +222,7 @@ function ActionCenter({
                 <p className="text-xs text-muted-foreground truncate">
                   {bostonDue
                     .slice(0, 2)
-                    .map((c) => `${c.firstName} ${c.lastName}`)
+                    .map((c) => clientName(c))
                     .join(", ")}
                   {bostonDue.length > 2 ? ` +${bostonDue.length - 2} more` : ""}
                 </p>
@@ -249,7 +260,7 @@ function ActionCenter({
                 <p className="text-xs text-muted-foreground truncate">
                   {slcDue
                     .slice(0, 2)
-                    .map((c) => `${c.firstName} ${c.lastName}`)
+                    .map((c) => clientName(c))
                     .join(", ")}
                   {slcDue.length > 2 ? ` +${slcDue.length - 2} more` : ""}
                 </p>
@@ -291,8 +302,10 @@ function TodayItinerary({
   }, []);
 
   const todayAppointments = useMemo(() => {
+    // Includes repeat occurrences and multi-day all-day spans, not just
+    // appointments whose base date is today.
     return appointments
-      .filter((a) => a.date === todayStr)
+      .filter((a) => a.date === todayStr || appointmentOccursOn(a, new Date()))
       .sort((a, b) => {
         const ma = parseTimeToMinutes(a.time || "");
         const mb = parseTimeToMinutes(b.time || "");
@@ -402,7 +415,7 @@ function TodayItinerary({
                   <div className="flex flex-col gap-0.5 min-w-0">
                     <span className="text-sm font-medium truncate">
                       {cust
-                        ? `${cust.firstName} ${cust.lastName}`
+                        ? clientName(cust)
                         : "Unknown Client"}
                     </span>
                     {cust?.city && (
@@ -1130,14 +1143,6 @@ function BandwidthTracker({
 
 // ── Pending Booking Requests Panel ────────────────────────────────────────────
 
-interface ApproveModalState {
-  request: BookingRequest;
-  date: string;
-  time: string;
-  duration: string;
-  notes: string;
-}
-
 /** "4:00 PM" → "16:00" for <input type="time"> prefill. */
 function to24h(label: string | null | undefined): string {
   if (!label) return "";
@@ -1150,11 +1155,341 @@ function to24h(label: string | null | undefined): string {
   return `${String(h).padStart(2, "0")}:${m[2]}`;
 }
 
+/**
+ * Approve & Schedule dialog — works like manually creating an appointment,
+ * prefilled from the booking form: link to an existing client (auto-matched by
+ * email → phone → name) or create a new one, attach an existing piano or create
+ * one from the request's piano details, then book the slot.
+ * Module-level on purpose — never define a component inside another component.
+ */
+function ApproveScheduleDialog({
+  request: req,
+  onClose,
+}: {
+  request: BookingRequest;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  // Same shared Date & Time state shape as every other appointment window
+  const [dt, setDt] = useState<ApptDateTime>(() => {
+    const mins = parseTimeToMinutes(req.requestedTime ?? "");
+    return {
+      date: req.requestedDate ? fromInputDate(req.requestedDate) : todayMDYY(),
+      isAllDay: false,
+      endDate: "",
+      timeMinutes: mins >= 0 ? mins : 9 * 60,
+      durationMinutes: 90,
+      repeatFrequency: "none",
+      repeatEndDate: "",
+    };
+  });
+  const [notes, setNotes] = useState("");
+
+  const { data: customers } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+  });
+
+  // Best-guess existing-client match: email → phone digits → exact name
+  const suggested = useMemo(() => {
+    if (!customers) return null;
+    const email = req.email?.trim().toLowerCase();
+    if (email) {
+      const c = customers.find((c) => c.email?.trim().toLowerCase() === email);
+      if (c) return { id: c.id, by: "email address" };
+    }
+    const digits = (req.phone ?? "").replace(/\D/g, "");
+    if (digits.length >= 7) {
+      const c = customers.find(
+        (c) => (c.phone ?? "").replace(/\D/g, "") === digits
+      );
+      if (c) return { id: c.id, by: "phone number" };
+    }
+    const c = customers.find(
+      (c) =>
+        (c.firstName ?? "").trim().toLowerCase() ===
+          req.firstName.trim().toLowerCase() &&
+        (c.lastName ?? "").trim().toLowerCase() ===
+          req.lastName.trim().toLowerCase()
+    );
+    if (c) return { id: c.id, by: "name" };
+    return null;
+  }, [customers, req]);
+
+  // null = not touched yet (follow the suggestion); "new" = create; else customer id
+  const [clientChoice, setClientChoice] = useState<string | null>(null);
+  const effectiveClient =
+    clientChoice ?? (suggested ? String(suggested.id) : "new");
+  const selectedCustomerId =
+    effectiveClient === "new" ? null : parseInt(effectiveClient, 10);
+  const selectedCustomer = customers?.find((c) => c.id === selectedCustomerId);
+
+  const { data: clientPianos } = useQuery<Piano[]>({
+    queryKey: ["/api/customers", selectedCustomerId, "pianos"],
+    enabled: selectedCustomerId != null,
+  });
+
+  // "new" = create piano from the request | "none" = don't attach | piano id
+  const [pianoChoice, setPianoChoice] = useState<string>("new");
+
+  const sortedCustomers = useMemo(
+    () =>
+      [...(customers ?? [])].sort((a, b) => clientName(a, "").localeCompare(clientName(b, ""))),
+    [customers]
+  );
+
+  const approveMutation = useMutation({
+    mutationFn: async () => {
+      const pianoIdNum =
+        pianoChoice !== "new" && pianoChoice !== "none"
+          ? parseInt(pianoChoice, 10)
+          : undefined;
+      return apiRequest("POST", `/api/booking-requests/${req.id}/approve`, {
+        date: dt.date,
+        time: formatTimeMinutes(dt.timeMinutes),
+        duration: formatDurationMinutes(dt.durationMinutes),
+        notes,
+        customerId: selectedCustomerId ?? undefined,
+        pianoId: pianoIdNum,
+        createPiano: pianoChoice === "new",
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/booking-requests"] });
+      qc.invalidateQueries({ queryKey: ["/api/appointments"] });
+      qc.invalidateQueries({ queryKey: ["/api/customers"] });
+      if (selectedCustomerId != null) {
+        qc.invalidateQueries({
+          queryKey: ["/api/customers", selectedCustomerId, "pianos"],
+        });
+      }
+      toast({
+        title: "Booked!",
+        description:
+          selectedCustomerId != null
+            ? "Appointment added to the existing client."
+            : "New client created and appointment scheduled.",
+      });
+      onClose();
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Error approving request",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const initials =
+    `${req.firstName?.[0] ?? ""}${req.lastName?.[0] ?? ""}`.toUpperCase();
+
+  const pianoLabel = (p: Piano) => {
+    const name = [p.make, p.model].filter(Boolean).join(" ") || p.pianoType || "Piano";
+    return p.location ? `${name} — ${p.location}` : name;
+  };
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="w-[calc(100%-2rem)] rounded-lg sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Approve &amp; Schedule</DialogTitle>
+        </DialogHeader>
+
+        <div className="grid sm:grid-cols-2 gap-4 py-1">
+          {/* ── Left: Date & Time (SHARED blocks) ─────────────── */}
+          <div className="space-y-4">
+            <SectionBar title="Date &amp; Time" />
+
+            <DateTimeFields
+              value={dt}
+              onChange={patch => setDt(v => ({ ...v, ...patch }))}
+              showAllDay={false}
+              showRepeat={false}
+              testIdPrefix="approve"
+            />
+
+            <div className="space-y-1.5">
+              <Label htmlFor="appr-notes" className="text-sm">
+                Internal Notes <span className="text-muted-foreground font-normal">(optional)</span>
+              </Label>
+              <Textarea
+                id="appr-notes"
+                rows={3}
+                className="text-base resize-none"
+                data-testid="input-approve-notes"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* ── Right: Client & Piano ─────────────────────────── */}
+          <div className="space-y-4">
+            <SectionBar title="Client &amp; Piano" />
+
+            <div className="rounded-lg border p-3 space-y-2">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-primary/15 text-primary flex items-center justify-center text-sm font-bold shrink-0">
+                  {initials || "?"}
+                </div>
+                <div className="min-w-0 text-sm">
+                  <p className="font-semibold">{req.firstName} {req.lastName}</p>
+                  {(req.streetAddress || req.cityNeighborhood) && (
+                    <p className="text-muted-foreground flex items-start gap-1 mt-0.5">
+                      <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                      <span className="break-words">{req.streetAddress || req.cityNeighborhood}</span>
+                    </p>
+                  )}
+                  <p className="text-xs mt-1 space-x-2">
+                    {req.email && (
+                      <a href={`mailto:${req.email}`} className="text-primary hover:underline">{req.email}</a>
+                    )}
+                    {req.phone && (
+                      <a href={`tel:${req.phone}`} className="text-primary hover:underline">{formatPhone(req.phone)}</a>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Save as
+                </Label>
+                <Select
+                  value={effectiveClient}
+                  onValueChange={(v) => {
+                    setClientChoice(v);
+                    setPianoChoice("new");
+                  }}
+                >
+                  <SelectTrigger className="h-10" data-testid="select-approve-client">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    <SelectItem value="new">
+                      ＋ New client: {req.firstName} {req.lastName}
+                    </SelectItem>
+                    {sortedCustomers.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {clientName(c)}
+                        {c.city ? ` (${c.city})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {suggested && clientChoice === null && (
+                  <p className="text-xs text-sky-700 dark:text-sky-400">
+                    Matched an existing client by {suggested.by} — switch to
+                    "New client" if this is someone else.
+                  </p>
+                )}
+                {!suggested && effectiveClient === "new" && (
+                  <p className="text-xs text-muted-foreground">
+                    No existing client matched — a new client record will be
+                    created. Or pick one from the list to link this booking.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1.5 pt-1">
+                <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Piano
+                </Label>
+                <Select value={pianoChoice} onValueChange={setPianoChoice}>
+                  <SelectTrigger className="h-10" data-testid="select-approve-piano">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(clientPianos ?? []).map((p) => (
+                      <SelectItem key={p.id} value={String(p.id)}>
+                        {pianoLabel(p)}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="new">
+                      ＋ New piano{req.pianoType ? ` (${req.pianoType})` : ""} from this request
+                    </SelectItem>
+                    <SelectItem value="none">No piano</SelectItem>
+                  </SelectContent>
+                </Select>
+                {selectedCustomerId != null &&
+                  (clientPianos?.length ?? 0) > 0 &&
+                  pianoChoice === "new" && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400">
+                      {selectedCustomer?.firstName} already has{" "}
+                      {clientPianos!.length === 1
+                        ? "a piano on file"
+                        : `${clientPianos!.length} pianos on file`}{" "}
+                      — pick one above if this booking is for it.
+                    </p>
+                  )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border p-3 space-y-2 text-sm">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Service
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {req.serviceRequested && (
+                  <span className="inline-flex items-center rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold">
+                    {req.serviceRequested}
+                  </span>
+                )}
+                {req.pianoType && (
+                  <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium">
+                    {req.pianoType}
+                  </span>
+                )}
+              </div>
+              {req.lastTuned && (
+                <p className="text-xs text-muted-foreground">Last tuned: {req.lastTuned}</p>
+              )}
+              {req.preferredTimes && (
+                <p className="text-xs text-muted-foreground border-t pt-2 italic">
+                  {req.preferredTimes}
+                </p>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Booking{" "}
+              {selectedCustomerId != null
+                ? `adds this appointment to ${selectedCustomer?.firstName ?? "the selected client"}'s record`
+                : "creates a new client record"}
+              {pianoChoice === "new"
+                ? ", creates the piano,"
+                : pianoChoice !== "none"
+                  ? ", links the piano,"
+                  : ","}{" "}
+              and emails {req.firstName} a confirmation.
+            </p>
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose} data-testid="button-approve-cancel">
+            Cancel
+          </Button>
+          <Button
+            disabled={!dt.date || approveMutation.isPending}
+            onClick={() => approveMutation.mutate()}
+            data-testid="button-approve-save"
+          >
+            {approveMutation.isPending ? "Saving…" : "Book Appointment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function PendingBookingRequestsPanel() {
   const qc = useQueryClient();
   const { toast } = useToast();
   const [collapsed, setCollapsed] = useState(false);
-  const [approveModal, setApproveModal] = useState<ApproveModalState | null>(
+  const [approveRequest, setApproveRequest] = useState<BookingRequest | null>(
     null
   );
 
@@ -1173,42 +1508,6 @@ function PendingBookingRequestsPanel() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/booking-requests"] });
       toast({ title: "Request archived" });
-    },
-  });
-
-  const approveMutation = useMutation({
-    mutationFn: async ({
-      id,
-      date,
-      time,
-      duration,
-      notes,
-    }: {
-      id: number;
-      date: string;
-      time: string;
-      duration: string;
-      notes: string;
-    }) =>
-      apiRequest("POST", `/api/booking-requests/${id}/approve`, {
-        date,
-        time,
-        duration,
-        notes,
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/booking-requests"] });
-      qc.invalidateQueries({ queryKey: ["/api/appointments"] });
-      qc.invalidateQueries({ queryKey: ["/api/customers"] });
-      setApproveModal(null);
-      toast({ title: "Approved! Client and appointment created." });
-    },
-    onError: (err: Error) => {
-      toast({
-        title: "Error approving request",
-        description: err.message,
-        variant: "destructive",
-      });
     },
   });
 
@@ -1317,16 +1616,7 @@ function PendingBookingRequestsPanel() {
                   <Button
                     size="sm"
                     className="h-8 text-xs gap-1 bg-green-600 hover:bg-green-700"
-                    onClick={() =>
-                      setApproveModal({
-                        request: req,
-                        // Prefill with the slot the client picked on the calendar
-                        date: req.requestedDate ?? "",
-                        time: to24h(req.requestedTime),
-                        duration: "1 hr 30 min",
-                        notes: "",
-                      })
-                    }
+                    onClick={() => setApproveRequest(req)}
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" />
                     Approve &amp; Schedule
@@ -1367,203 +1657,12 @@ function PendingBookingRequestsPanel() {
         )}
       </Card>
 
-      {approveModal && (() => {
-        const req = approveModal.request;
-        const durMins = parseDurationToMinutes(approveModal.duration);
-        const startMins = parseTimeToMinutes(approveModal.time);
-        const endsAt = startMins >= 0 ? minutesToTimeStr(startMins + durMins) : "";
-        const fmtDur = (mins: number) => {
-          const h = Math.floor(mins / 60);
-          const m = mins % 60;
-          if (h === 0) return `${m} min`;
-          if (m === 0) return `${h} hr`;
-          return `${h} hr ${m} min`;
-        };
-        const bumpDuration = (delta: number) => {
-          const next = Math.max(15, durMins + delta);
-          setApproveModal((mo) => (mo ? { ...mo, duration: fmtDur(next) } : mo));
-        };
-        const initials = `${req.firstName?.[0] ?? ""}${req.lastName?.[0] ?? ""}`.toUpperCase();
-        const stepBtn =
-          "h-7 px-2 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90";
-        return (
-          <Dialog open onOpenChange={() => setApproveModal(null)}>
-            <DialogContent className="w-[calc(100%-2rem)] rounded-lg sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Approve &amp; Schedule</DialogTitle>
-              </DialogHeader>
-
-              <div className="grid sm:grid-cols-2 gap-4 py-1">
-                {/* ── Left: Date & Time ─────────────────────────────── */}
-                <div className="space-y-4">
-                  <div className="bg-muted/60 rounded-lg px-3 py-2 text-sm font-semibold">
-                    Date &amp; Time
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="appr-date" className="text-sm">Date</Label>
-                    <Input
-                      id="appr-date"
-                      type="date"
-                      className="text-base h-11"
-                      data-testid="input-approve-date"
-                      value={approveModal.date}
-                      onChange={(e) =>
-                        setApproveModal((m) => (m ? { ...m, date: e.target.value } : m))
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="appr-time" className="text-sm">Start time</Label>
-                    <Input
-                      id="appr-time"
-                      type="time"
-                      className="text-base h-11"
-                      data-testid="input-approve-time"
-                      value={approveModal.time}
-                      onChange={(e) =>
-                        setApproveModal((m) => (m ? { ...m, time: e.target.value } : m))
-                      }
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label className="text-sm">Duration</Label>
-                    <div className="flex items-center gap-2">
-                      <div className="flex flex-col gap-1">
-                        <button type="button" className={stepBtn} onClick={() => bumpDuration(60)} data-testid="button-duration-plus-hour">+1h</button>
-                        <button type="button" className={stepBtn} onClick={() => bumpDuration(-60)} data-testid="button-duration-minus-hour">-1h</button>
-                      </div>
-                      <div
-                        className="flex-1 h-11 border rounded-md flex items-center justify-center text-sm font-semibold tabular-nums"
-                        data-testid="text-approve-duration"
-                      >
-                        {fmtDur(durMins)}
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <button type="button" className={stepBtn} onClick={() => bumpDuration(15)} data-testid="button-duration-plus-15">+15m</button>
-                        <button type="button" className={stepBtn} onClick={() => bumpDuration(-15)} data-testid="button-duration-minus-15">-15m</button>
-                      </div>
-                    </div>
-                    {endsAt && (
-                      <p className="text-xs text-muted-foreground pl-1">Ends at {endsAt}</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="appr-notes" className="text-sm">
-                      Internal Notes <span className="text-muted-foreground font-normal">(optional)</span>
-                    </Label>
-                    <Textarea
-                      id="appr-notes"
-                      rows={3}
-                      className="text-base resize-none"
-                      data-testid="input-approve-notes"
-                      value={approveModal.notes}
-                      onChange={(e) =>
-                        setApproveModal((m) => (m ? { ...m, notes: e.target.value } : m))
-                      }
-                    />
-                  </div>
-                </div>
-
-                {/* ── Right: Client Information ─────────────────────── */}
-                <div className="space-y-4">
-                  <div className="bg-muted/60 rounded-lg px-3 py-2 text-sm font-semibold">
-                    Client Information
-                  </div>
-
-                  <div className="rounded-lg border p-3 flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-full bg-primary/15 text-primary flex items-center justify-center text-sm font-bold shrink-0">
-                      {initials || "?"}
-                    </div>
-                    <div className="min-w-0 text-sm">
-                      <p className="font-semibold">{req.firstName} {req.lastName}</p>
-                      {(req.streetAddress || req.cityNeighborhood) && (
-                        <p className="text-muted-foreground flex items-start gap-1 mt-0.5">
-                          <MapPin className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                          <span className="break-words">{req.streetAddress || req.cityNeighborhood}</span>
-                        </p>
-                      )}
-                      <p className="text-xs mt-1 space-x-2">
-                        {req.email && (
-                          <a href={`mailto:${req.email}`} className="text-primary hover:underline">{req.email}</a>
-                        )}
-                        {req.phone && (
-                          <a href={`tel:${req.phone}`} className="text-primary hover:underline">{formatPhone(req.phone)}</a>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border p-3 space-y-2 text-sm">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Piano &amp; Service
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {req.serviceRequested && (
-                        <span className="inline-flex items-center rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold">
-                          {req.serviceRequested}
-                        </span>
-                      )}
-                      {req.pianoType && (
-                        <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium">
-                          {req.pianoType}
-                        </span>
-                      )}
-                    </div>
-                    {req.lastTuned && (
-                      <p className="text-xs text-muted-foreground">Last tuned: {req.lastTuned}</p>
-                    )}
-                    {req.preferredTimes && (
-                      <p className="text-xs text-muted-foreground border-t pt-2 italic">
-                        {req.preferredTimes}
-                      </p>
-                    )}
-                  </div>
-
-                  <div className="rounded-lg border bg-muted/40 p-3 flex items-center justify-between text-sm">
-                    <span className="font-semibold">Total</span>
-                    <span className="font-semibold tabular-nums">
-                      {fmtDur(durMins)}{approveModal.date ? ` · ${approveModal.date}` : ""}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    Approving creates a new client record and a scheduled appointment,
-                    and emails {req.firstName} a confirmation.
-                  </p>
-                </div>
-              </div>
-
-              <DialogFooter className="gap-2">
-                <Button variant="outline" onClick={() => setApproveModal(null)} data-testid="button-approve-cancel">
-                  Cancel
-                </Button>
-                <Button
-                  disabled={
-                    !approveModal.date ||
-                    !approveModal.time ||
-                    approveMutation.isPending
-                  }
-                  onClick={() =>
-                    approveMutation.mutate({
-                      id: approveModal.request.id,
-                      date: approveModal.date,
-                      time: approveModal.time,
-                      duration: approveModal.duration,
-                      notes: approveModal.notes,
-                    })
-                  }
-                  data-testid="button-approve-save"
-                >
-                  {approveMutation.isPending ? "Saving…" : "Book Appointment"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        );
-      })()}
+      {approveRequest && (
+        <ApproveScheduleDialog
+          request={approveRequest}
+          onClose={() => setApproveRequest(null)}
+        />
+      )}
     </>
   );
 }
@@ -1687,7 +1786,7 @@ export default function Dashboard() {
                       >
                         <span className="font-medium truncate">
                           {cust
-                            ? `${cust.firstName} ${cust.lastName}`
+                            ? clientName(cust)
                             : "Unknown"}
                         </span>
                         <span className="text-muted-foreground shrink-0">

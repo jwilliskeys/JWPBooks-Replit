@@ -55,9 +55,11 @@ import {
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { expandAppointmentDates } from "@shared/appointment-repeat";
 import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano, Trip } from "@shared/schema";
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
+import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { ServicePicker } from "@/components/service-picker";
 import {
   DndContext,
@@ -75,6 +77,7 @@ import {
   parseMDYY, formatMDYY, formatTimeMinutes, formatDurationMinutes,
   parseTimeString, parseDurationString, DatePickerPopover,
 } from "@/components/time-stepper";
+import { clientName, clientSearchText } from "@shared/client-name";
 
 /** Wraps an appointment pill so it can be dragged to another day. */
 function DraggableAppt({
@@ -197,6 +200,71 @@ function computeEndTime(startStr: string, durationStr: string): string {
   return formatTimeMinutes((startMins + durMins) % (24 * 60));
 }
 
+/** A Falcetti (Gazelle) shift occurrence pulled from the external calendar feed. */
+interface FalcettiEvent {
+  uid: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  date: string; // M/D/YY
+  startTime: string | null;
+  endTime: string | null;
+  isAllDay: boolean;
+  source: string;
+}
+
+/**
+ * Real Falcetti shifts rendered as red positioned blocks in the week/day time
+ * grid (at their actual start/end times from Gazelle).
+ */
+function FalcettiTimeBlocks({
+  events,
+  gridStartHour,
+  hourHeight,
+  size,
+  onOpen,
+}: {
+  events: FalcettiEvent[];
+  gridStartHour: number;
+  hourHeight: number;
+  size: "sm" | "lg";
+  onOpen: (ev: FalcettiEvent) => void;
+}) {
+  return (
+    <>
+      {events.map((ev, idx) => {
+        const startMin = ev.startTime ? parseTimeString(ev.startTime) : gridStartHour * 60;
+        const endMin = ev.endTime ? parseTimeString(ev.endTime) : startMin + 60;
+        const top = (startMin / 60 - gridStartHour) * hourHeight;
+        const height = Math.max(18, ((endMin - startMin) / 60) * hourHeight);
+        return (
+          <div
+            key={ev.uid + idx}
+            className="absolute left-0 right-0 bg-rose-100/80 dark:bg-rose-950/40 border-l-2 border-rose-400 dark:border-rose-600 z-[2] overflow-hidden rounded-r-sm cursor-pointer hover:bg-rose-200/80 dark:hover:bg-rose-900/50"
+            style={{ top, height }}
+            onClick={(e) => { e.stopPropagation(); onOpen(ev); }}
+            data-testid={`falcetti-block-${ev.uid}`}
+            title={`Falcetti: ${ev.title}${ev.startTime ? ` (${ev.startTime}–${ev.endTime})` : ""}`}
+          >
+            <div
+              className={`px-1.5 pt-1 font-semibold text-rose-600 dark:text-rose-400 leading-tight truncate ${
+                size === "lg" ? "text-[11px]" : "text-[9px]"
+              }`}
+            >
+              {ev.title}
+            </div>
+            {size === "lg" && ev.startTime && (
+              <div className="px-1.5 text-[9px] text-rose-400 dark:text-rose-500 leading-none mt-0.5">
+                {ev.startTime} – {ev.endTime}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function formatDateLong(dateStr: string): string {
   const parsed = parseMDYY(dateStr);
   if (!parsed) return dateStr;
@@ -235,6 +303,8 @@ export default function CalendarPage() {
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [dialogMode, setDialogMode] = useState<DialogMode>(null);
+  const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
+  const [falcettiDetail, setFalcettiDetail] = useState<FalcettiEvent | null>(null);
 
   const [apptCustomerId, setApptCustomerId] = useState<number | null>(null);
   const [apptPianoId, setApptPianoId] = useState<number | null>(null);
@@ -300,6 +370,11 @@ export default function CalendarPage() {
 
   const { data: appSettings } = useQuery<{ workBlockExceptions?: string | null }>({
     queryKey: ["/api/settings"],
+  });
+
+  // Real Falcetti (Gazelle) shifts imported from the company calendar feed.
+  const { data: falcettiData } = useQuery<{ events: FalcettiEvent[]; configured: boolean }>({
+    queryKey: ["/api/external-calendar/events"],
   });
 
   const customerMap = useMemo(
@@ -442,17 +517,21 @@ export default function CalendarPage() {
   }, [currentMonth, currentYear]);
 
   const appointmentsByDate = useMemo(() => {
+    // Repeating appointments appear on every occurrence; multi-day all-day
+    // appointments appear on every spanned day. Expansion is windowed around
+    // the visible year (with buffer for week-view straddles).
     const map = new Map<string, Appointment[]>();
+    const rangeStart = new Date(currentYear - 1, 11, 1);
+    const rangeEnd = new Date(currentYear + 1, 1, 1);
     appointments?.forEach((appt) => {
-      const parsed = parseMDYY(appt.date);
-      if (parsed) {
-        const key = `${parsed.getFullYear()}-${parsed.getMonth()}-${parsed.getDate()}`;
+      for (const d of expandAppointmentDates(appt, rangeStart, rangeEnd)) {
+        const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
         if (!map.has(key)) map.set(key, []);
         map.get(key)!.push(appt);
       }
     });
     return map;
-  }, [appointments]);
+  }, [appointments, currentYear]);
 
   const notesByDate = useMemo(() => {
     const map = new Map<string, CalendarNote[]>();
@@ -500,6 +579,21 @@ export default function CalendarPage() {
   function getDateKey(date: Date): string {
     return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
   }
+
+  // Falcetti shifts keyed by the same day-key the grid uses.
+  const falcettiByDate = useMemo(() => {
+    const map = new Map<string, FalcettiEvent[]>();
+    (falcettiData?.events ?? []).forEach((ev) => {
+      const parsed = parseMDYY(ev.date);
+      if (!parsed) return;
+      const d = new Date(parsed);
+      d.setHours(0, 0, 0, 0);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(ev);
+    });
+    return map;
+  }, [falcettiData]);
 
   // ── Drag-and-drop: move an appointment to another day ──────────────────────
   const dndSensors = useSensors(
@@ -558,6 +652,7 @@ export default function CalendarPage() {
     const key = getDateKey(date);
     if (workBlockExceptionSet.has(key)) return false; // manually removed
     if (getTrip(date, trips)) return false; // SLC trip in progress
+    if ((falcettiByDate.get(key)?.length ?? 0) > 0) return false; // real Gazelle shift(s) shown instead
     const dayEvItems = eventsByDate.get(key) ?? [];
     if (dayEvItems.some(({ ev }) => ev.eventType === "personal")) return false; // personal/busy event
     return true;
@@ -620,23 +715,9 @@ export default function CalendarPage() {
   }
 
   function openEditAppointment(appt: Appointment) {
+    // One shared Edit Appointment window app-wide (appointment-detail-dialog).
     closeDetailDialog();
-    setEditingApptId(appt.id);
-    setApptCustomerId(appt.customerId);
-    setApptPianoId(appt.pianoId ?? null);
-    setApptTimeMinutes(parseTimeString(appt.time));
-    setApptDurationMinutes(parseDurationString(appt.duration ?? ""));
-    const existingNames = appt.servicesRequested
-      ? appt.servicesRequested.split(",").map((s) => s.trim()).filter(Boolean)
-      : [];
-    setApptSelectedNames(existingNames);
-    setApptServices(appt.servicesRequested ?? "");
-    setApptPrice(appt.priceEstimate ?? "");
-    setApptNotes(appt.notes ?? "");
-    setApptIsTuning(appt.isTuning ?? false);
-    const parsed = parseMDYY(appt.date);
-    setSelectedDate(parsed);
-    setDialogMode("appointment");
+    setDetailAppt(appt);
   }
 
   function openEditEvent(ev: CalendarEvent) {
@@ -706,7 +787,7 @@ export default function CalendarPage() {
     if (!q) return customers.slice(0, 20);
     return customers
       .filter((c) =>
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
+        clientSearchText(c).includes(q) ||
         c.phone?.includes(q) ||
         c.city?.toLowerCase().includes(q)
       )
@@ -727,7 +808,7 @@ export default function CalendarPage() {
     const mapsUrl = address ? `https://maps.google.com/?q=${encodeURIComponent(address)}` : null;
     const dateLabel = formatDateLong(appt.date);
     const customerName = customer
-      ? `${customer.firstName} ${customer.lastName}`
+      ? clientName(customer)
       : `Client #${appt.customerId}`;
     const pianoLabel = piano
       ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") || `Piano #${piano.id}`
@@ -763,7 +844,7 @@ export default function CalendarPage() {
             <div className="flex items-center gap-1.5">
               <Clock className="h-3 w-3 shrink-0" />
               <span>
-                {formatTimeCondensed(appt.time)}
+                {appt.isAllDay ? "All day" : formatTimeCondensed(appt.time)}
                 {endTime ? ` – ${formatTimeCondensed(endTime)}` : ""}
                 {appt.duration ? ` (${appt.duration})` : ""}
               </span>
@@ -1132,9 +1213,16 @@ export default function CalendarPage() {
     const dayAppts = (appointmentsByDate.get(key) ?? []).slice().sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
     const dayNotes = notesByDate.get(key) ?? [];
     const dayEventItems = eventsByDate.get(key) ?? [];
+    const dayFalcetti = falcettiByDate.get(key) ?? [];
+    const showOnCall = shouldShowWorkBlock(date);
     const isToday = isSameDay(date, today);
     const apptCount = dayAppts.filter((a) => a.status !== "cancelled").length;
-    const isEmpty = dayAppts.length === 0 && dayNotes.length === 0 && dayEventItems.length === 0;
+    const isEmpty =
+      dayAppts.length === 0 &&
+      dayNotes.length === 0 &&
+      dayEventItems.length === 0 &&
+      dayFalcetti.length === 0 &&
+      !showOnCall;
 
     return (
       <Card key={key} data-testid={`agenda-day-${key}`}>
@@ -1163,6 +1251,25 @@ export default function CalendarPage() {
             {isEmpty && (
               <p className="text-xs text-muted-foreground py-2">Nothing scheduled — tap Add to book.</p>
             )}
+            {dayFalcetti.map((fev, fi) => (
+              <div
+                key={fev.uid + fi}
+                className="flex items-center gap-2 text-xs p-1.5 rounded-md bg-rose-50 dark:bg-rose-950/20 cursor-pointer hover:bg-rose-100 dark:hover:bg-rose-950/40"
+                data-testid={`falcetti-agenda-${fev.uid}`}
+                onClick={() => setFalcettiDetail(fev)}
+              >
+                <Clock className="h-3 w-3 shrink-0 text-rose-500" />
+                <span className="text-rose-600 dark:text-rose-400 font-medium truncate">
+                  {fev.isAllDay || !fev.startTime ? fev.title : `${fev.startTime}–${fev.endTime} · ${fev.title}`}
+                </span>
+              </div>
+            ))}
+            {showOnCall && (
+              <div className="flex items-center gap-2 text-xs p-1.5 rounded-md" data-testid={`oncall-agenda-${key}`}>
+                <Clock className="h-3 w-3 shrink-0 text-slate-400" />
+                <span className="text-slate-400 dark:text-slate-500">7:00 AM–3:00 PM · Falcetti (tentative)</span>
+              </div>
+            )}
             {dayAppts.map((appt) => {
               const customer = customerMap.get(appt.customerId);
               const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
@@ -1173,12 +1280,12 @@ export default function CalendarPage() {
                 <div
                   key={appt.id}
                   className={`flex items-center gap-2 text-xs p-1.5 rounded-md cursor-pointer hover:bg-muted/50 ${isCompleted || isCancelled ? "opacity-60" : ""}`}
-                  onClick={() => setSelectedAppt(appt)}
+                  onClick={() => setDetailAppt(appt)}
                   data-testid={`calendar-appointment-${appt.id}`}
                 >
                   <Clock className="h-3 w-3 shrink-0 text-sky-500" />
                   <span className={isCompleted || isCancelled ? "line-through" : ""}>
-                    {formatPillLabel(appt.time, customer ? { city: customer.city, state: customer.state, lastName: `${customer.firstName} ${customer.lastName}` } : undefined, pianoLabel)}
+                    {formatPillLabel(appt.isAllDay ? "All day" : appt.time, customer ? { city: customer.city, state: customer.state, lastName: clientName(customer) } : undefined, pianoLabel)}
                   </span>
                   {isCancelled && <span className="text-[10px] text-destructive uppercase tracking-wide">cancelled</span>}
                 </div>
@@ -1351,10 +1458,18 @@ export default function CalendarPage() {
                         style={{ top: i * HOUR_HEIGHT }}
                       />
                     ))}
-                    {/* ── Falcetti Pianos work block (7am–3pm) ── */}
+                    {/* ── Real Falcetti (Gazelle) shifts ── */}
+                    <FalcettiTimeBlocks
+                      events={falcettiByDate.get(key) ?? []}
+                      gridStartHour={GRID_START_HOUR}
+                      hourHeight={HOUR_HEIGHT}
+                      size="sm"
+                      onOpen={setFalcettiDetail}
+                    />
+                    {/* ── Default "on call" block (weekdays with nothing on Gazelle) ── */}
                     {shouldShowWorkBlock(d) && (
                       <div
-                        className="absolute left-0 right-0 bg-rose-50 dark:bg-rose-950/20 border-r-2 border-rose-200 dark:border-rose-800/50 z-[1] group"
+                        className="absolute left-0 right-0 bg-slate-100/60 dark:bg-slate-800/30 border-r-2 border-dashed border-slate-300 dark:border-slate-700 z-[1] group"
                         style={{
                           top: (WORK_BLOCK_START_HOUR - GRID_START_HOUR) * HOUR_HEIGHT,
                           height: (WORK_BLOCK_END_HOUR - WORK_BLOCK_START_HOUR) * HOUR_HEIGHT,
@@ -1363,19 +1478,19 @@ export default function CalendarPage() {
                         data-testid={`week-work-block-${key}`}
                       >
                         <div className="flex items-center justify-between px-1.5 pt-1">
-                          <span className="text-[9px] font-semibold text-rose-500 dark:text-rose-400 leading-none truncate">
-                            BU · Falcetti Pianos
+                          <span className="text-[9px] font-medium text-slate-400 dark:text-slate-500 leading-none truncate">
+                            Falcetti
                           </span>
                           <button
-                            className="h-3.5 w-3.5 flex items-center justify-center text-rose-400 invisible group-hover:visible hover:text-rose-700 shrink-0"
-                            title="Remove this day's work block"
+                            className="h-3.5 w-3.5 flex items-center justify-center text-slate-400 invisible group-hover:visible hover:text-slate-700 shrink-0"
+                            title="Remove this day's on-call block"
                             onClick={(e) => { e.stopPropagation(); addWorkBlockException(key); }}
                           >
                             <X className="h-2.5 w-2.5" />
                           </button>
                         </div>
                         <div className="px-1.5 mt-0.5">
-                          <span className="text-[8px] text-rose-400 dark:text-rose-500 leading-none">7am – 3pm</span>
+                          <span className="text-[8px] text-slate-400 dark:text-slate-500 leading-none">7am – 3pm (tentative)</span>
                         </div>
                       </div>
                     )}
@@ -1389,7 +1504,7 @@ export default function CalendarPage() {
                       const isCompleted = appt.status === "completed";
                       const isOpen = selectedAppt?.id === appt.id;
                       const cityLastName = [customer?.city, customer?.lastName].filter(Boolean).join(" · ");
-                      const fullName = customer ? `${customer.firstName} ${customer.lastName}` : "";
+                      const fullName = customer ? clientName(customer) : "";
                       return (
                         <DraggableAppt
                           key={appt.id}
@@ -1405,12 +1520,12 @@ export default function CalendarPage() {
                                   ? "bg-muted text-muted-foreground border border-border/50"
                                   : "bg-sky-500 hover:bg-sky-600 text-white"
                               }`}
-                              onClick={(e) => { e.stopPropagation(); setSelectedAppt(appt); }}
+                              onClick={(e) => { e.stopPropagation(); setDetailAppt(appt); }}
                               data-testid={`week-appt-${appt.id}`}
                             >
                               {/* Time range */}
                               <div className={`text-[9px] font-medium leading-tight truncate ${isCompleted ? "opacity-60" : "opacity-80"}`}>
-                                {formatTimeCondensed(appt.time)}{endTime ? `–${formatTimeCondensed(endTime)}` : ""}
+                                {appt.isAllDay ? "All day" : `${formatTimeCondensed(appt.time)}${endTime ? `–${formatTimeCondensed(endTime)}` : ""}`}
                               </div>
                               {/* City · LastName title */}
                               <div className={`text-[11px] font-semibold leading-tight truncate ${isCompleted ? "line-through opacity-70" : ""}`}>
@@ -1500,12 +1615,20 @@ export default function CalendarPage() {
                 {Array.from({ length: GRID_END_HOUR - GRID_START_HOUR }, (_, i) => (
                   <div key={i} className="absolute w-full border-b border-border/20" style={{ top: i * HOUR_HEIGHT }} />
                 ))}
-                {/* ── Falcetti Pianos work block (7am–3pm) ── */}
+                {/* ── Real Falcetti (Gazelle) shifts ── */}
+                <FalcettiTimeBlocks
+                  events={falcettiByDate.get(getDateKey(dayViewDate)) ?? []}
+                  gridStartHour={GRID_START_HOUR}
+                  hourHeight={HOUR_HEIGHT}
+                  size="lg"
+                  onOpen={setFalcettiDetail}
+                />
+                {/* ── Default "on call" block (weekday with nothing on Gazelle) ── */}
                 {shouldShowWorkBlock(dayViewDate) && (() => {
                   const wbKey = getDateKey(dayViewDate);
                   return (
                     <div
-                      className="absolute left-0 right-0 bg-rose-50 dark:bg-rose-950/20 border-r-2 border-rose-200 dark:border-rose-800/50 z-[1] group"
+                      className="absolute left-0 right-0 bg-slate-100/60 dark:bg-slate-800/30 border-r-2 border-dashed border-slate-300 dark:border-slate-700 z-[1] group"
                       style={{
                         top: (WORK_BLOCK_START_HOUR - GRID_START_HOUR) * HOUR_HEIGHT,
                         height: (WORK_BLOCK_END_HOUR - WORK_BLOCK_START_HOUR) * HOUR_HEIGHT,
@@ -1515,16 +1638,16 @@ export default function CalendarPage() {
                     >
                       <div className="flex items-center justify-between px-2 pt-1.5">
                         <div>
-                          <div className="text-[11px] font-semibold text-rose-600 dark:text-rose-400 leading-tight">
-                            BU · Falcetti Pianos
+                          <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500 leading-tight">
+                            Falcetti
                           </div>
-                          <div className="text-[9px] text-rose-400 dark:text-rose-500 leading-none mt-0.5">
-                            7:00 AM – 3:00 PM
+                          <div className="text-[9px] text-slate-400 dark:text-slate-500 leading-none mt-0.5">
+                            7:00 AM – 3:00 PM (tentative)
                           </div>
                         </div>
                         <button
-                          className="h-5 w-5 flex items-center justify-center rounded text-rose-400 invisible group-hover:visible hover:text-rose-700 hover:bg-rose-100 dark:hover:bg-rose-900/40 shrink-0"
-                          title="Remove this day's work block"
+                          className="h-5 w-5 flex items-center justify-center rounded text-slate-400 invisible group-hover:visible hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800/60 shrink-0"
+                          title="Remove this day's on-call block"
                           onClick={(e) => { e.stopPropagation(); addWorkBlockException(wbKey); }}
                         >
                           <X className="h-3 w-3" />
@@ -1553,11 +1676,11 @@ export default function CalendarPage() {
                                 : "bg-sky-500 hover:bg-sky-600 text-white"
                             }`}
                             style={{ top, height: Math.max(height, 28) }}
-                            onClick={(e) => { e.stopPropagation(); setSelectedAppt(appt); }}
+                            onClick={(e) => { e.stopPropagation(); setDetailAppt(appt); }}
                             data-testid={`day-appt-${appt.id}`}
                           >
                             <div className="text-xs font-semibold leading-tight truncate">
-                              {formatTimeCondensed(appt.time)}{customer ? ` · ${customer.firstName} ${customer.lastName}` : ""}
+                              {appt.isAllDay ? "All day" : formatTimeCondensed(appt.time)}{customer ? ` · ${clientName(customer)}` : ""}
                             </div>
                             {pianoShort && height >= 40 && (
                               <div className="text-[10px] leading-tight opacity-80 truncate">{pianoShort}</div>
@@ -1812,15 +1935,29 @@ export default function CalendarPage() {
                       </div>
                     </div>
                     <div className="space-y-0.5 overflow-hidden">
-                      {/* ── Falcetti Pianos work block ── */}
+                      {/* ── Real Falcetti (Gazelle) shifts ── */}
+                      {(falcettiByDate.get(key) ?? []).map((fev, fi) => (
+                        <div
+                          key={fev.uid + fi}
+                          className="text-[10px] leading-tight px-1.5 py-0.5 rounded-[3px] truncate bg-rose-100 text-rose-600 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800 cursor-pointer hover:bg-rose-200 dark:hover:bg-rose-900/50"
+                          title={`Falcetti: ${fev.title}${fev.startTime ? ` (${fev.startTime}–${fev.endTime})` : ""}`}
+                          data-testid={`falcetti-pill-${fev.uid}`}
+                          onClick={(e) => { e.stopPropagation(); setFalcettiDetail(fev); }}
+                        >
+                          {fev.isAllDay || !fev.startTime
+                            ? fev.title
+                            : `${formatTimeCondensed(fev.startTime)} ${fev.title}`}
+                        </div>
+                      ))}
+                      {/* ── Default Falcetti pill (weekday with nothing on Gazelle) ── */}
                       {shouldShowWorkBlock(date) && (
                         <div className="flex items-center gap-0.5 group" data-testid={`work-block-${key}`}>
-                          <div className="text-[10px] leading-tight flex-1 min-w-0 px-1.5 py-0.5 rounded-[3px] truncate bg-rose-100 text-rose-600 border border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800">
-                            7a–3p · Falcetti Pianos
+                          <div className="text-[10px] leading-tight flex-1 min-w-0 px-1.5 py-0.5 rounded-[3px] truncate bg-slate-100 text-slate-400 border border-dashed border-slate-300 dark:bg-slate-800/40 dark:text-slate-500 dark:border-slate-700">
+                            7a–3p · Falcetti
                           </div>
                           <button
-                            className="shrink-0 h-4 w-4 flex items-center justify-center rounded-sm text-rose-400 invisible group-hover:visible hover:text-rose-700"
-                            title="Remove this day's work block"
+                            className="shrink-0 h-4 w-4 flex items-center justify-center rounded-sm text-slate-400 invisible group-hover:visible hover:text-slate-700"
+                            title="Remove this day's on-call block"
                             onClick={(e) => { e.stopPropagation(); addWorkBlockException(key); }}
                             data-testid={`work-block-remove-${key}`}
                           >
@@ -1833,7 +1970,7 @@ export default function CalendarPage() {
                         const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
                         const pianoShort = piano ? ([piano.make, piano.model].filter(Boolean).join(" ") || null) : null;
                         const isCompleted = appt.status === "completed";
-                        const pillLabel = formatPillLabel(appt.time, customer, pianoShort);
+                        const pillLabel = formatPillLabel(appt.isAllDay ? "All day" : appt.time, customer, pianoShort);
                         const isOpen = selectedAppt?.id === appt.id;
                         return (
                           <DraggableAppt key={appt.id} id={appt.id}>
@@ -1845,7 +1982,7 @@ export default function CalendarPage() {
                                     ? "bg-muted text-muted-foreground line-through opacity-60"
                                     : "bg-sky-500 hover:bg-sky-600 text-white"
                                 }`}
-                                onClick={() => setSelectedAppt(appt)}
+                                onClick={() => setDetailAppt(appt)}
                                 data-testid={`calendar-appointment-${appt.id}`}
                               >
                                 {pillLabel}
@@ -1984,164 +2121,6 @@ export default function CalendarPage() {
                   <span className="text-[10px] text-muted-foreground">Info only, not a block</span>
                 </Button>
               </div>
-            </>
-          )}
-
-          {dialogMode === "appointment" && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  <Music className="h-4 w-4 text-primary" />
-                  {editingApptId ? "Edit Appointment" : "Schedule Appointment"}
-                  <span className="text-sm font-normal text-muted-foreground">— {selectedDateLabel}</span>
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
-                <div className="space-y-1.5">
-                  <Label>Client <span className="text-destructive">*</span></Label>
-                  <Popover open={customerComboOpen} onOpenChange={setCustomerComboOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        className="w-full justify-between font-normal"
-                        data-testid="button-customer-combobox"
-                      >
-                        {selectedCustomer
-                          ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}`
-                          : "Search client..."}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-full p-0" align="start">
-                      <Command shouldFilter={false}>
-                        <CommandInput
-                          placeholder="Search by name, phone, city..."
-                          value={customerSearch}
-                          onValueChange={setCustomerSearch}
-                          data-testid="input-customer-search"
-                        />
-                        <CommandList>
-                          <CommandEmpty>No clients found</CommandEmpty>
-                          <CommandGroup>
-                            {filteredCustomers.map((c) => (
-                              <CommandItem
-                                key={c.id}
-                                value={String(c.id)}
-                                onSelect={() => {
-                                  setApptCustomerId(c.id);
-                                  setApptPianoId(null);
-                                  setCustomerComboOpen(false);
-                                  setCustomerSearch("");
-                                }}
-                                data-testid={`customer-option-${c.id}`}
-                              >
-                                <Check
-                                  className={`mr-2 h-4 w-4 ${apptCustomerId === c.id ? "opacity-100" : "opacity-0"}`}
-                                />
-                                <div>
-                                  <div className="font-medium">{c.firstName} {c.lastName}</div>
-                                  {(c.phone || c.city) && (
-                                    <div className="text-xs text-muted-foreground">{[c.phone ? formatPhone(c.phone) : null, c.city].filter(Boolean).join(" · ")}</div>
-                                  )}
-                                </div>
-                              </CommandItem>
-                            ))}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
-                </div>
-
-                {apptCustomerId && selectedCustomerPianos.length > 0 && (
-                  <div className="space-y-1.5">
-                    <Label>Piano</Label>
-                    <Select
-                      value={apptPianoId ? String(apptPianoId) : "none"}
-                      onValueChange={(v) => setApptPianoId(v === "none" ? null : Number(v))}
-                    >
-                      <SelectTrigger data-testid="select-piano">
-                        <SelectValue placeholder="Select piano (optional)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No specific piano</SelectItem>
-                        {selectedCustomerPianos.map((p) => (
-                          <SelectItem key={p.id} value={String(p.id)}>
-                            {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label>Time</Label>
-                    <TimeStepperWidget
-                      minutes={apptTimeMinutes}
-                      onChange={setApptTimeMinutes}
-                      testIdPrefix="appt-time"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Duration</Label>
-                    <DurationStepperWidget
-                      minutes={apptDurationMinutes}
-                      onChange={setApptDurationMinutes}
-                      testIdPrefix="appt-duration"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Services</Label>
-                  <ServicePicker
-                    value={apptSelectedNames}
-                    onChange={(names, isTuning, totalCost) => {
-                      setApptSelectedNames(names);
-                      setApptServices(names.join(", "));
-                      setApptIsTuning(isTuning);
-                      setApptPrice(totalCost > 0 ? `$${totalCost.toFixed(0)}` : "");
-                    }}
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Price Estimate</Label>
-                  <Input
-                    placeholder="$180"
-                    value={apptPrice}
-                    onChange={(e) => setApptPrice(e.target.value)}
-                    data-testid="input-appt-price"
-                  />
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Notes</Label>
-                  <Textarea
-                    placeholder="Additional notes..."
-                    value={apptNotes}
-                    onChange={(e) => setApptNotes(e.target.value)}
-                    className="resize-none"
-                    rows={2}
-                    data-testid="input-appt-notes"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="ghost" onClick={() => editingApptId ? closeDialog() : setDialogMode("picker")} data-testid="button-appt-back">
-                  {editingApptId ? "Cancel" : "Back"}
-                </Button>
-                <Button
-                  onClick={handleSaveAppointment}
-                  disabled={!apptCustomerId || createAppointmentMutation.isPending || updateAppointmentMutation.isPending}
-                  data-testid="button-appt-save"
-                >
-                  {editingApptId ? "Save Changes" : "Schedule"}
-                </Button>
-              </DialogFooter>
             </>
           )}
 
@@ -2368,6 +2347,58 @@ export default function CalendarPage() {
         />
       )}
 
+      <AppointmentDetailDialog
+        appointment={detailAppt}
+        open={!!detailAppt}
+        onOpenChange={(o) => { if (!o) setDetailAppt(null); }}
+      />
+
+      {/* ── Falcetti (Gazelle) shift detail — read-only ── */}
+      <Dialog open={!!falcettiDetail} onOpenChange={(o) => { if (!o) setFalcettiDetail(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-rose-500" />
+              {falcettiDetail?.title}
+            </DialogTitle>
+          </DialogHeader>
+          {falcettiDetail && (
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Calendar className="h-4 w-4 shrink-0" />
+                <span>{formatDateLong(falcettiDetail.date)}</span>
+              </div>
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Clock className="h-4 w-4 shrink-0" />
+                <span>
+                  {falcettiDetail.isAllDay || !falcettiDetail.startTime
+                    ? "All day"
+                    : `${falcettiDetail.startTime} – ${falcettiDetail.endTime}`}
+                </span>
+              </div>
+              {falcettiDetail.location && (
+                <div className="flex items-start gap-2 text-muted-foreground">
+                  <MapPin className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span className="whitespace-pre-line">{falcettiDetail.location}</span>
+                </div>
+              )}
+              {falcettiDetail.description && (
+                <div className="flex items-start gap-2">
+                  <StickyNote className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" />
+                  <span className="whitespace-pre-line text-foreground">{falcettiDetail.description}</span>
+                </div>
+              )}
+              <div className="rounded-md bg-rose-50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 p-3 text-xs text-rose-700 dark:text-rose-300">
+                From your Falcetti (Gazelle) calendar — read-only. Edit it in Gazelle and the change shows here within a few minutes.
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFalcettiDetail(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <AppointmentDialog
         open={createApptDialogOpen}
         onOpenChange={setCreateApptDialogOpen}
@@ -2377,7 +2408,7 @@ export default function CalendarPage() {
       {/* ── Drag-and-drop reschedule dialog ── */}
       {calMoveReq && (() => {
         const cust = customerMap.get(calMoveReq.appt.customerId);
-        const clientName = cust ? `${cust.firstName} ${cust.lastName}` : "Appointment";
+        const movingClientName = cust ? clientName(cust) : "Appointment";
         const targetDay = parseMDYY(calMoveReq.targetDate);
         const targetLabel = targetDay
           ? targetDay.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
@@ -2389,7 +2420,7 @@ export default function CalendarPage() {
             + parseDurationString(calMoveReq.prevAppt.duration ?? "1 hr 30 min");
           prev = {
             endMinutes: prevEnd,
-            label: `${prevCust ? `${prevCust.firstName} ${prevCust.lastName}` : "previous appointment"} (ends ${formatTimeMinutes(prevEnd)})`,
+            label: `${prevCust ? clientName(prevCust) : "previous appointment"} (ends ${formatTimeMinutes(prevEnd)})`,
             address: customerAddressOf(calMoveReq.prevAppt.customerId),
           };
         }
@@ -2397,7 +2428,7 @@ export default function CalendarPage() {
           <MoveAppointmentDialog
             open={true}
             onOpenChange={(o) => { if (!o) setCalMoveReq(null); }}
-            clientName={clientName}
+            clientName={movingClientName}
             targetDateLabel={targetLabel}
             isDayChange={calMoveReq.appt.date !== calMoveReq.targetDate}
             prev={prev}

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Search, ChevronDown, ArrowUpDown, ArrowUp, ArrowDown, Music2, Upload } from "lucide-react";
 import type { Piano, Customer } from "@shared/schema";
+import { clientName, clientSearchText } from "@shared/client-name";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
@@ -188,7 +189,7 @@ export default function PianosPage() {
       if (!q) return true;
       const customer = customerMap.get(p.customerId);
       const clientName = customer
-        ? `${customer.firstName} ${customer.lastName}`.toLowerCase()
+        ? clientSearchText(customer)
         : "";
       return (
         (p.make ?? "").toLowerCase().includes(q) ||
@@ -239,8 +240,8 @@ export default function PianosPage() {
         case "client": {
           const ca = customerMap.get(a.customerId);
           const cb = customerMap.get(b.customerId);
-          const na = ca ? `${ca.lastName} ${ca.firstName}` : "";
-          const nb = cb ? `${cb.lastName} ${cb.firstName}` : "";
+          const na = clientName(ca, "");
+          const nb = clientName(cb, "");
           cmp = na.localeCompare(nb);
           break;
         }
@@ -492,7 +493,7 @@ export default function PianosPage() {
                             }}
                             data-testid={`link-piano-client-${piano.id}`}
                           >
-                            {customer.firstName} {customer.lastName}
+                            {clientName(customer)}
                           </span>
                         ) : (
                           <span className="text-muted-foreground opacity-40">—</span>

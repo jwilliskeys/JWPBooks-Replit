@@ -122,6 +122,7 @@ interface CatalogForm {
   durationMinutes: number;
   isTuning: boolean;
   isDefault: boolean;
+  selfSchedulable: boolean;
   serviceType: ServiceItemType;
   descriptionText: string;
   sortOrder: number;
@@ -135,6 +136,7 @@ const emptyCatalogForm = (category = "", sortOrder = 0): CatalogForm => ({
   durationMinutes: 0,
   isTuning: false,
   isDefault: false,
+  selfSchedulable: false,
   serviceType: "fixed-rate-labor",
   descriptionText: "",
   sortOrder,
@@ -171,6 +173,7 @@ function ServiceDialog({
         durationMinutes: durationHoursToMinutes(hours),
         isTuning: item.isTuning ?? false,
         isDefault: item.isDefault ?? false,
+        selfSchedulable: item.selfSchedulable ?? false,
         serviceType: serviceType || "fixed-rate-labor",
         descriptionText: text,
         sortOrder: item.sortOrder ?? 0,
@@ -311,6 +314,23 @@ function ServiceDialog({
                 <Badge className="bg-teal-600 text-white hover:bg-teal-600 text-[10px]">TUNING</Badge>
               )}
             </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <Checkbox
+                checked={form.selfSchedulable}
+                onCheckedChange={v => setForm(f => ({ ...f, selfSchedulable: !!v }))}
+                className="mt-0.5"
+                data-testid="checkbox-self-schedulable"
+              />
+              <span className="text-sm">
+                Self-Schedulable
+                {form.selfSchedulable && (
+                  <Badge className="ml-1.5 bg-sky-600 text-white hover:bg-sky-600 text-[10px]">ONLINE</Badge>
+                )}
+                <span className="block text-xs text-muted-foreground font-normal mt-0.5">
+                  Clients can pick this service (with its price &amp; description) on the public booking form.
+                </span>
+              </span>
+            </label>
           </div>
         </div>
 
@@ -437,6 +457,11 @@ function SortableItemRow({
               DEFAULT
             </Badge>
           )}
+          {item.selfSchedulable && (
+            <Badge className="bg-sky-600 text-white hover:bg-sky-600 text-[10px] px-1.5 py-0" data-testid={`badge-online-${item.id}`}>
+              ONLINE
+            </Badge>
+          )}
         </div>
         <p className="text-xs text-muted-foreground mt-0.5 truncate" data-testid={`service-subline-${item.id}`}>
           {SERVICE_TYPE_LABELS[decodeDescription(item.description).serviceType || ""] ?? "Fixed Rate Labor"}
@@ -497,6 +522,137 @@ function parseWeek(json: string | null | undefined): Record<string, DayHours> {
   } catch {
     return { ...DEFAULT_WEEK };
   }
+}
+
+interface CalendarSyncData {
+  gazelleUrl: string;
+  falcettiEnabled: boolean;
+  feedUrl: string;
+  webcalUrl: string;
+}
+
+function CalendarSyncPanel() {
+  const { toast } = useToast();
+  const { data, isLoading } = useQuery<CalendarSyncData>({
+    queryKey: ["/api/calendar-sync-settings"],
+  });
+  const [gazelleUrl, setGazelleUrl] = useState("");
+  const [falcettiEnabled, setFalcettiEnabled] = useState(true);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (data) {
+      setGazelleUrl(data.gazelleUrl ?? "");
+      setFalcettiEnabled(data.falcettiEnabled !== false);
+    }
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => apiRequest("PUT", "/api/calendar-sync-settings", { gazelleUrl, falcettiEnabled }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar-sync-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/external-calendar/events"] });
+      toast({ title: "Calendar sync saved", description: "Your Falcetti calendar settings were updated." });
+    },
+    onError: (e: any) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
+  });
+
+  const copyFeed = async () => {
+    if (!data?.webcalUrl) return;
+    try {
+      await navigator.clipboard.writeText(data.webcalUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: "Copy failed", description: "Long-press the link to copy it manually.", variant: "destructive" });
+    }
+  };
+
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold">Calendar Sync</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          Pull your Falcetti (Gazelle) work schedule into JWP, and push everything back out to your phone.
+        </p>
+      </div>
+
+      {/* ---- Incoming: Gazelle / Falcetti ---- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Falcetti schedule (from Gazelle)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <Label className="text-sm">Show Falcetti shifts on my calendar</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Real shifts show in red; empty weekdays show a grayed "on call" block.</p>
+            </div>
+            <Switch checked={falcettiEnabled} onCheckedChange={setFalcettiEnabled} data-testid="switch-falcetti-enabled" />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="gazelle-url" className="text-sm">Gazelle calendar link (.ics)</Label>
+            <Input
+              id="gazelle-url"
+              placeholder="https://gazelleapp.io/calendars/…​.ics"
+              value={gazelleUrl}
+              onChange={(e) => setGazelleUrl(e.target.value)}
+              data-testid="input-gazelle-url"
+            />
+            <p className="text-xs text-muted-foreground">
+              In Gazelle: Calendar → Subscribe / Calendar feed → copy the .ics link and paste it here. Updates every few minutes.
+            </p>
+          </div>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save-calendar-sync">
+              {saveMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ---- Outgoing: subscription feed for the phone ---- */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Add to my iPhone / Apple Calendar</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            This one private link bundles <span className="font-medium text-foreground">Falcetti + JWP appointments + personal events</span> into a
+            single read-only calendar that refreshes automatically.
+          </p>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Your private subscription link</Label>
+            <div className="flex gap-2">
+              <Input readOnly value={data?.webcalUrl ?? ""} className="font-mono text-xs" data-testid="input-feed-url" />
+              <Button size="sm" variant="outline" onClick={copyFeed} data-testid="button-copy-feed">
+                {copied ? "Copied!" : "Copy"}
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">Keep this link private — anyone with it can see your schedule.</p>
+          </div>
+          <div className="rounded-md bg-muted/40 p-3 text-sm space-y-1.5">
+            <p className="font-medium">On your iPhone:</p>
+            <ol className="list-decimal ml-5 space-y-1 text-muted-foreground">
+              <li>Copy the link above (tap <span className="font-medium text-foreground">Copy</span>).</li>
+              <li>Open <span className="font-medium text-foreground">Settings → Calendar → Accounts → Add Account → Other</span>.</li>
+              <li>Tap <span className="font-medium text-foreground">Add Subscribed Calendar</span>, paste the link, tap Next, then Save.</li>
+              <li>It appears in your Apple Calendar app and refreshes on its own.</li>
+            </ol>
+          </div>
+          <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm">
+            <p className="font-medium text-amber-800 dark:text-amber-300">One-time setup needed</p>
+            <p className="text-amber-700 dark:text-amber-400 mt-0.5 text-xs">
+              Your phone can only reach this link once the JWP site is published <span className="font-medium">public</span> on Replit (the same step that
+              turns on your online booking page). Until then, the link works only on your own computer.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 function SelfSchedulerPanel() {
@@ -936,6 +1092,7 @@ export default function SettingsPage() {
     defaultDuration: string;
     description: string;
     isTuning: boolean;
+    selfSchedulable: boolean;
     sortOrder: number;
   };
 
@@ -987,6 +1144,7 @@ export default function SettingsPage() {
       defaultDuration: minutesToDurationStr(durationMinutes),
       description: encodeDescription(serviceType, descriptionText),
       isTuning: fields.isTuning,
+      selfSchedulable: fields.selfSchedulable,
       sortOrder: fields.sortOrder,
     };
     if (editItem) {
@@ -1087,7 +1245,7 @@ export default function SettingsPage() {
   const isSavingGroup = createGroupMutation.isPending || updateGroupMutation.isPending;
 
   // ── Nav state ────────────────────────────────────────────────────────────────
-  type SettingsSection = "payment-methods" | "master-service-list" | "company-profile" | "scheduling" | "self-scheduler";
+  type SettingsSection = "payment-methods" | "master-service-list" | "company-profile" | "scheduling" | "self-scheduler" | "calendar-sync";
   const [activeSection, setActiveSection] = useState<SettingsSection>("master-service-list");
 
   const NAV_GROUPS: { heading: string; items: { id: SettingsSection; label: string }[] }[] = [
@@ -1104,6 +1262,7 @@ export default function SettingsPage() {
         { id: "master-service-list", label: "Master Service List" },
         { id: "scheduling", label: "Scheduling" },
         { id: "self-scheduler", label: "Self-Scheduler" },
+        { id: "calendar-sync", label: "Calendar Sync" },
       ],
     },
   ];
@@ -1279,6 +1438,7 @@ export default function SettingsPage() {
     if (activeSection === "company-profile") return StubPanel({ title: "Company Profile", description: "Your business name, address, and contact info shown on invoices." });
     if (activeSection === "scheduling") return StubPanel({ title: "Scheduling", description: "Default appointment duration, buffer time, and calendar preferences." });
     if (activeSection === "self-scheduler") return <SelfSchedulerPanel />;
+    if (activeSection === "calendar-sync") return <CalendarSyncPanel />;
     return null;
   }
 

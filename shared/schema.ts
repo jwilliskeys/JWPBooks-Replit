@@ -91,6 +91,8 @@ export const serviceCatalog = pgTable("service_catalog", {
   isDefault: boolean("is_default").default(false),
   description: text("description"),
   isActive: boolean("is_active").default(true),
+  // Shows on the public /book form (with price + description) when true
+  selfSchedulable: boolean("self_schedulable").default(false),
   sortOrder: integer("sort_order").default(0),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [unique("service_catalog_user_name_unique").on(table.userId, table.name)]);
@@ -109,6 +111,13 @@ export const appointments = pgTable("appointments", {
   isTuning: boolean("is_tuning").default(false),
   status: text("status").default("scheduled"),
   serviceItems: text("service_items"),
+  // Gazelle-style extras (July 2026)
+  title: text("title"),                        // display title; defaults to client name
+  travelMode: text("travel_mode"),             // Driving | Transit | Walking | Biking
+  isAllDay: boolean("is_all_day").default(false),
+  endDate: text("end_date"),                   // multi-day all-day appointments (M/D/YY)
+  repeatFrequency: text("repeat_frequency"),   // weekly | biweekly | monthly | every-2-months | every-3-months | every-6-months | yearly (null = none)
+  repeatEndDate: text("repeat_end_date"),      // M/D/YY, null = repeats forever
   createdAt: timestamp("created_at").defaultNow(),
 });
 

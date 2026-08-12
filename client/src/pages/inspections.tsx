@@ -59,6 +59,7 @@ import {
   Square,
 } from "lucide-react";
 import type { Inspection, Customer, Piano } from "@shared/schema";
+import { clientName, clientSearchText } from "@shared/client-name";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -245,7 +246,7 @@ function NewInspectionDialog({
                 <SelectContent>
                   {customers.map(c => (
                     <SelectItem key={c.id} value={String(c.id)}>
-                      {c.firstName} {c.lastName}
+                      {clientName(c)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -505,7 +506,7 @@ function InspectionDetailDialog({
               {customer && (
                 <Link href={`/customers/${customer.id}`}>
                   <p className="text-sm text-muted-foreground hover:underline cursor-pointer mt-0.5">
-                    {customer.firstName} {customer.lastName}
+                    {clientName(customer)}
                     {piano && ` · ${[piano.make, piano.pianoType].filter(Boolean).join(" ")}`}
                   </p>
                 </Link>
@@ -700,7 +701,7 @@ function InspectionCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="font-medium text-sm">
-                {customer ? `${customer.firstName} ${customer.lastName}` : `Customer #${inspection.customerId}`}
+                {customer ? clientName(customer) : `Customer #${inspection.customerId}`}
               </span>
               <Badge className={`border text-xs ${statusColor(inspection.status)}`}>
                 {inspection.status}
@@ -810,7 +811,7 @@ export default function InspectionsPage() {
       if (search) {
         const customer = customerMap.get(i.customerId);
         const q = search.toLowerCase();
-        const name = customer ? `${customer.firstName} ${customer.lastName}`.toLowerCase() : "";
+        const name = customer ? clientSearchText(customer) : "";
         if (!name.includes(q) && !i.inspectionDate.includes(q) && !(i.findings ?? "").toLowerCase().includes(q)) {
           return false;
         }

@@ -70,6 +70,7 @@ import {
 import { Calendar as CalendarPicker } from "@/components/ui/calendar";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { DateRange } from "react-day-picker";
+import { clientName, clientSearchText } from "@shared/client-name";
 import {
   DndContext,
   closestCenter,
@@ -81,6 +82,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { MoveAppointmentDialog, type MoveRequestPrev } from "@/components/move-appointment-dialog";
+import { SectionBar } from "@/components/appointment-editor";
 import {
   arrayMove,
   SortableContext,
@@ -157,7 +159,7 @@ function generateIcs(appt: TripAppointment, cust: Customer | undefined, piano: P
   const startMins = parseTimeToMinutes(appt.time || "8:00 AM");
   const endStr = minutesToTimeStr(startMins + durationMins);
   const dtEnd = formatIcsDateTime(appt.date, endStr);
-  const customerName = cust ? `${cust.firstName} ${cust.lastName}` : "Unknown";
+  const customerName = cust ? clientName(cust) : "Unknown";
   const summary = `${customerName} \u2013 ${appt.servicesRequested || "Piano Service"}`;
   const location = buildCustomerAddress(cust);
   const pianoStr = piano ? [piano.make, piano.pianoType].filter(Boolean).join(" ") : "";
@@ -334,7 +336,7 @@ function OverdueSLCClients({ customers, pianosByCustomer, customersWithAllInacti
                   data-testid={`overdue-slc-client-${c.id}`}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{c.firstName} {c.lastName}</div>
+                    <div className="font-medium truncate">{clientName(c)}</div>
                     <div className="text-xs text-muted-foreground truncate">
                       {c.city ?? ""}
                       {c.pianoLabel ? ` · ${c.pianoLabel}` : ""}
@@ -407,7 +409,7 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, cu
           </div>
           {cust ? (
             <Link href={`/customers/${cust.id}`}>
-              <span className="text-sm font-medium hover:underline cursor-pointer block" data-testid={`text-itinerary-customer-${appt.id}`}>{cust.firstName} {cust.lastName}</span>
+              <span className="text-sm font-medium hover:underline cursor-pointer block" data-testid={`text-itinerary-customer-${appt.id}`}>{clientName(cust)}</span>
             </Link>
           ) : (
             <span className="text-sm font-medium text-muted-foreground">Unknown client</span>
@@ -2155,7 +2157,7 @@ export default function SlcSchedule() {
       const numData = await numRes.json();
       const invoiceNumber = String(numData.nextNumber ?? "1");
 
-      const customerName = cust ? `${cust.firstName} ${cust.lastName}` : "";
+      const customerName = cust ? clientName(cust) : "";
       const rawPrice = parseFloat(completingAppt.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
       const priceStr = `$${rawPrice.toFixed(2)}`;
       const lineItems = completingAppt.servicesRequested
@@ -2207,7 +2209,7 @@ export default function SlcSchedule() {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       const icsContent = generateIcs(appt, cust, piano);
-      const custName = cust ? `${cust.firstName}_${cust.lastName}`.replace(/\s+/g, "_") : "appointment";
+      const custName = cust ? clientName(cust, "appointment").replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
       toast({ title: "Appointment confirmed and added to calendar" });
     },
@@ -2341,7 +2343,7 @@ export default function SlcSchedule() {
   function handleConfirmAppointment(appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) {
     if (appt.linkedAppointmentId) {
       const icsContent = generateIcs(appt, cust, piano);
-      const custName = cust ? `${cust.firstName}_${cust.lastName}`.replace(/\s+/g, "_") : "appointment";
+      const custName = cust ? clientName(cust, "appointment").replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
       toast({ title: "Already added to appointments — calendar file re-downloaded" });
       return;
@@ -2373,7 +2375,7 @@ export default function SlcSchedule() {
       if (customersWithAllInactivePianos.has(c.id)) return false;
       if (!searchLower) return true;
       return (
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(searchLower) ||
+        clientSearchText(c).includes(searchLower) ||
         c.city?.toLowerCase().includes(searchLower)
       );
     });
@@ -2395,7 +2397,7 @@ export default function SlcSchedule() {
     sugg.sort((a, b) => {
       if (a.isStarred && !b.isStarred) return -1;
       if (!a.isStarred && b.isStarred) return 1;
-      return `${a.lastName}${a.firstName}`.localeCompare(`${b.lastName}${b.firstName}`);
+      return clientName(a, "").localeCompare(clientName(b, ""));
     });
     const overflow = sugg.splice(3);
     rest.unshift(...overflow);
@@ -2476,7 +2478,7 @@ export default function SlcSchedule() {
       {/* ── Drag-and-drop reschedule dialog ─────────────────────────────────── */}
       {moveReq && (() => {
         const cust = customerMap.get(moveReq.appt.customerId);
-        const clientName = cust ? `${cust.firstName} ${cust.lastName}` : "Appointment";
+        const movingClientName = cust ? clientName(cust) : "Appointment";
         const targetDay = parseDateStr(moveReq.targetDate);
         const targetLabel = targetDay
           ? targetDay.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
@@ -2488,7 +2490,7 @@ export default function SlcSchedule() {
             + parseDurationToMinutes(moveReq.prevAppt.duration || "2 hours");
           prev = {
             endMinutes: prevEnd,
-            label: `${prevCust ? `${prevCust.firstName} ${prevCust.lastName}` : "previous appointment"} (ends ${formatTimeMinutes(prevEnd)})`,
+            label: `${prevCust ? clientName(prevCust) : "previous appointment"} (ends ${formatTimeMinutes(prevEnd)})`,
             address: prevCust ? buildCustomerAddress(prevCust) : null,
           };
         }
@@ -2496,7 +2498,7 @@ export default function SlcSchedule() {
           <MoveAppointmentDialog
             open={true}
             onOpenChange={(o) => { if (!o) setMoveReq(null); }}
-            clientName={clientName}
+            clientName={movingClientName}
             targetDateLabel={targetLabel}
             isDayChange={moveReq.appt.date !== moveReq.targetDate}
             prev={prev}
@@ -2616,7 +2618,7 @@ export default function SlcSchedule() {
 
       {/* ── Add Appointment Dialog ──────────────────────────────────────────── */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Plus className="h-5 w-5" />
@@ -2624,14 +2626,57 @@ export default function SlcSchedule() {
             </DialogTitle>
           </DialogHeader>
 
+          {/* Two-column Gazelle layout — same structure as every appointment window */}
+          <div className="grid sm:grid-cols-2 gap-5">
+            {/* ── LEFT: details + date & time ── */}
+            <div className="space-y-4">
+              <SectionBar title="Details" />
           {dialogDayArea && (
             <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50 border">
               <MapPin className="h-4 w-4 text-primary" />
               <span className="text-sm font-medium">Service Area: {getClusterName(dialogDayArea)}</span>
             </div>
           )}
+            <div className="space-y-2">
+              <Label htmlFor="appt-notes">Notes</Label>
+              <Textarea
+                id="appt-notes"
+                value={apptNotes}
+                onChange={(e) => setApptNotes(e.target.value)}
+                placeholder="Any notes..."
+                data-testid="input-appt-notes"
+              />
+            </div>
+              <SectionBar title="Date &amp; Time" />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Time</Label>
+                <TimeStepperWidget
+                  minutes={apptTimeMinutes}
+                  onChange={(m) => { setApptTimeMinutes(m); setConflictError(""); }}
+                  testIdPrefix="trip-appt-time"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Duration</Label>
+                <DurationStepperWidget
+                  minutes={apptDurationMinutes}
+                  onChange={(m) => { setApptDurationMinutes(m); setConflictError(""); }}
+                  testIdPrefix="trip-appt-duration"
+                />
+              </div>
+            </div>
+            {conflictError && (
+              <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-conflict-error">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{conflictError} — saved anyway.</span>
+              </div>
+            )}
+            </div>
 
-          <div className="space-y-4">
+            {/* ── RIGHT: client + pianos & services ── */}
+            <div className="space-y-4">
+              <SectionBar title="Client Information" />
             {/* Customer */}
             <div className="space-y-2">
               <Label>Customer</Label>
@@ -2663,7 +2708,7 @@ export default function SlcSchedule() {
                             ? <Star className="h-3 w-3 fill-yellow-400 text-yellow-400 shrink-0" />
                             : <User className="h-3 w-3 text-muted-foreground shrink-0" />
                           }
-                          {c.firstName} {c.lastName}
+                          {clientName(c)}
                         </span>
                         {c.city && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -2689,7 +2734,7 @@ export default function SlcSchedule() {
                       >
                         <span className="flex items-center gap-2">
                           <User className="h-3 w-3 text-muted-foreground" />
-                          {c.firstName} {c.lastName}
+                          {clientName(c)}
                         </span>
                         {c.city && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
@@ -2710,12 +2755,12 @@ export default function SlcSchedule() {
                   <CheckCircle className="h-3 w-3" />
                   {(() => {
                     const c = customerMap.get(parseInt(selectedCustomerId));
-                    return c ? `${c.firstName} ${c.lastName}${c.city ? ` — ${c.city}` : ""}` : "";
+                    return c ? `${clientName(c)}${c.city ? ` — ${c.city}` : ""}` : "";
                   })()}
                 </div>
               )}
             </div>
-
+              <SectionBar title="Pianos &amp; Services" />
             {selectedCustomerId && selectedCustomerPianos.length > 0 && (
               <div className="space-y-2">
                 <Label>
@@ -2791,34 +2836,6 @@ export default function SlcSchedule() {
                 )}
               </div>
             )}
-
-            {/* Time & Duration */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Time</Label>
-                <TimeStepperWidget
-                  minutes={apptTimeMinutes}
-                  onChange={(m) => { setApptTimeMinutes(m); setConflictError(""); }}
-                  testIdPrefix="trip-appt-time"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Duration</Label>
-                <DurationStepperWidget
-                  minutes={apptDurationMinutes}
-                  onChange={(m) => { setApptDurationMinutes(m); setConflictError(""); }}
-                  testIdPrefix="trip-appt-duration"
-                />
-              </div>
-            </div>
-
-            {conflictError && (
-              <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-conflict-error">
-                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>{conflictError} — saved anyway.</span>
-              </div>
-            )}
-
             {/* Services */}
             <div className="space-y-2">
               <Label>Services</Label>
@@ -2832,27 +2849,13 @@ export default function SlcSchedule() {
                 }}
               />
             </div>
+            <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-muted/40 border text-sm">
+              <span className="text-muted-foreground">Price estimate (sum of services)</span>
+              <span className="font-semibold tabular-nums" data-testid="text-appt-price">{apptPrice || "$0"}</span>
+            </div>
+            </div>
+          </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="appt-price">Price Estimate</Label>
-              <Input
-                id="appt-price"
-                value={apptPrice}
-                onChange={(e) => setApptPrice(e.target.value)}
-                placeholder="$150"
-                data-testid="input-appt-price"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="appt-notes">Notes</Label>
-              <Textarea
-                id="appt-notes"
-                value={apptNotes}
-                onChange={(e) => setApptNotes(e.target.value)}
-                placeholder="Any notes..."
-                data-testid="input-appt-notes"
-              />
-            </div>
             <div className="flex items-center justify-end gap-2">
               <Button variant="outline" onClick={closeAddDialog} data-testid="button-cancel-appointment">
                 Cancel
@@ -2866,7 +2869,6 @@ export default function SlcSchedule() {
                 Add Appointment
               </Button>
             </div>
-          </div>
         </DialogContent>
       </Dialog>
 
@@ -2888,7 +2890,7 @@ export default function SlcSchedule() {
               <p className="text-sm text-muted-foreground mt-0.5">
                 {(() => {
                   const c = customerMap.get(completingAppt.customerId);
-                  return c ? `${c.firstName} ${c.lastName} · ` : "";
+                  return c ? `${clientName(c)} · ` : "";
                 })()}{completingAppt.date} at {completingAppt.time}
               </p>
             )}
@@ -3000,7 +3002,7 @@ export default function SlcSchedule() {
 
       {/* ── Edit Appointment Dialog ─────────────────────────────────────────── */}
       <Dialog open={!!editingAppt} onOpenChange={(open) => { if (!open) { setEditingAppt(null); setEditingTripId(null); } }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Pencil className="h-5 w-5" />
@@ -3009,14 +3011,58 @@ export default function SlcSchedule() {
           </DialogHeader>
           {editingAppt && (
             <div className="space-y-4">
+              {/* Two-column Gazelle layout — same structure as every appointment window */}
+              <div className="grid sm:grid-cols-2 gap-5">
+                {/* ── LEFT: details + date & time ── */}
+                <div className="space-y-4">
+                  <SectionBar title="Details" />
               <div className="text-sm text-muted-foreground">
                 {(() => {
                   const c = customerMap.get(editingAppt.customerId);
-                  return c ? `${c.firstName} ${c.lastName}` : "Unknown client";
+                  return c ? clientName(c) : "Unknown client";
                 })()}
                 {" · "}{editingAppt.date}
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-notes">Notes</Label>
+                <Textarea
+                  id="edit-notes"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  placeholder="Any notes..."
+                  data-testid="input-edit-notes"
+                />
+              </div>
+                  <SectionBar title="Date &amp; Time" />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Time</Label>
+                  <TimeStepperWidget
+                    minutes={parseTimeString(editTime)}
+                    onChange={(m) => { setEditTime(formatTimeMinutes(m)); setEditConflictError(""); }}
+                    testIdPrefix="edit-appt-time"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Duration</Label>
+                  <DurationStepperWidget
+                    minutes={parseDurationString(editDuration)}
+                    onChange={(m) => { setEditDuration(formatDurationMinutes(m)); setEditConflictError(""); }}
+                    testIdPrefix="edit-appt-duration"
+                  />
+                </div>
+              </div>
+              {editConflictError && (
+                <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-edit-conflict-error">
+                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>{editConflictError} — saved anyway.</span>
+                </div>
+              )}
+                </div>
 
+                {/* ── RIGHT: pianos & services ── */}
+                <div className="space-y-4">
+                  <SectionBar title="Pianos &amp; Services" />
               {(() => {
                 const editCustomerPianos = (allPianos ?? []).filter(
                   p => p.customerId === editingAppt.customerId,
@@ -3075,33 +3121,6 @@ export default function SlcSchedule() {
                   </div>
                 );
               })()}
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Time</Label>
-                  <TimeStepperWidget
-                    minutes={parseTimeString(editTime)}
-                    onChange={(m) => { setEditTime(formatTimeMinutes(m)); setEditConflictError(""); }}
-                    testIdPrefix="edit-appt-time"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Duration</Label>
-                  <DurationStepperWidget
-                    minutes={parseDurationString(editDuration)}
-                    onChange={(m) => { setEditDuration(formatDurationMinutes(m)); setEditConflictError(""); }}
-                    testIdPrefix="edit-appt-duration"
-                  />
-                </div>
-              </div>
-
-              {editConflictError && (
-                <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-edit-conflict-error">
-                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <span>{editConflictError} — saved anyway.</span>
-                </div>
-              )}
-
               <div className="space-y-2">
                 <Label>Services</Label>
                 <ServicePicker
@@ -3113,26 +3132,13 @@ export default function SlcSchedule() {
                   }}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-price">Price Estimate</Label>
-                <Input
-                  id="edit-price"
-                  value={editPrice}
-                  onChange={(e) => setEditPrice(e.target.value)}
-                  placeholder="$180"
-                  data-testid="input-edit-price"
-                />
+              <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-muted/40 border text-sm">
+                <span className="text-muted-foreground">Price estimate (sum of services)</span>
+                <span className="font-semibold tabular-nums" data-testid="text-edit-price">{editPrice || "$0"}</span>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="edit-notes">Notes</Label>
-                <Textarea
-                  id="edit-notes"
-                  value={editNotes}
-                  onChange={(e) => setEditNotes(e.target.value)}
-                  placeholder="Any notes..."
-                  data-testid="input-edit-notes"
-                />
+                </div>
               </div>
+
               <div className="flex items-center justify-end gap-2">
                 <Button variant="outline" onClick={() => { setEditingAppt(null); setEditingTripId(null); }} data-testid="button-cancel-edit">
                   Cancel

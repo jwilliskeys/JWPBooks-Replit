@@ -61,6 +61,7 @@ import type {
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServiceTimeline } from "@/components/service-timeline";
 import { ContactManager } from "@/components/contact-manager";
+import { clientName, personName } from "@shared/client-name";
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -855,7 +856,7 @@ export default function CustomerDetail() {
   //  - no contacts yet (pre-migration) → fall back to customer first+last
   const primaryFullName = primaryContact
     ? `${primaryContact.firstName ?? ""}${primaryContact.lastName ? " " + primaryContact.lastName : ""}`.trim()
-    : `${customer.firstName} ${customer.lastName}`.trim();
+    : personName(customer);
 
   const title = customer.companyName?.trim()
     ? customer.companyName
@@ -1105,7 +1106,7 @@ export default function CustomerDetail() {
         open={showAppointmentDialog}
         onOpenChange={setShowAppointmentDialog}
         customerId={customer.id}
-        customerName={`${customer.firstName} ${customer.lastName}`}
+        customerName={clientName(customer)}
       />
 
       <EditClientDialog

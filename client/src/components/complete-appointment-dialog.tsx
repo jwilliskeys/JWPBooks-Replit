@@ -33,6 +33,10 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Piano, ServiceCatalogItem, Invoice, Customer } from "@shared/schema";
 import { parseServiceItems } from "@/lib/service-lines";
+import { PianoscopeAttach, PianoscopeReportDialog } from "@/components/pianoscope-report";
+import { type PianoscopeSummary, serializePianoscope, suggestServiceType } from "@/lib/pianoscope";
+import { pianoDisplayName, pianoSubline, lastTunedLabel, pianoTypeLabel } from "@/components/appointment-editor";
+import { clientName } from "@shared/client-name";
 
 interface SelectedService {
   catalogId: number;
@@ -51,6 +55,8 @@ interface PianoRecord {
   humidity: string;
   temperature: string;
   services: SelectedService[];
+  /** Parsed .pianoscope tuning file attached to this visit */
+  pianoscope: PianoscopeSummary | null;
 }
 
 interface CompleteAppointmentDialogProps {
@@ -90,6 +96,7 @@ export function CompleteAppointmentDialog({
   const [paymentMethod, setPaymentMethod] = useState<string>("");
   const [paymentAmount, setPaymentAmount] = useState<string>("");
   const [localCreatedInvoice, setLocalCreatedInvoice] = useState<Invoice | null>(null);
+  const [reportFor, setReportFor] = useState<{ summary: PianoscopeSummary; title: string } | null>(null);
 
   const { data: pianos } = useQuery<Piano[]>({
     queryKey: ["/api/customers", appointment.customerId, "pianos"],
@@ -158,6 +165,7 @@ export function CompleteAppointmentDialog({
           humidity: "",
           temperature: "",
           services: toSelected(g.lines),
+          pianoscope: null,
         });
       }
       setPianoRecords(initialRecords);
@@ -180,6 +188,7 @@ export function CompleteAppointmentDialog({
           humidity: "",
           temperature: "",
           services: [],
+          pianoscope: null,
         });
       }
     } else if (pianos.length === 1) {
@@ -192,6 +201,7 @@ export function CompleteAppointmentDialog({
         humidity: "",
         temperature: "",
         services: [],
+        pianoscope: null,
       });
     }
     setPianoRecords(initialRecords);
@@ -216,7 +226,7 @@ export function CompleteAppointmentDialog({
       const numData = await numRes.json();
       const invoiceNumber = String(numData.nextNumber ?? "1");
 
-      const customerName = customer ? `${customer.firstName} ${customer.lastName}` : "";
+      const customerName = customer ? clientName(customer) : "";
       const rawPrice = parseFloat(appointment.priceEstimate?.replace(/[^0-9.]/g, "") || "0") || 0;
       const priceStr = `$${rawPrice.toFixed(2)}`;
       const lineItems = appointment.servicesRequested
@@ -258,6 +268,8 @@ export function CompleteAppointmentDialog({
           humidity: r.humidity,
           temperature: r.temperature,
           services: JSON.stringify(r.services),
+          pianoscope: serializePianoscope(r.pianoscope),
+          serviceType: r.pianoscope ? suggestServiceType(r.pianoscope) : undefined,
         })),
         miscServices: JSON.stringify(miscServices),
         paymentMethod: paymentMethod && paymentMethod !== "none" ? paymentMethod : null,
@@ -327,6 +339,7 @@ export function CompleteAppointmentDialog({
       humidity: "",
       temperature: "",
       services: [],
+      pianoscope: null,
     }]);
   }
 
@@ -385,7 +398,7 @@ export function CompleteAppointmentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl w-full max-h-[90vh] flex flex-col p-0">
+      <DialogContent className="max-w-3xl w-full max-h-[90vh] flex flex-col p-0">
         <DialogHeader className="px-6 pt-5 pb-3 border-b shrink-0">
           <DialogTitle className="text-base font-semibold">Complete Appointment</DialogTitle>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -393,7 +406,7 @@ export function CompleteAppointmentDialog({
           </p>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 px-6 py-4">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4">
           <div className="space-y-5">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -409,18 +422,6 @@ export function CompleteAppointmentDialog({
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="client-notes">Client Notes</Label>
-              <Textarea
-                id="client-notes"
-                placeholder="Notes about the client visit..."
-                value={clientNotes}
-                onChange={e => setClientNotes(e.target.value)}
-                rows={2}
-                data-testid="textarea-client-notes"
-              />
             </div>
 
             <Separator />
@@ -456,14 +457,45 @@ export function CompleteAppointmentDialog({
                 <p className="text-xs text-muted-foreground">No pianos added yet. Use "Add Piano" to add one.</p>
               )}
 
-              {pianoRecords.map((rec, idx) => (
+              {pianoRecords.map((rec, idx) => {
+                const piano = pianos?.find(p => p.id === rec.pianoId);
+                return (
                 <div key={idx} className="border rounded-lg p-4 space-y-3 bg-muted/20" data-testid={`piano-record-${idx}`}>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">{rec.label}</span>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <div className="shrink-0 flex flex-col items-center gap-0.5 pt-0.5">
+                        {piano?.photos?.[0] ? (
+                          <img src={piano.photos[0]} alt="" className="h-11 w-11 rounded-md object-cover border" loading="lazy" />
+                        ) : (
+                          <span className="text-lg">🎹</span>
+                        )}
+                        {piano && (
+                          <span className="text-[9px] font-bold text-muted-foreground tracking-wide">{pianoTypeLabel(piano)}</span>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-sm font-semibold leading-tight block">
+                          {piano ? pianoDisplayName(piano) : rec.label}
+                        </span>
+                        {piano && pianoSubline(piano) && (
+                          <span className="text-xs text-muted-foreground block mt-0.5">
+                            {piano.serialNumber ? `Serial ${piano.serialNumber}` : ""}
+                            {piano.serialNumber && piano.location ? " · " : ""}
+                            {piano.location ?? ""}
+                          </span>
+                        )}
+                        {piano && (
+                          <span className="text-xs text-muted-foreground block mt-0.5">
+                            {lastTunedLabel(piano.lastTuned)}
+                            {piano.tuningInterval ? ` · Every ${piano.tuningInterval}` : ""}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6 text-destructive"
+                      className="h-6 w-6 text-destructive shrink-0"
                       onClick={() => removePianoRecord(idx)}
                       data-testid={`button-remove-piano-${idx}`}
                     >
@@ -495,6 +527,8 @@ export function CompleteAppointmentDialog({
                     />
                   </div>
 
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Measurements</Label>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label className="text-xs">Humidity</Label>
@@ -516,6 +550,16 @@ export function CompleteAppointmentDialog({
                         data-testid={`input-temperature-${idx}`}
                       />
                     </div>
+                  </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Pianoscope tuning file</Label>
+                    <PianoscopeAttach
+                      summary={rec.pianoscope}
+                      onChange={(s) => updatePianoRecord(idx, { pianoscope: s, ...(s ? { isTuning: true } : {}) })}
+                      onPreview={() => rec.pianoscope && setReportFor({ summary: rec.pianoscope, title: rec.label })}
+                    />
                   </div>
 
                   {rec.services.length > 0 && (
@@ -617,7 +661,8 @@ export function CompleteAppointmentDialog({
                     </PopoverContent>
                   </Popover>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             <Separator />
@@ -801,7 +846,7 @@ export function CompleteAppointmentDialog({
               </div>
             </div>
           </div>
-        </ScrollArea>
+        </div>
 
         <DialogFooter className="px-6 py-4 border-t shrink-0">
           <Button variant="outline" onClick={() => onOpenChange(false)} data-testid="button-complete-cancel">
@@ -816,6 +861,13 @@ export function CompleteAppointmentDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <PianoscopeReportDialog
+        summary={reportFor?.summary ?? null}
+        open={!!reportFor}
+        onOpenChange={(o) => { if (!o) setReportFor(null); }}
+        title={reportFor?.title}
+      />
     </Dialog>
   );
 }

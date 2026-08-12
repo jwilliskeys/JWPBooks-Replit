@@ -83,7 +83,7 @@ export function AppSidebar() {
       <SidebarHeader className="px-4 pt-6 pb-4">
         <Link href="/" className="flex flex-col items-center gap-3 text-center">
           <img
-            src="/jwp-logo-rosewood.svg?v=3"
+            src="/jwp-logo-fallboard.png?v=4"
             alt="John Willis Piano logo"
             className="h-36 w-36 select-none"
             draggable={false}

@@ -44,6 +44,7 @@ import type { Customer, Appointment, Piano as PianoType } from "@shared/schema";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { SERVICE_AREA_CLUSTERS, getServiceArea } from "@/lib/scheduling";
 import { useIncrementalList } from "@/hooks/use-incremental-list";
+import { clientName, clientSearchText, clientContactLine, clientInitials } from "@shared/client-name";
 
 function parseDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr) return null;
@@ -362,7 +363,7 @@ export default function Customers() {
       const searchLower = search.toLowerCase();
       const matchesSearch =
         !search ||
-        `${c.firstName} ${c.lastName}`.toLowerCase().includes(searchLower) ||
+        clientSearchText(c).includes(searchLower) ||
         c.email?.toLowerCase().includes(searchLower) ||
         c.phone?.includes(search) ||
         c.pianoType?.toLowerCase().includes(searchLower) ||
@@ -705,8 +706,11 @@ export default function Customers() {
                       </td>
                       <td className="px-4 py-3 whitespace-nowrap">
                         <span className="font-medium" data-testid={`text-customer-name-${customer.id}`}>
-                          {customer.firstName} {customer.lastName}
+                          {clientName(customer)}
                         </span>
+                        {clientContactLine(customer) && (
+                          <div className="text-xs text-muted-foreground">{clientContactLine(customer)}</div>
+                        )}
                         {customer.phone && (
                           <div className="text-xs text-muted-foreground">{formatPhone(customer.phone)}</div>
                         )}
@@ -760,7 +764,7 @@ export default function Customers() {
                             className="text-xs h-7"
                             onClick={() => {
                               setAppointmentCustomerId(customer.id);
-                              setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
+                              setAppointmentCustomerName(clientName(customer));
                               setShowAppointmentDialog(true);
                             }}
                             data-testid={`button-schedule-${customer.id}`}
@@ -795,7 +799,7 @@ export default function Customers() {
                     <div className="flex items-center gap-3 min-w-0">
                       <Link href={`/customers/${customer.id}`}>
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary text-sm font-semibold cursor-pointer hover:bg-primary/20 transition-colors">
-                          {customer.firstName?.[0]}{customer.lastName?.[0]}
+                          {clientInitials(customer)}
                         </div>
                       </Link>
                       <div className="min-w-0">
@@ -803,12 +807,12 @@ export default function Customers() {
                           <StatusDot active={isActive} state={customer.state} />
                           <Link href={`/customers/${customer.id}`}>
                             <p className="font-semibold text-sm truncate hover:underline cursor-pointer" data-testid={`text-customer-name-${customer.id}`}>
-                              {customer.firstName} {customer.lastName}
+                              {clientName(customer)}
                             </p>
                           </Link>
                         </div>
-                        {customer.companyName && (
-                          <p className="text-xs text-muted-foreground truncate">{customer.companyName}</p>
+                        {clientContactLine(customer) && (
+                          <p className="text-xs text-muted-foreground truncate">{clientContactLine(customer)}</p>
                         )}
                       </div>
                     </div>
@@ -879,7 +883,7 @@ export default function Customers() {
                       className="text-xs h-7 flex-1"
                       onClick={() => {
                         setAppointmentCustomerId(customer.id);
-                        setAppointmentCustomerName(`${customer.firstName} ${customer.lastName}`);
+                        setAppointmentCustomerName(clientName(customer));
                         setShowAppointmentDialog(true);
                       }}
                       data-testid={`button-schedule-${customer.id}`}

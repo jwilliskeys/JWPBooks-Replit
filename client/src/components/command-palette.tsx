@@ -13,6 +13,7 @@ import {
 import { Users, Music, FileText } from "lucide-react";
 import { formatPhone } from "@/lib/utils";
 import type { Customer, Piano, Invoice } from "@shared/schema";
+import { clientName, clientSearchText } from "@shared/client-name";
 
 // ── Matching helpers ─────────────────────────────────────────────────────────
 
@@ -88,7 +89,7 @@ export function CommandPalette({
       (customers ?? []).map((c) => ({
         record: c,
         haystack: [
-          norm(`${c.firstName} ${c.lastName}`),
+          norm(clientSearchText(c)),
           norm(c.companyName),
           norm(c.email),
           digits(c.phone),
@@ -107,7 +108,7 @@ export function CommandPalette({
         const owner = customerMap.get(p.customerId);
         return {
           record: p,
-          ownerName: owner ? `${owner.firstName} ${owner.lastName}` : "",
+          ownerName: owner ? clientName(owner) : "",
           haystack: [
             norm(p.make),
             norm(p.model),
@@ -115,7 +116,7 @@ export function CommandPalette({
             norm(p.serialNumber),
             norm(p.year),
             norm(p.location),
-            owner ? norm(`${owner.firstName} ${owner.lastName}`) : "",
+            owner ? norm(clientSearchText(owner)) : "",
           ].join(" "),
         };
       }),
@@ -127,7 +128,7 @@ export function CommandPalette({
       (invoices ?? []).map((inv) => {
         const cust = customerMap.get(inv.customerId);
         const custName =
-          inv.customerName || (cust ? `${cust.firstName} ${cust.lastName}` : "");
+          inv.customerName || (cust ? clientName(cust) : "");
         return {
           record: inv,
           custName,
@@ -163,7 +164,7 @@ export function CommandPalette({
           .join(" · ");
         customerHits.push({
           id: `customer-${c.id}`,
-          title: `${c.firstName} ${c.lastName}`.trim() || "(Unnamed client)",
+          title: clientName(c, "(Unnamed client)"),
           subtitle: sub,
           href: `/customers/${c.id}`,
         });

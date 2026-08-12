@@ -81,6 +81,92 @@ export function parseDurationString(s: string): number {
   return total || DEFAULT_DURATION_MINUTES;
 }
 
+// ─── StepperGroup ────────────────────────────────────────────────────────────
+// Gazelle-style compact stepper: one attached unit — tiny stacked ±big buttons
+// on the left, the value in the middle, tiny stacked ±small buttons on the
+// right. Buttons are subtle half-height tabs inside the field's own border.
+
+const stepMiniBtn =
+  "flex-1 min-h-0 flex items-center justify-center text-[9px] font-semibold leading-none " +
+  "bg-muted/50 text-muted-foreground hover:bg-primary hover:text-primary-foreground " +
+  "active:bg-primary/80 transition-colors select-none";
+
+export function StepperGroup({
+  display,
+  onStep,
+  bigStep = 60,
+  smallStep = 5,
+  bigLabel = "1h",
+  smallLabel = "5m",
+  className = "",
+  displayClassName = "",
+  testIdPrefix,
+}: {
+  display: string;
+  /** Called with the delta in minutes (positive or negative). */
+  onStep: (deltaMinutes: number) => void;
+  bigStep?: number;
+  smallStep?: number;
+  bigLabel?: string;
+  smallLabel?: string;
+  className?: string;
+  displayClassName?: string;
+  testIdPrefix?: string;
+}) {
+  return (
+    <div
+      className={`inline-flex items-stretch h-10 sm:h-9 rounded-md border border-input bg-background overflow-hidden ${className}`}
+    >
+      <div className="flex flex-col w-9 shrink-0 border-r border-input divide-y divide-input">
+        <button
+          type="button"
+          tabIndex={-1}
+          className={stepMiniBtn}
+          onClick={() => onStep(bigStep)}
+          data-testid={testIdPrefix ? `${testIdPrefix}-plus-hour` : undefined}
+        >
+          +{bigLabel}
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          className={stepMiniBtn}
+          onClick={() => onStep(-bigStep)}
+          data-testid={testIdPrefix ? `${testIdPrefix}-minus-hour` : undefined}
+        >
+          −{bigLabel}
+        </button>
+      </div>
+      <span
+        className={`flex items-center justify-center px-2 text-sm font-semibold tabular-nums min-w-[76px] ${displayClassName}`}
+        data-testid={testIdPrefix ? `${testIdPrefix}-display` : undefined}
+      >
+        {display}
+      </span>
+      <div className="flex flex-col w-9 shrink-0 border-l border-input divide-y divide-input">
+        <button
+          type="button"
+          tabIndex={-1}
+          className={stepMiniBtn}
+          onClick={() => onStep(smallStep)}
+          data-testid={testIdPrefix ? `${testIdPrefix}-plus-five` : undefined}
+        >
+          +{smallLabel}
+        </button>
+        <button
+          type="button"
+          tabIndex={-1}
+          className={stepMiniBtn}
+          onClick={() => onStep(-smallStep)}
+          data-testid={testIdPrefix ? `${testIdPrefix}-minus-five` : undefined}
+        >
+          −{smallLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function TimeStepperWidget({
   minutes,
   onChange,
@@ -94,47 +180,13 @@ export function TimeStepperWidget({
     return ((m % (24 * 60)) + 24 * 60) % (24 * 60);
   }
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 w-full justify-between">
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes + 60))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-hour`}
-        >
-          +1h
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes - 60))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-hour`}
-        >
-          −1h
-        </button>
-      </div>
-      <span className="text-base font-bold tabular-nums min-w-[80px] text-center" data-testid={`${testIdPrefix}-display`}>
-        {formatTimeMinutes(minutes)}
-      </span>
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes + 5))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-five`}
-        >
-          +5m
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(wrap(minutes - 5))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-five`}
-        >
-          −5m
-        </button>
-      </div>
-    </div>
+    <StepperGroup
+      display={formatTimeMinutes(minutes)}
+      onStep={d => onChange(wrap(minutes + d))}
+      className="w-full"
+      displayClassName="flex-1"
+      testIdPrefix={testIdPrefix}
+    />
   );
 }
 
@@ -151,47 +203,13 @@ export function DurationStepperWidget({
     return Math.max(MIN_DURATION, Math.min(MAX_DURATION, m));
   }
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 w-full justify-between">
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes + 60))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-hour`}
-        >
-          +1h
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes - 60))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-hour`}
-        >
-          −1h
-        </button>
-      </div>
-      <span className="text-base font-bold tabular-nums min-w-[80px] text-center" data-testid={`${testIdPrefix}-display`}>
-        {formatDurationMinutes(minutes)}
-      </span>
-      <div className="flex flex-col gap-0.5">
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes + 5))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-plus-five`}
-        >
-          +5m
-        </button>
-        <button
-          type="button"
-          onClick={() => onChange(clamp(minutes - 5))}
-          className="text-[11px] font-semibold rounded px-2 py-2 sm:py-0.5 bg-muted-foreground/20 hover:bg-muted-foreground/30 transition-colors leading-tight"
-          data-testid={`${testIdPrefix}-minus-five`}
-        >
-          −5m
-        </button>
-      </div>
-    </div>
+    <StepperGroup
+      display={formatDurationMinutes(minutes)}
+      onStep={d => onChange(clamp(minutes + d))}
+      className="w-full"
+      displayClassName="flex-1"
+      testIdPrefix={testIdPrefix}
+    />
   );
 }
 

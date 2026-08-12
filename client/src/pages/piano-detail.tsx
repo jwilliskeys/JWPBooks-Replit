@@ -52,6 +52,8 @@ import {
   ClipboardList,
   LineChart,
   Upload,
+  UserRoundCog,
+  Combine,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
@@ -62,6 +64,8 @@ import { type PianoscopeSummary, serializePianoscope, deserializePianoscope, par
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { PianoPhotoGallery } from "@/components/piano-photo-gallery";
+import { ReassignPianoDialog, MergePianosDialog } from "@/components/piano-transfer-dialogs";
+import { clientName, clientContactLine, clientInitials } from "@shared/client-name";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -182,6 +186,9 @@ export default function PianoDetail() {
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
   const [detailAppt, setDetailAppt] = useState<Appointment | null>(null);
 
+  const [showReassign, setShowReassign] = useState(false);
+  const [showMerge, setShowMerge] = useState(false);
+
   const [editingLastTuned, setEditingLastTuned] = useState(false);
   const [lastTunedValue, setLastTunedValue] = useState("");
   const [importingPs, setImportingPs] = useState(false);
@@ -221,6 +228,15 @@ export default function PianoDetail() {
     if (piano) queryClient.invalidateQueries({ queryKey: ["/api/customers", String(piano.customerId), "pianos"] });
     queryClient.invalidateQueries({ queryKey: ["/api/pianos"] });
     queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+  };
+
+  // A reassign or merge touches records across two clients, so refetch broadly
+  // rather than trying to name every affected cache key.
+  const invalidateAfterTransfer = () => {
+    invalidateAll();
+    queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/invoices"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
   };
 
   // ── mutations ──
@@ -639,7 +655,7 @@ export default function PianoDetail() {
             className="text-muted-foreground hover:text-foreground truncate max-w-[10rem] sm:max-w-none"
             data-testid="link-crumb-customer"
           >
-            {customer.companyName?.trim() || `${customer.firstName} ${customer.lastName}`}
+            {clientName(customer)}
           </Link>
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <span className="font-medium truncate">{pianoLabel}</span>
@@ -701,6 +717,13 @@ export default function PianoDetail() {
                 <Tag className="h-4 w-4 mr-2" /> Add Tag
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setShowReassign(true)} data-testid="menuitem-reassign-piano">
+                <UserRoundCog className="h-4 w-4 mr-2" /> Assign piano to a different client
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowMerge(true)} data-testid="menuitem-merge-pianos">
+                <Combine className="h-4 w-4 mr-2" /> Merge Pianos
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => { if (confirm("Delete this piano and all its history?")) deletePiano.mutate(); }}
@@ -733,7 +756,7 @@ export default function PianoDetail() {
             </div>
             <h1 className="text-xl font-bold" data-testid="piano-title">{pianoLabel}</h1>
             <Link href={`/customers/${customer.id}`} className="text-sm text-muted-foreground hover:text-foreground hover:underline" data-testid="link-customer">
-              {customer.firstName} {customer.lastName}
+              {clientName(customer)}
             </Link>
             <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
               {(piano.serialNumber || piano.location) && (
@@ -908,11 +931,11 @@ export default function PianoDetail() {
               <Link href={`/customers/${customer.id}`} className="flex items-center justify-between group" data-testid="link-customer-card">
                 <div className="flex items-center gap-3">
                   <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-sm font-bold text-primary/60">
-                    {customer.firstName[0]}{customer.lastName[0]}
+                    {clientInitials(customer)}
                   </div>
                   <div>
-                    <p className="text-sm font-medium group-hover:underline">{customer.firstName} {customer.lastName}</p>
-                    {customer.companyName && <p className="text-xs text-muted-foreground">{customer.companyName}</p>}
+                    <p className="text-sm font-medium group-hover:underline">{clientName(customer)}</p>
+                    {clientContactLine(customer) && <p className="text-xs text-muted-foreground">{clientContactLine(customer)}</p>}
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -1230,7 +1253,7 @@ export default function PianoDetail() {
         onOpenChange={setShowAppointmentDialog}
         customerId={customer.id}
         pianoId={piano.id}
-        customerName={`${customer.firstName} ${customer.lastName}`}
+        customerName={clientName(customer)}
       />
 
       <AppointmentDetailDialog
@@ -1249,6 +1272,22 @@ export default function PianoDetail() {
         open={showReport}
         onOpenChange={setShowReport}
         title={reportTitle}
+      />
+
+      <ReassignPianoDialog
+        piano={piano}
+        currentOwner={customer}
+        open={showReassign}
+        onOpenChange={setShowReassign}
+        onDone={invalidateAfterTransfer}
+      />
+
+      <MergePianosDialog
+        piano={piano}
+        currentOwner={customer}
+        open={showMerge}
+        onOpenChange={setShowMerge}
+        onDone={invalidateAfterTransfer}
       />
     </div>
   );

@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { Appointment, Customer } from "@shared/schema";
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
+import { clientName, clientSearchText } from "@shared/client-name";
 
 type AppointmentSortOption = "date" | "lastName" | "location";
 
@@ -64,7 +65,7 @@ export default function Appointments() {
       if (!search) return true;
       const s = search.toLowerCase();
       const customer = customerMap.get(a.customerId);
-      const name = customer ? `${customer.firstName} ${customer.lastName}`.toLowerCase() : "";
+      const name = customer ? clientSearchText(customer) : "";
       return (
         name.includes(s) ||
         a.servicesRequested?.toLowerCase().includes(s) ||
@@ -165,7 +166,7 @@ export default function Appointments() {
                           {customer ? (
                             <Link href={`/customers/${customer.id}`}>
                               <span className="text-sm font-medium hover:underline cursor-pointer flex items-center gap-1" data-testid={`appointment-client-${appointment.id}`}>
-                                {customer.firstName} {customer.lastName}
+                                {clientName(customer)}
                                 <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />
                               </span>
                             </Link>

@@ -20,6 +20,7 @@ import {
   suggestServiceType,
   fileLabel,
 } from "@/lib/pianoscope";
+import { clientName, clientContactLine } from "@shared/client-name";
 
 // ─── types ────────────────────────────────────────────────────────────────────
 interface ParsedFile { fileName: string; summary: PianoscopeSummary; iso: string; }
@@ -139,8 +140,8 @@ export default function ImportPianoscopePage() {
   const customerOptions = useMemo(
     () => customers
       .slice()
-      .sort((a, b) => (a.lastName + a.firstName).localeCompare(b.lastName + b.firstName))
-      .map((c) => ({ id: c.id as number, label: `${c.firstName} ${c.lastName}`, sub: [c.companyName, c.city].filter(Boolean).join(" · ") || undefined })),
+      .sort((a, b) => clientName(a, "").localeCompare(clientName(b, "")))
+      .map((c) => ({ id: c.id as number, label: clientName(c), sub: [clientContactLine(c), c.city].filter(Boolean).join(" · ") || undefined })),
     [customers],
   );
 

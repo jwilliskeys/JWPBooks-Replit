@@ -48,143 +48,24 @@ import {
 } from "@/lib/service-lines";
 import {
   TimeStepperWidget,
+  StepperGroup,
   DatePickerPopover,
   formatTimeMinutes,
   formatDurationMinutes,
   DEFAULT_TIME_MINUTES,
 } from "@/components/time-stepper";
-
-// ─── helpers ────────────────────────────────────────────────────────────────
-
-function todayMDYY(): string {
-  const d = new Date();
-  return `${d.getMonth() + 1}/${d.getDate()}/${String(d.getFullYear()).slice(2)}`;
-}
-
-// Convert M/D/YY → YYYY-MM-DD for <input type="date">
-function toInputDate(mdyy: string): string {
-  if (!mdyy) return "";
-  const parts = mdyy.split("/");
-  if (parts.length !== 3) return "";
-  const m = parts[0].padStart(2, "0");
-  const d = parts[1].padStart(2, "0");
-  let yr = parseInt(parts[2], 10);
-  if (yr < 100) yr += 2000;
-  return `${yr}-${m}-${d}`;
-}
-
-// Convert YYYY-MM-DD → M/D/YY for app-internal format
-function fromInputDate(iso: string): string {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-").map(Number);
-  const yr = y % 100;
-  return `${m}/${d}/${yr}`;
-}
-
-// Human-readable date label from M/D/YY
-function dateLabel(mdyy: string): string {
-  if (!mdyy) return "";
-  const parts = mdyy.split("/");
-  if (parts.length !== 3) return mdyy;
-  let yr = parseInt(parts[2], 10);
-  if (yr < 100) yr += 2000;
-  const d = new Date(yr, parseInt(parts[0], 10) - 1, parseInt(parts[1], 10));
-  if (isNaN(d.getTime())) return mdyy;
-  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-}
-
-function parseDateStr(s: string | null | undefined): Date | null {
-  if (!s) return null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-    const d = new Date(s); return isNaN(d.getTime()) ? null : d;
-  }
-  const p = s.split("/");
-  if (p.length !== 3) return null;
-  let yr = parseInt(p[2]); if (yr < 100) yr += 2000;
-  const d = new Date(yr, parseInt(p[0]) - 1, parseInt(p[1]));
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function monthsDiff(from: Date, to: Date): number {
-  return (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
-}
-
-function daysDiff(from: Date, to: Date): number {
-  return Math.round((to.getTime() - from.getTime()) / 86400000);
-}
-
-function calcNextTuningDue(lastTuned: string | null | undefined, interval: string | null | undefined): Date | null {
-  const d = parseDateStr(lastTuned);
-  if (!d || !interval) return null;
-  const months = parseInt(interval);
-  if (isNaN(months)) return null;
-  const next = new Date(d);
-  next.setMonth(next.getMonth() + months);
-  return next;
-}
-
-function nextTuningLabel(lastTuned: string | null | undefined, interval: string | null | undefined): { label: string | null; urgent: boolean } {
-  const next = calcNextTuningDue(lastTuned, interval);
-  if (!next) return { label: null, urgent: false };
-  const days = daysDiff(new Date(), next);
-  if (days === 0) return { label: "Next tuning: Today", urgent: true };
-  if (days === -1) return { label: "Next tuning: Yesterday", urgent: true };
-  if (days < 0) return { label: `Next tuning: ${Math.abs(days)} days overdue`, urgent: true };
-  if (days === 1) return { label: "Next tuning: Tomorrow", urgent: false };
-  if (days < 30) return { label: `Next tuning: in ${days} days`, urgent: false };
-  const mos = Math.round(days / 30);
-  return { label: `Next tuning: in ${mos} month${mos !== 1 ? "s" : ""}`, urgent: false };
-}
-
-function lastTunedLabel(lastTuned: string | null | undefined): string {
-  const d = parseDateStr(lastTuned);
-  if (!d) return "Never tuned";
-  const mos = monthsDiff(d, new Date());
-  if (mos === 0) return "Last tuned: This month";
-  if (mos === 1) return "Last tuned: Last month";
-  if (mos < 12) return `Last tuned: ${mos} months ago`;
-  const yrs = Math.floor(mos / 12);
-  return `Last tuned: ${yrs} year${yrs !== 1 ? "s" : ""} ago`;
-}
-
-function pianoTypeLabel(p: Piano): string {
-  const t = (p.pianoType ?? "").toLowerCase();
-  if (t.includes("grand")) return "GRAND";
-  if (t.includes("upright") || t.includes("vertical")) return "UPRIGHT";
-  if (t.includes("digital")) return "DIGITAL";
-  return "UNKNOWN";
-}
-
-function pianoDisplayName(p: Piano): string {
-  return [p.year, p.make, p.model].filter(Boolean).join(" ") || `Piano #${p.id}`;
-}
-
-function pianoSubline(p: Piano): string {
-  return [p.serialNumber, p.location].filter(Boolean).join(", ");
-}
-
-function parseCost(s: string | null | undefined): number {
-  if (!s) return 0;
-  return parseFloat(s.replace(/[^0-9.]/g, "")) || 0;
-}
-
-// ─── types ───────────────────────────────────────────────────────────────────
-
-interface PianoSection {
-  sectionId: string;
-  pianoId: number | null;
-  lines: ServiceLine[];
-  isMisc: boolean;
-}
-
-function makeSection(pianoId: number | null = null, isMisc = false): PianoSection {
-  return {
-    sectionId: `${Date.now()}-${Math.random()}`,
-    pianoId,
-    lines: [],
-    isMisc,
-  };
-}
+import {
+  todayMDYY,
+  dateLabel,
+  type PianoSection,
+  makeSection,
+  SectionBar,
+  PianoCard,
+  PianoPickerView,
+  DetailsFields,
+  DateTimeFields,
+} from "@/components/appointment-editor";
+import { clientName, clientSearchText } from "@shared/client-name";
 
 interface AppointmentDialogProps {
   open: boolean;
@@ -195,198 +76,13 @@ interface AppointmentDialogProps {
   initialDate?: string;
 }
 
-// ─── Piano Picker View ───────────────────────────────────────────────────────
-
-interface PianoPickerViewProps {
-  pianos: Piano[];
-  onSelect: (piano: Piano) => void;
-  onClose: () => void;
-}
-
-function PianoPickerView({ pianos, onSelect, onClose }: PianoPickerViewProps) {
-  const [query, setQuery] = useState("");
-  const [activeOnly, setActiveOnly] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => { setTimeout(() => inputRef.current?.focus(), 50); }, []);
-
-  const filtered = useMemo(() => {
-    let list = activeOnly ? pianos.filter(p => p.isActive !== false) : pianos;
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      list = list.filter(p =>
-        [p.make, p.model, p.year, p.serialNumber, p.location, p.pianoType]
-          .some(v => v?.toLowerCase().includes(q))
-      );
-    }
-    return list.sort((a, b) => {
-      const an = calcNextTuningDue(a.lastTuned, a.tuningInterval);
-      const bn = calcNextTuningDue(b.lastTuned, b.tuningInterval);
-      if (!an && !bn) return 0;
-      if (!an) return 1;
-      if (!bn) return -1;
-      return an.getTime() - bn.getTime();
-    });
-  }, [pianos, query, activeOnly]);
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 mb-3">
-        <button
-          type="button"
-          onClick={onClose}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </button>
-        <div className="relative flex-1">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
-          <Input
-            ref={inputRef}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Find a piano by make, model, location, serial number…"
-            className="pl-8 h-9 text-sm"
-          />
-        </div>
-        <Button type="button" size="sm" variant="outline" className="shrink-0 text-xs">
-          + New Piano
-        </Button>
-      </div>
-
-      <label className="flex items-center gap-2 text-sm text-muted-foreground mb-3 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={activeOnly}
-          onChange={e => setActiveOnly(e.target.checked)}
-          className="rounded"
-        />
-        Only show active pianos
-      </label>
-
-      <div className="flex-1 overflow-y-auto rounded-lg border divide-y">
-        {filtered.length === 0 ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">
-            {pianos.length === 0 ? "No pianos on file for this client." : "No pianos match your search."}
-          </div>
-        ) : (
-          filtered.map(piano => {
-            const { label: nextLabel, urgent } = nextTuningLabel(piano.lastTuned, piano.tuningInterval);
-            const typeLabel = pianoTypeLabel(piano);
-            return (
-              <button
-                key={piano.id}
-                type="button"
-                onClick={() => onSelect(piano)}
-                className="w-full flex items-center gap-3 px-3 py-3 hover:bg-muted/30 transition-colors text-left"
-              >
-                <div className="shrink-0 w-12 flex flex-col items-center gap-0.5">
-                  <span className="text-xl">🎹</span>
-                  <span className="text-[9px] font-bold text-muted-foreground tracking-wide">{typeLabel}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold leading-tight">{pianoDisplayName(piano)}</p>
-                  {pianoSubline(piano) && (
-                    <p className="text-xs text-muted-foreground mt-0.5">{pianoSubline(piano)}</p>
-                  )}
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="text-xs text-muted-foreground">{lastTunedLabel(piano.lastTuned)}</p>
-                  {nextLabel && (
-                    <p className={`text-xs font-medium mt-0.5 ${urgent ? "text-red-500" : "text-muted-foreground"}`}>
-                      {nextLabel}
-                    </p>
-                  )}
-                </div>
-              </button>
-            );
-          })
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Section header bar ──────────────────────────────────────────────────────
-
-function SectionBar({ title, children }: { title: string; children?: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
-      <span className="text-sm font-semibold text-foreground">{title}</span>
-      {children && <div className="flex items-center gap-2">{children}</div>}
-    </div>
-  );
-}
-
-// ─── Piano card (after piano selected) ───────────────────────────────────────
-
-interface PianoCardProps {
-  section: PianoSection;
-  piano: Piano | undefined;
-  onUpdate: (patch: Partial<PianoSection>) => void;
-  onRemove: () => void;
-  showRemove: boolean;
-}
-
-function PianoCard({ section, piano, onUpdate, onRemove, showRemove }: PianoCardProps) {
-  const sectionTotal = useMemo(() => linesTotal(section.lines), [section.lines]);
-
-  return (
-    <div className="rounded-lg border border-border bg-card overflow-hidden">
-      <div className="flex items-start gap-3 px-3 py-3 border-b border-border/50 bg-muted/20">
-        <div className="shrink-0 flex flex-col items-center gap-0.5 pt-0.5">
-          <span className="text-lg">🎹</span>
-          <span className="text-[9px] font-bold text-muted-foreground tracking-wide">
-            {piano ? pianoTypeLabel(piano) : "—"}
-          </span>
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold leading-tight">
-            {section.isMisc ? "Misc / Standalone Service" : (piano ? pianoDisplayName(piano) : "Unknown Piano")}
-          </p>
-          {piano && pianoSubline(piano) && (
-            <p className="text-xs text-muted-foreground mt-0.5">{pianoSubline(piano)}</p>
-          )}
-          {piano?.lastTuned && (
-            <p className="text-xs text-muted-foreground mt-1">
-              {lastTunedLabel(piano.lastTuned)}
-              {piano.tuningInterval && ` · Every ${piano.tuningInterval}`}
-            </p>
-          )}
-        </div>
-        {showRemove && (
-          <button
-            type="button"
-            onClick={onRemove}
-            className="shrink-0 p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-
-      <div className="px-3 py-2.5">
-        <ServiceLineEditor
-          lines={section.lines}
-          onChange={lines => onUpdate({ lines })}
-          autoAddDefault={!section.isMisc}
-        />
-        {section.lines.length > 1 && (
-          <div className="flex items-center justify-end gap-2 mt-2 text-xs text-muted-foreground">
-            Subtotal <span className="font-semibold text-foreground tabular-nums">{formatMoney(sectionTotal)}</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ─── Finalize & Save Dialog ──────────────────────────────────────────────────
 
 interface FinalizeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   date: string;
+  onDateChange: (mdyy: string) => void;
   sections: PianoSection[];
   setSections: (s: PianoSection[]) => void;
   activePianos: Piano[];
@@ -406,6 +102,7 @@ function FinalizeDialog({
   open,
   onOpenChange,
   date,
+  onDateChange,
   sections,
   setSections,
   activePianos,
@@ -424,7 +121,10 @@ function FinalizeDialog({
 
   const [notes, setNotes] = useState("");
   const [travelMode, setTravelMode] = useState("Driving");
-  const [isAllDay, setIsAllDay] = useState(true);
+  const [isAllDay, setIsAllDay] = useState(false);
+  const [endDate, setEndDate] = useState("");
+  const [repeatFreq, setRepeatFreq] = useState("none");
+  const [repeatEndDate, setRepeatEndDate] = useState("");
   const [timeMinutes, setTimeMinutes] = useState(DEFAULT_TIME_MINUTES);
   const [localDuration, setLocalDuration] = useState(totalDurationMinutes || 90);
   const [appointmentTitle, setAppointmentTitle] = useState("");
@@ -434,7 +134,7 @@ function FinalizeDialog({
   const [finalizeMountKey, setFinalizeMountKey] = useState(0);
 
   const clientFullName = selectedCustomer
-    ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}`
+    ? clientName(selectedCustomer)
     : customerName ?? "";
 
   const clientAddress = [
@@ -447,7 +147,10 @@ function FinalizeDialog({
     if (open) {
       setNotes("");
       setTravelMode("Driving");
-      setIsAllDay(true);
+      setIsAllDay(false);
+      setEndDate("");
+      setRepeatFreq("none");
+      setRepeatEndDate("");
       setTimeMinutes(DEFAULT_TIME_MINUTES);
       setLocalDuration(totalDurationMinutes || 90);
       setConflictError("");
@@ -487,7 +190,7 @@ function FinalizeDialog({
           id: a.id,
           time: a.time ?? "",
           duration: a.duration ?? "",
-          client: cust ? `${cust.firstName} ${cust.lastName}` : "Unknown",
+          client: cust ? clientName(cust) : "Unknown",
           service: a.servicesRequested ?? "",
         };
       });
@@ -547,6 +250,12 @@ function FinalizeDialog({
         isTuning: anyTuning,
         status: "scheduled",
         serviceItems: groups.length > 0 ? serializeServiceItems(groups) : undefined,
+        title: appointmentTitle.trim() || undefined,
+        travelMode,
+        isAllDay,
+        endDate: isAllDay && endDate && endDate !== date ? endDate : undefined,
+        repeatFrequency: repeatFreq !== "none" ? repeatFreq : undefined,
+        repeatEndDate: repeatFreq !== "none" && repeatEndDate ? repeatEndDate : undefined,
       };
       const res = await apiRequest("POST", "/api/appointments", payload);
       return res.json();
@@ -578,7 +287,6 @@ function FinalizeDialog({
   }
 
   // Stepper button style
-  const stepBtn = "h-6 px-1.5 text-[10px] font-semibold rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors leading-none";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -647,114 +355,43 @@ function FinalizeDialog({
                 </div>
               )}
 
-              {/* Appointment title */}
-              <Input
-                value={appointmentTitle}
-                onChange={e => setAppointmentTitle(e.target.value)}
-                placeholder="Appointment title"
-                className="text-sm font-medium"
-                data-testid="input-appointment-title"
+              {/* Details — SHARED block (same in every appointment window) */}
+              <DetailsFields
+                title={appointmentTitle}
+                onTitle={setAppointmentTitle}
+                titlePlaceholder="Appointment title"
+                notes={notes}
+                onNotes={setNotes}
+                travelMode={travelMode}
+                onTravelMode={setTravelMode}
+                testIdPrefix="finalize"
               />
 
-              {/* Notes */}
-              <Textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                placeholder="Notes"
-                className="min-h-[80px] resize-none text-sm"
-                data-testid="input-finalize-notes"
-              />
-
-              {/* Travel mode */}
-              <div className="flex items-center gap-3">
-                <Car className="h-4 w-4 text-muted-foreground shrink-0" />
-                <Select value={travelMode} onValueChange={setTravelMode}>
-                  <SelectTrigger className="text-sm text-base md:text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Driving" className="py-3 sm:py-1.5">Driving</SelectItem>
-                    <SelectItem value="Transit" className="py-3 sm:py-1.5">Transit</SelectItem>
-                    <SelectItem value="Walking" className="py-3 sm:py-1.5">Walking</SelectItem>
-                    <SelectItem value="Biking" className="py-3 sm:py-1.5">Biking</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Date & Time */}
+              {/* Date & Time — SHARED block */}
               <SectionBar title="Date &amp; Time" />
-
-              <div className="space-y-3">
-                {/* All-day checkbox */}
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="finalize-all-day"
-                    checked={isAllDay}
-                    onCheckedChange={v => { setIsAllDay(!!v); setConflictError(""); }}
-                  />
-                  <Label htmlFor="finalize-all-day" className="text-sm cursor-pointer">
-                    This is an all-day or multi-day event
-                  </Label>
-                </div>
-
-                {/* All-day: simple date display */}
-                {isAllDay && (
-                  <DatePickerPopover value={date} onChange={() => {}} readOnly />
-                )}
-
-                {/* Timed: Gazelle-style stepper row */}
-                {!isAllDay && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
-
-                      {/* Date picker */}
-                      <DatePickerPopover value={date} onChange={() => {}} readOnly />
-
-                      {/* Time stepper */}
-                      <div className="flex items-center gap-1">
-                        <div className="flex flex-col gap-0.5">
-                          <button type="button" className={stepBtn} onClick={() => setTimeMinutes(m => Math.min(m + 60, 23 * 60))}>+1h</button>
-                          <button type="button" className={stepBtn} onClick={() => setTimeMinutes(m => Math.max(m - 60, 0))}>-1h</button>
-                        </div>
-                        <span className="text-sm font-semibold px-2 py-1 rounded border bg-background min-w-[68px] text-center">
-                          {formatTimeMinutes(timeMinutes)}
-                        </span>
-                        <div className="flex flex-col gap-0.5">
-                          <button type="button" className={stepBtn} onClick={() => { setTimeMinutes(m => Math.min(m + 5, 23 * 60)); setConflictError(""); }}>+5m</button>
-                          <button type="button" className={stepBtn} onClick={() => { setTimeMinutes(m => Math.max(m - 5, 0)); setConflictError(""); }}>-5m</button>
-                        </div>
-                      </div>
-
-                      <span className="text-sm text-muted-foreground">for</span>
-
-                      {/* Duration stepper */}
-                      <div className="flex items-center gap-1">
-                        <div className="flex flex-col gap-0.5">
-                          <button type="button" className={stepBtn} onClick={() => setLocalDuration(d => Math.min(d + 60, 8 * 60))}>+1h</button>
-                          <button type="button" className={stepBtn} onClick={() => setLocalDuration(d => Math.max(d - 60, 5))}>-1h</button>
-                        </div>
-                        <span className="text-sm font-semibold px-2 py-1 rounded border bg-background min-w-[68px] text-center">
-                          {displayDuration}
-                        </span>
-                        <div className="flex flex-col gap-0.5">
-                          <button type="button" className={stepBtn} onClick={() => setLocalDuration(d => Math.min(d + 5, 8 * 60))}>+5m</button>
-                          <button type="button" className={stepBtn} onClick={() => setLocalDuration(d => Math.max(d - 5, 5))}>-5m</button>
-                        </div>
-                      </div>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground ml-6">Ends at {endsAt}</p>
-
-                    {conflictError && (
-                      <div className="flex items-start gap-2 p-2 rounded-md bg-destructive/10 border border-destructive/30 text-sm text-destructive">
-                        <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                        <span>{conflictError}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              <DateTimeFields
+                value={{
+                  date,
+                  isAllDay,
+                  endDate,
+                  timeMinutes,
+                  durationMinutes: localDuration,
+                  repeatFrequency: repeatFreq,
+                  repeatEndDate,
+                }}
+                onChange={patch => {
+                  if (patch.date !== undefined) onDateChange(patch.date);
+                  if (patch.isAllDay !== undefined) setIsAllDay(patch.isAllDay);
+                  if (patch.endDate !== undefined) setEndDate(patch.endDate);
+                  if (patch.timeMinutes !== undefined) setTimeMinutes(patch.timeMinutes);
+                  if (patch.durationMinutes !== undefined) setLocalDuration(patch.durationMinutes);
+                  if (patch.repeatFrequency !== undefined) setRepeatFreq(patch.repeatFrequency);
+                  if (patch.repeatEndDate !== undefined) setRepeatEndDate(patch.repeatEndDate);
+                }}
+                conflictError={conflictError}
+                onInteract={() => setConflictError("")}
+                testIdPrefix="finalize"
+              />
             </div>
 
             {/* ── RIGHT PANEL ── */}
@@ -808,6 +445,7 @@ function FinalizeDialog({
                           onUpdate={patch => updateFinalizeSection(sec.sectionId, patch)}
                           onRemove={() => removeFinalizeSection(sec.sectionId)}
                           showRemove={sections.length > 1 || !!sec.isMisc}
+                          onNavigate={() => onOpenChange(false)}
                         />
                       ))
                     )}
@@ -961,7 +599,7 @@ export function AppointmentDialog({
     if (!customers || !clientSearch.trim()) return [];
     const q = clientSearch.toLowerCase();
     return customers.filter(c =>
-      [`${c.firstName} ${c.lastName}`, c.email ?? "", c.phone ?? "", c.city ?? ""]
+      [clientSearchText(c), c.email ?? "", c.phone ?? "", c.city ?? ""]
         .some(v => v.toLowerCase().includes(q))
     ).slice(0, 8);
   }, [customers, clientSearch]);
@@ -1025,7 +663,7 @@ export function AppointmentDialog({
                         <UserRound className="h-4 w-4 text-primary" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold">{selectedCustomer.firstName} {selectedCustomer.lastName}</p>
+                        <p className="text-sm font-semibold">{clientName(selectedCustomer)}</p>
                         {selectedCustomer.city && (
                           <p className="text-xs text-muted-foreground">{selectedCustomer.city}</p>
                         )}
@@ -1065,7 +703,7 @@ export function AppointmentDialog({
                                 <UserRound className="h-3.5 w-3.5 text-muted-foreground" />
                               </div>
                               <div className="min-w-0">
-                                <p className="text-sm font-medium">{c.firstName} {c.lastName}</p>
+                                <p className="text-sm font-medium">{clientName(c)}</p>
                                 {(c.city || c.email) && (
                                   <p className="text-xs text-muted-foreground truncate">{c.city ?? c.email}</p>
                                 )}
@@ -1127,6 +765,7 @@ export function AppointmentDialog({
                           onUpdate={(patch) => updateSection(sec.sectionId, patch)}
                           onRemove={() => removeSection(sec.sectionId)}
                           showRemove={sections.length > 1 || !!sec.isMisc}
+                          onNavigate={() => onOpenChange(false)}
                         />
                       ))}
                     </div>
@@ -1181,6 +820,7 @@ export function AppointmentDialog({
         open={showFinalizeDialog}
         onOpenChange={setShowFinalizeDialog}
         date={date}
+        onDateChange={setDate}
         sections={sections}
         setSections={setSections}
         activePianos={activePianos}

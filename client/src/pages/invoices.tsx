@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Plus, Search, FileText, Mail, DollarSign } from "lucide-react";
 import type { Invoice, Customer } from "@shared/schema";
 import { EnterPaymentDialog } from "@/components/enter-payment-dialog";
+import { clientName } from "@shared/client-name";
 
 function parseDollar(str: string | null | undefined): number {
   if (!str) return 0;
@@ -85,7 +86,7 @@ export default function InvoicesPage() {
   function getCustomerName(inv: Invoice) {
     if (inv.customerName) return inv.customerName;
     const c = customerMap.get(inv.customerId);
-    if (c) return `${c.firstName} ${c.lastName}`;
+    if (c) return clientName(c);
     return "";
   }
 

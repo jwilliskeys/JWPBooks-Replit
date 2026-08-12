@@ -10,7 +10,7 @@
  * ?embed=true strips the outer chrome for iframe use.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -85,6 +85,13 @@ interface BookingPayload {
   phone: string;
   email: string;
   notes: string;
+}
+
+// A service the owner marked Self-Schedulable on the master service list
+interface PublicService {
+  name: string;
+  price?: string;
+  description?: string;
 }
 
 // ── Local-date helper (never toISOString — that shifts the day via UTC) ──────
@@ -324,11 +331,18 @@ export default function BookPage() {
     queryFn: () => fetch("/api/scheduler-settings/public").then(r => r.json()),
   });
 
-  const { data: servicesData } = useQuery<{ services: string[] }>({
+  const { data: servicesData } = useQuery<{ services: PublicService[] }>({
     queryKey: ["/api/booking/services"],
     queryFn: () => fetch("/api/booking/services").then(r => r.json()),
   });
-  const serviceOptions = servicesData?.services ?? ["Tuning", "Regulation", "Voicing", "Repair"];
+  const serviceOptions: PublicService[] = useMemo(() => {
+    const raw = servicesData?.services;
+    if (!raw || raw.length === 0) {
+      return [{ name: "Tuning" }, { name: "Regulation" }, { name: "Voicing" }, { name: "Repair" }];
+    }
+    // Tolerate the old string[] shape (stale cache / older server)
+    return raw.map((s: any) => (typeof s === "string" ? { name: s } : s));
+  }, [servicesData]);
 
   const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>(1);
@@ -1071,22 +1085,36 @@ export default function BookPage() {
         {/* Service selection */}
         <div className="border-t border-slate-100 pt-5">
           <h3 className="text-base font-bold text-slate-900 mb-3">Choose Service</h3>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {serviceOptions.map(svc => {
-              const selected = form.serviceRequested === svc;
+              const selected = form.serviceRequested === svc.name;
               return (
                 <button
-                  key={svc}
+                  key={svc.name}
                   type="button"
-                  onClick={() => setF("serviceRequested", selected ? "" : svc)}
-                  className={`flex items-center justify-between gap-2 px-4 py-3 rounded-xl border-2 text-sm font-semibold transition-all text-left ${
+                  onClick={() => setF("serviceRequested", selected ? "" : svc.name)}
+                  className={`flex flex-col gap-1 px-4 py-3 rounded-xl border-2 transition-all text-left ${
                     selected
                       ? "border-slate-900 bg-slate-900 text-white"
                       : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
                   }`}
                 >
-                  <span>{svc}</span>
-                  {selected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                  <span className="flex items-center justify-between gap-2 w-full">
+                    <span className="text-sm font-semibold">{svc.name}</span>
+                    <span className="flex items-center gap-1.5 shrink-0">
+                      {svc.price && (
+                        <span className={`text-sm font-bold tabular-nums ${selected ? "text-white" : "text-slate-900"}`}>
+                          {svc.price}
+                        </span>
+                      )}
+                      {selected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
+                    </span>
+                  </span>
+                  {svc.description && (
+                    <span className={`text-xs font-normal leading-snug ${selected ? "text-slate-300" : "text-slate-500"}`}>
+                      {svc.description}
+                    </span>
+                  )}
                 </button>
               );
             })}

@@ -10,3 +10,7 @@ vite.config.ts.*
 *CFO*Report*.md
 WEEKLY_REPORT_*.md
 NEXT-CHAT-PROMPT.md
+
+# Rejected logo explorations + 2000px comps (~24 MB). The shipped logo lives in
+# branding/logo/jwp-logo-fallboard*.png and client/public/ — those ARE tracked.
+branding/logo/options/
