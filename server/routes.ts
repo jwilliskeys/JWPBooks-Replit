@@ -8,50 +8,61 @@ import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import { Client as ObjectStorageClient } from "@replit/object-storage";
 import { parseDeltaFlightPdf } from "./parsePdf";
 import { researchCityLeads, researchConfigured } from "./research";
 import * as ics from "./ics";
 
-const uploadDir = path.join(process.cwd(), "uploads", "pianos");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// ── Object Storage ────────────────────────────────────────────────────────────
+const objectStorage = new ObjectStorageClient();
+
+/** Build a unique, safe object key for an uploaded file. */
+function makeObjectKey(prefix: string, originalName: string): string {
+  const ext = path.extname(originalName).toLowerCase();
+  const safeExt = /\.(jpg|jpeg|png|gif|webp|heic|heif|avif|tiff|bmp|pdf)$/i.test(ext) ? ext : ".jpg";
+  return `${prefix}/${Date.now()}-${Math.round(Math.random() * 1e9)}${safeExt}`;
 }
 
-const expenseUploadDir = path.join(process.cwd(), "uploads", "expenses");
-if (!fs.existsSync(expenseUploadDir)) {
-  fs.mkdirSync(expenseUploadDir, { recursive: true });
+/** Upload a buffer to Object Storage and return the served URL path. */
+async function storeFile(objectKey: string, buffer: Buffer, mimetype: string): Promise<string> {
+  const result = await objectStorage.uploadFromBytes(objectKey, buffer);
+  if (!result.ok) throw new Error(`Object storage upload failed: ${String(result.error)}`);
+  return `/api/files/${objectKey}`;
+}
+
+/** Delete a stored file by its served URL. Silently ignores old /uploads/* disk URLs. */
+async function deleteStoredFile(servedUrl: string): Promise<void> {
+  if (!servedUrl || !servedUrl.startsWith("/api/files/")) return;
+  const objectKey = servedUrl.replace(/^\/api\/files\//, "");
+  try { await objectStorage.delete(objectKey); } catch { /* non-fatal */ }
+}
+
+// ── Multer (memory storage — files are uploaded to Object Storage in route handlers)
+function imageFileFilter(_req: any, file: any, cb: any) {
+  const allowedExt = /\.(jpg|jpeg|png|gif|webp|heic|heif|avif|tiff|bmp)$/i;
+  const allowedMime = /^image\//i;
+  cb(null, allowedExt.test(path.extname(file.originalname)) && allowedMime.test(file.mimetype));
 }
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (_req: any, _file: any, cb: any) => cb(null, uploadDir),
-    filename: (_req: any, file: any, cb: any) => {
-      const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
-      cb(null, uniqueName);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 },
-  fileFilter: (_req: any, file: any, cb: any) => {
-    const allowed = /\.(jpg|jpeg|png|gif|webp|heic|heif|avif|tiff|bmp)$/i;
-    // also accept by mimetype for HEIC files that some browsers report differently
-    const allowedMime = /^image\//i;
-    cb(null, allowed.test(path.extname(file.originalname)) || allowedMime.test(file.mimetype));
-  },
+  fileFilter: imageFileFilter,
 });
 
 const expenseUpload = multer({
-  storage: multer.diskStorage({
-    destination: (_req: any, _file: any, cb: any) => cb(null, expenseUploadDir),
-    filename: (_req: any, file: any, cb: any) => {
-      const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
-      cb(null, uniqueName);
-    },
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req: any, file: any, cb: any) => {
-    const allowed = /\.(jpg|jpeg|png|gif|webp)$/i;
+    const allowed = /\.(jpg|jpeg|png|gif|webp|pdf)$/i;
     cb(null, allowed.test(path.extname(file.originalname)));
   },
+});
+
+const inspectionUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter: imageFileFilter,
 });
 
 // In-memory multer for flight PDF parsing (no disk storage needed)
@@ -625,11 +636,12 @@ export async function registerRoutes(
       if (isNaN(pianoId)) return res.status(400).json({ message: "Invalid ID" });
       const piano = await storage.getPiano(pianoId);
       if (!piano) return res.status(404).json({ message: "Piano not found" });
-      const files = (req as any).files as any[];
+      const files = (req as any).files as Express.Multer.File[];
       if (!files || files.length === 0) return res.status(400).json({ message: "No files uploaded" });
-      const newPhotos = files.map((f) => `/uploads/pianos/${f.filename}`);
-      const existingPhotos = piano.photos || [];
-      const allPhotos = [...existingPhotos, ...newPhotos];
+      const newPhotos = await Promise.all(
+        files.map((f) => storeFile(makeObjectKey(`pianos/${pianoId}`, f.originalname), f.buffer, f.mimetype))
+      );
+      const allPhotos = [...(piano.photos || []), ...newPhotos];
       const updated = await storage.updatePiano(pianoId, { photos: allPhotos });
       res.json(updated);
     } catch (error: any) {
@@ -646,8 +658,7 @@ export async function registerRoutes(
       const { photoUrl } = req.body;
       if (!photoUrl) return res.status(400).json({ message: "No photo URL provided" });
       const updatedPhotos = (piano.photos || []).filter((p) => p !== photoUrl);
-      const filePath = path.join(process.cwd(), photoUrl);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      await deleteStoredFile(photoUrl);
       const updated = await storage.updatePiano(pianoId, { photos: updatedPhotos });
       res.json(updated);
     } catch (error: any) {
@@ -655,8 +666,30 @@ export async function registerRoutes(
     }
   });
 
-  // Piano/receipt photos contain client info — require auth like the rest of the app.
-  app.use("/uploads", isAuthenticated, (await import("express")).default.static(path.join(process.cwd(), "uploads")));
+  // Serve stored files (photos, receipts) through Object Storage — auth required.
+  const EXT_TO_MIME: Record<string, string> = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp", ".heic": "image/heic",
+    ".heif": "image/heif", ".avif": "image/avif", ".tiff": "image/tiff",
+    ".bmp": "image/bmp", ".pdf": "application/pdf",
+  };
+  app.get("/api/files/*objectKey", isAuthenticated, async (req: any, res: any) => {
+    try {
+      const objectKey = Array.isArray(req.params.objectKey)
+        ? req.params.objectKey.join('/')
+        : req.params.objectKey;
+      if (!objectKey) return res.status(400).json({ message: "Missing object key" });
+      const result = await objectStorage.downloadAsBytes(objectKey);
+      if (!result.ok) return res.status(404).json({ message: "File not found" });
+      const [buffer] = result.value;
+      const mime = EXT_TO_MIME[path.extname(objectKey).toLowerCase()] ?? "application/octet-stream";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.send(buffer);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 
   // ── Inventory (stored as JSON file on disk) ────────────────────────────────
   const inventoryFilePath = path.join(process.cwd(), "data", "inventory.json");
@@ -1978,7 +2011,7 @@ export async function registerRoutes(
       if (!expense) return res.status(404).json({ message: "Expense not found" });
       const file = req.file as Express.Multer.File | undefined;
       if (!file) return res.status(400).json({ message: "No file uploaded" });
-      const receiptUrl = `/uploads/expenses/${file.filename}`;
+      const receiptUrl = await storeFile(makeObjectKey(`expenses/${id}`, file.originalname), file.buffer, file.mimetype);
       const updated = await storage.updateBusinessExpense(id, userId, { receiptUrl });
       res.json(updated);
     } catch (error: any) {
@@ -2943,6 +2976,90 @@ export async function registerRoutes(
       const deleted = await storage.deleteInspection(id, userId);
       if (!deleted) return res.status(404).json({ message: "Inspection not found" });
       res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Pre-authorize before Multer so files are never written for unauthorized/nonexistent inspections.
+  async function preAuthorizeInspection(req: any, res: any, next: any) {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id as string);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const inspection = await storage.getInspection(id, userId);
+      if (!inspection) return res.status(404).json({ message: "Inspection not found" });
+      req._verifiedInspection = inspection; // pass verified record to the upload handler
+      next();
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  }
+
+  app.post(
+    "/api/inspections/:id/photos",
+    preAuthorizeInspection,
+    inspectionUpload.array("photos", 10),
+    async (req: any, res: any) => {
+      const files = (req.files ?? []) as Express.Multer.File[];
+      try {
+        if (files.length === 0) return res.status(400).json({ message: "No files uploaded" });
+        const userId = getUserId(req);
+        const inspection = req._verifiedInspection;
+        const newPhotos = await Promise.all(
+          files.map((f) => storeFile(makeObjectKey(`inspections/${inspection.id}`, f.originalname), f.buffer, f.mimetype))
+        );
+        const allPhotos = [...(inspection.photos || []), ...newPhotos];
+        const updated = await storage.updateInspection(inspection.id, userId, { photos: allPhotos });
+
+        // Sync new photos to the linked piano's library (deduplicated, ownership-verified)
+        if (inspection.pianoId) {
+          const piano = await storage.getPiano(inspection.pianoId);
+          if (piano) {
+            const pianoCustomer = await storage.getCustomer(piano.customerId);
+            if (pianoCustomer && pianoCustomer.userId === userId) {
+              const existingPianoPhotos = piano.photos || [];
+              const merged = [...existingPianoPhotos, ...newPhotos.filter((p) => !existingPianoPhotos.includes(p))];
+              await storage.updatePiano(piano.id, { photos: merged });
+            }
+          }
+        }
+
+        res.json(updated);
+      } catch (error: any) {
+        res.status(500).json({ message: error.message });
+      }
+    }
+  );
+
+  app.delete("/api/inspections/:id/photos", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const inspection = await storage.getInspection(id, userId);
+      if (!inspection) return res.status(404).json({ message: "Inspection not found" });
+      const { photoUrl } = req.body;
+      if (!photoUrl || typeof photoUrl !== "string") return res.status(400).json({ message: "No photo URL provided" });
+      // Verify the requested URL is actually stored on this inspection (prevents arbitrary deletion)
+      const existingPhotos = inspection.photos || [];
+      if (!existingPhotos.includes(photoUrl)) return res.status(400).json({ message: "Photo not found on this inspection" });
+      const updatedPhotos = existingPhotos.filter((p) => p !== photoUrl);
+      await deleteStoredFile(photoUrl);
+      const updated = await storage.updateInspection(id, userId, { photos: updatedPhotos });
+
+      // Remove the photo from the linked piano's library if it was synced there (ownership-verified)
+      if (inspection.pianoId) {
+        const piano = await storage.getPiano(inspection.pianoId);
+        if (piano) {
+          const pianoCustomer = await storage.getCustomer(piano.customerId);
+          if (pianoCustomer && pianoCustomer.userId === userId && (piano.photos || []).includes(photoUrl)) {
+            await storage.updatePiano(piano.id, { photos: (piano.photos || []).filter((p) => p !== photoUrl) });
+          }
+        }
+      }
+
+      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

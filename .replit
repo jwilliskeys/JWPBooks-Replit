@@ -1,23 +1,26 @@
-modules = ["nodejs-20", "web", "python-3.11", "postgresql-16"]
+modules = ["nodejs-20", "web", "bash", "python-base-3.13"]
 run = "npm run dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
 [nix]
-channel = "stable-24_05"
+channel = "stable-25_05"
 packages = ["imagemagick"]
 
 [[ports]]
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 9999
+externalPort = 3000
+
 [env]
 PORT = "5000"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["node", "dist/index.cjs"]
+run = ["node", "./dist/index.cjs"]
 build = ["npm", "run", "build"]
-publicDir = "dist/public"
 
 [workflows]
 runButton = "Project"
@@ -42,13 +45,16 @@ waitForPort = 5000
 
 [agent]
 integrations = ["google-sheet:1.0.0", "javascript_log_in_with_replit:2.0.0"]
+stack = "FULLSTACK_JS"
+expertMode = true
 
 [userenv]
 
 [userenv.shared]
-GOOGLE_MAPS_API_KEY = "AIzaSyC69P2faAI7ofq-c9j9N7OJvGiy_2TwTr0"
-OWNER_EMAIL = "j.willis.keys@gmail.com"
 
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[objectStorage]
+defaultBucketID = "replit-objstore-8229ddfa-0373-4e3e-9883-777dc5963a16"

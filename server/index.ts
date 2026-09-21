@@ -299,12 +299,63 @@ async function migrateExistingDataToUser() {
   }
 }
 
+async function migrateStaleUploadUrls() {
+  const { pool } = await import("./db");
+  try {
+    // Strip any photo URL that starts with /uploads/ from pianos.photos
+    const r1 = await pool.query(`
+      UPDATE pianos
+      SET photos = ARRAY(
+        SELECT url FROM unnest(photos) AS url
+        WHERE url NOT LIKE '/uploads/%'
+      )
+      WHERE photos IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM unnest(photos) AS url WHERE url LIKE '/uploads/%'
+        )
+    `);
+
+    // Strip any photo URL that starts with /uploads/ from inspections.photos
+    const r2 = await pool.query(`
+      UPDATE inspections
+      SET photos = ARRAY(
+        SELECT url FROM unnest(photos) AS url
+        WHERE url NOT LIKE '/uploads/%'
+      )
+      WHERE photos IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM unnest(photos) AS url WHERE url LIKE '/uploads/%'
+        )
+    `);
+
+    // Null out receiptUrl on business_expenses if it points to /uploads/
+    const r3 = await pool.query(`
+      UPDATE business_expenses
+      SET receipt_url = NULL
+      WHERE receipt_url LIKE '/uploads/%'
+    `);
+
+    const total = (r1.rowCount ?? 0) + (r2.rowCount ?? 0) + (r3.rowCount ?? 0);
+    if (total > 0) {
+      log(
+        `Stale-upload migration: cleared old /uploads/* paths — pianos:${r1.rowCount ?? 0}, inspections:${r2.rowCount ?? 0}, expenses:${r3.rowCount ?? 0}`,
+        "migration"
+      );
+    } else {
+      log("Stale-upload migration: no /uploads/* paths found — nothing to clean.", "migration");
+    }
+  } catch (err: any) {
+    log(`Stale-upload migration error: ${err.message}`, "migration");
+  }
+}
+
 (async () => {
   await setupAuth(app);
 
   await seedDatabaseIfEmpty();
   await ensurePianoSchemaColumns();
   await migrateExistingDataToUser();
+  await migrateStaleUploadUrls();
   await seedOutreachIfEmpty();
   await registerRoutes(httpServer, app);
 

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -57,9 +57,14 @@ import {
   ArrowRight,
   CheckSquare,
   Square,
+  ImagePlus,
+  X,
+  Loader2,
+  FileDown,
 } from "lucide-react";
 import type { Inspection, Customer, Piano } from "@shared/schema";
 import { clientName, clientSearchText } from "@shared/client-name";
+import { InspectionPdfDocument } from "@/components/inspection-pdf";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -111,25 +116,6 @@ function parseRecommended(raw: string | null | undefined): RecommendedService[] 
   }
 }
 
-function statusColor(status: string) {
-  switch (status) {
-    case "approved": return "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700";
-    case "declined": return "bg-red-500/10 text-red-700 dark:text-red-400 border-red-300 dark:border-red-700";
-    case "converted": return "bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-300 dark:border-blue-700";
-    default: return "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-300 dark:border-yellow-700";
-  }
-}
-
-function conditionColor(condition: string | null | undefined) {
-  switch (condition) {
-    case "excellent": return "text-emerald-600 dark:text-emerald-400";
-    case "good": return "text-blue-600 dark:text-blue-400";
-    case "fair": return "text-yellow-600 dark:text-yellow-400";
-    case "poor": return "text-red-600 dark:text-red-400";
-    default: return "text-muted-foreground";
-  }
-}
-
 function checklistStatusIcon(status: string) {
   switch (status) {
     case "ok": return <CheckCircle className="h-4 w-4 text-emerald-500" />;
@@ -157,12 +143,30 @@ function NewInspectionDialog({
   prefillPianoId?: number;
 }) {
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const today = new Date();
   const dateStr = `${today.getMonth() + 1}/${today.getDate()}/${String(today.getFullYear()).slice(-2)}`;
 
-  const [form, setForm] = useState({
-    customerId: prefillCustomerId ? String(prefillCustomerId) : "",
-    pianoId: prefillPianoId ? String(prefillPianoId) : "",
+  // ── Customer type-ahead ──────────────────────────────────────────────────
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [showCustomerResults, setShowCustomerResults] = useState(false);
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+
+  // ── Piano selection ──────────────────────────────────────────────────────
+  const [selectedPianoId, setSelectedPianoId] = useState<number | null>(null);
+  const [showNewPianoForm, setShowNewPianoForm] = useState(false);
+  const [newPianoMake, setNewPianoMake] = useState("");
+  const [newPianoModel, setNewPianoModel] = useState("");
+  const [newPianoType, setNewPianoType] = useState("Upright");
+  const [newPianoYear, setNewPianoYear] = useState("");
+
+  // ── Photos ───────────────────────────────────────────────────────────────
+  const [pendingPhotos, setPendingPhotos] = useState<File[]>([]);
+  const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
+
+  // ── Form fields ──────────────────────────────────────────────────────────
+  const [formFields, setFormFields] = useState({
     type: "inspection" as "inspection" | "estimate",
     inspectionDate: dateStr,
     overallCondition: "",
@@ -173,48 +177,143 @@ function NewInspectionDialog({
   });
   const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST.map(i => ({ ...i })));
   const [recommended, setRecommended] = useState<RecommendedService[]>([{ service: "", estimatedCost: "" }]);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // ── Reset on open ────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!open) return;
+    const prefillCust = prefillCustomerId ? customers.find(c => c.id === prefillCustomerId) ?? null : null;
+    const prefillPiano = prefillPianoId ? pianos.find(p => p.id === prefillPianoId) ?? null : null;
+    setSelectedCustomer(prefillCust);
+    setCustomerSearch(prefillCust ? `${prefillCust.firstName} ${prefillCust.lastName}` : "");
+    setShowCustomerResults(false);
+    setSelectedPianoId(prefillPiano?.id ?? null);
+    setShowNewPianoForm(false);
+    setNewPianoMake(""); setNewPianoModel(""); setNewPianoType("Upright"); setNewPianoYear("");
+    setPendingPhotos([]);
+    photoPreviewUrls.forEach(u => URL.revokeObjectURL(u));
+    setPhotoPreviewUrls([]);
+    setFormFields({ type: "inspection", inspectionDate: dateStr, overallCondition: "", findings: "", summary: "", estimatedTotal: "", internalNotes: "" });
+    setChecklist(DEFAULT_CHECKLIST.map(i => ({ ...i })));
+    setRecommended([{ service: "", estimatedCost: "" }]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // ── Derived ──────────────────────────────────────────────────────────────
+  const customerResults = useMemo(() => {
+    if (!customerSearch.trim() || selectedCustomer) return [];
+    const q = customerSearch.toLowerCase();
+    return customers.filter(c =>
+      [`${c.firstName} ${c.lastName}`, c.email ?? "", c.phone ?? "", c.city ?? ""]
+        .some(v => v.toLowerCase().includes(q))
+    ).slice(0, 8);
+  }, [customers, customerSearch, selectedCustomer]);
 
   const customerPianos = useMemo(
-    () => pianos.filter(p => p.customerId === parseInt(form.customerId) && p.isActive !== false),
-    [pianos, form.customerId]
+    () => selectedCustomer
+      ? pianos.filter(p => p.customerId === selectedCustomer.id && p.isActive !== false)
+      : [],
+    [pianos, selectedCustomer]
   );
 
-  const createMutation = useMutation({
-    mutationFn: async (data: any) => apiRequest("POST", "/api/inspections", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
-      toast({ title: "Inspection created" });
-      onOpenChange(false);
-    },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
-  });
+  // ── Photo helpers ────────────────────────────────────────────────────────
+  function addPhotos(files: File[]) {
+    setPendingPhotos(prev => [...prev, ...files]);
+    setPhotoPreviewUrls(prev => [...prev, ...files.map(f => URL.createObjectURL(f))]);
+  }
 
-  function handleSave() {
-    if (!form.customerId || !form.inspectionDate) {
+  function removePhoto(idx: number) {
+    URL.revokeObjectURL(photoPreviewUrls[idx]);
+    setPendingPhotos(prev => prev.filter((_, i) => i !== idx));
+    setPhotoPreviewUrls(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  // ── Save ─────────────────────────────────────────────────────────────────
+  async function handleSave() {
+    if (!selectedCustomer || !formFields.inspectionDate) {
       toast({ title: "Required fields missing", description: "Customer and date are required.", variant: "destructive" });
       return;
     }
-    createMutation.mutate({
-      customerId: parseInt(form.customerId),
-      pianoId: form.pianoId ? parseInt(form.pianoId) : null,
-      type: form.type,
-      inspectionDate: form.inspectionDate,
-      status: "pending",
-      overallCondition: form.overallCondition || null,
-      findings: form.findings || null,
-      summary: form.summary || null,
-      estimatedTotal: form.estimatedTotal || null,
-      internalNotes: form.internalNotes || null,
-      checklistItems: JSON.stringify(checklist),
-      recommendedServices: JSON.stringify(recommended.filter(r => r.service.trim())),
-    });
+    setIsSaving(true);
+    try {
+      // 1. Create new piano if needed
+      let finalPianoId: number | null = selectedPianoId;
+      if (showNewPianoForm && (newPianoMake || newPianoModel || newPianoType)) {
+        const pianoRes = await fetch(`/api/customers/${selectedCustomer.id}/pianos`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            make: newPianoMake || null,
+            model: newPianoModel || null,
+            pianoType: newPianoType,
+            year: newPianoYear || null,
+            isActive: true,
+          }),
+        });
+        if (!pianoRes.ok) throw new Error("Failed to create piano");
+        const piano = await pianoRes.json();
+        finalPianoId = piano.id;
+        queryClient.invalidateQueries({ queryKey: ["/api/pianos"] });
+      }
+
+      // 2. Create inspection
+      const inspRes = await fetch("/api/inspections", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          customerId: selectedCustomer.id,
+          pianoId: finalPianoId,
+          type: formFields.type,
+          inspectionDate: formFields.inspectionDate,
+          status: "pending",
+          overallCondition: formFields.overallCondition || null,
+          findings: formFields.findings || null,
+          summary: formFields.summary || null,
+          estimatedTotal: formFields.estimatedTotal || null,
+          internalNotes: formFields.internalNotes || null,
+          checklistItems: JSON.stringify(checklist),
+          recommendedServices: JSON.stringify(recommended.filter(r => r.service.trim())),
+        }),
+      });
+      if (!inspRes.ok) {
+        const err = await inspRes.json().catch(() => ({}));
+        throw new Error((err as any).message || "Failed to create inspection");
+      }
+      const inspection = await inspRes.json();
+
+      // 3. Upload photos if any
+      if (pendingPhotos.length > 0) {
+        const fd = new FormData();
+        // Capture files into stable array before async gap
+        const filesToUpload = [...pendingPhotos];
+        filesToUpload.forEach(f => fd.append("photos", f));
+        const uploadRes = await fetch(`/api/inspections/${inspection.id}/photos`, {
+          method: "POST",
+          body: fd,
+          credentials: "include",
+        });
+        if (!uploadRes.ok) {
+          toast({ title: "Inspection created, but photos failed to upload — try again from the detail view.", variant: "destructive" });
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
+      toast({ title: "Inspection created" });
+      onOpenChange(false);
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>New {form.type === "estimate" ? "Estimate" : "Inspection"}</DialogTitle>
+          <DialogTitle>New {formFields.type === "estimate" ? "Estimate" : "Inspection"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -223,9 +322,9 @@ function NewInspectionDialog({
             {(["inspection", "estimate"] as const).map(t => (
               <Button
                 key={t}
-                variant={form.type === t ? "default" : "outline"}
+                variant={formFields.type === t ? "default" : "outline"}
                 size="sm"
-                onClick={() => setForm(f => ({ ...f, type: t }))}
+                onClick={() => setFormFields(f => ({ ...f, type: t }))}
                 className="capitalize"
               >
                 {t === "inspection" ? <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> : <FileText className="h-3.5 w-3.5 mr-1.5" />}
@@ -234,71 +333,82 @@ function NewInspectionDialog({
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            {/* Customer */}
-            <div className="space-y-1">
-              <Label>Customer *</Label>
-              <Select
-                value={form.customerId}
-                onValueChange={v => setForm(f => ({ ...f, customerId: v, pianoId: "" }))}
-              >
-                <SelectTrigger><SelectValue placeholder="Select client…" /></SelectTrigger>
-                <SelectContent>
-                  {customers.map(c => (
-                    <SelectItem key={c.id} value={String(c.id)}>
-                      {clientName(c)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Piano */}
-            <div className="space-y-1">
+          {/* Piano selection (only shown once customer is picked) */}
+          {selectedCustomer && (
+            <div className="space-y-2">
               <Label>Piano</Label>
-              <Select
-                value={form.pianoId}
-                onValueChange={v => setForm(f => ({ ...f, pianoId: v }))}
-                disabled={!form.customerId}
-              >
-                <SelectTrigger><SelectValue placeholder="Select piano…" /></SelectTrigger>
-                <SelectContent>
-                  {customerPianos.map(p => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {[p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+              {customerPianos.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {customerPianos.map(p => {
+                    const label = [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
+                    const sel = selectedPianoId === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => { setSelectedPianoId(sel ? null : p.id); setShowNewPianoForm(false); }}
+                        className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                          sel ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted border-input"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => { setShowNewPianoForm(v => !v); setSelectedPianoId(null); }}
+                    className={`px-3 py-1.5 rounded-md border text-sm transition-colors ${
+                      showNewPianoForm
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-background hover:bg-muted border-input text-muted-foreground"
+                    }`}
+                  >
+                    <Plus className="h-3.5 w-3.5 inline mr-1" />New piano
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-muted-foreground">No pianos on file.</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPianoForm(true)}
+                    className="text-sm text-primary underline-offset-4 hover:underline"
+                  >
+                    Add one now
+                  </button>
+                </div>
+              )}
 
-            {/* Date */}
-            <div className="space-y-1">
-              <Label>Date *</Label>
-              <Input
-                placeholder="M/D/YY"
-                value={form.inspectionDate}
-                onChange={e => setForm(f => ({ ...f, inspectionDate: e.target.value }))}
-              />
+              {showNewPianoForm && (
+                <div className="grid grid-cols-2 gap-2 p-3 rounded-md border bg-muted/20">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Make</Label>
+                    <Input className="h-8 text-sm" placeholder="e.g. Steinway" value={newPianoMake} onChange={e => setNewPianoMake(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Model</Label>
+                    <Input className="h-8 text-sm" placeholder="e.g. Model L" value={newPianoModel} onChange={e => setNewPianoModel(e.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Type *</Label>
+                    <Select value={newPianoType} onValueChange={setNewPianoType}>
+                      <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {["Grand", "Upright", "Studio", "Console", "Spinet", "Digital", "Other"].map(t => (
+                          <SelectItem key={t} value={t}>{t}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Year <span className="font-normal text-muted-foreground">optional</span></Label>
+                    <Input className="h-8 text-sm" placeholder="e.g. 1972" value={newPianoYear} onChange={e => setNewPianoYear(e.target.value)} />
+                  </div>
+                </div>
+              )}
             </div>
-
-            {/* Overall Condition */}
-            <div className="space-y-1">
-              <Label>Overall Condition</Label>
-              <Select
-                value={form.overallCondition}
-                onValueChange={v => setForm(f => ({ ...f, overallCondition: v }))}
-              >
-                <SelectTrigger><SelectValue placeholder="Select…" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="excellent">Excellent</SelectItem>
-                  <SelectItem value="good">Good</SelectItem>
-                  <SelectItem value="fair">Fair</SelectItem>
-                  <SelectItem value="poor">Poor</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+          )}
 
           {/* Checklist */}
           <div>
@@ -327,7 +437,7 @@ function NewInspectionDialog({
                     </Select>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">{item.item}</p>
+                    <p className="text-sm font-medium">{item.item.split(/\s[—–-]\s/)[0]}</p>
                     <Input
                       className="h-6 text-xs mt-1"
                       placeholder="Notes…"
@@ -349,8 +459,8 @@ function NewInspectionDialog({
             <Label>Findings / Details</Label>
             <Textarea
               placeholder="Describe what you found…"
-              value={form.findings}
-              onChange={e => setForm(f => ({ ...f, findings: e.target.value }))}
+              value={formFields.findings}
+              onChange={e => setFormFields(f => ({ ...f, findings: e.target.value }))}
               rows={3}
             />
           </div>
@@ -408,8 +518,8 @@ function NewInspectionDialog({
                 <Input
                   className="w-28 h-7 text-sm"
                   placeholder="$0.00"
-                  value={form.estimatedTotal}
-                  onChange={e => setForm(f => ({ ...f, estimatedTotal: e.target.value }))}
+                  value={formFields.estimatedTotal}
+                  onChange={e => setFormFields(f => ({ ...f, estimatedTotal: e.target.value }))}
                 />
               </div>
             )}
@@ -420,8 +530,8 @@ function NewInspectionDialog({
             <Label>Summary (for client)</Label>
             <Textarea
               placeholder="What the client needs to know…"
-              value={form.summary}
-              onChange={e => setForm(f => ({ ...f, summary: e.target.value }))}
+              value={formFields.summary}
+              onChange={e => setFormFields(f => ({ ...f, summary: e.target.value }))}
               rows={2}
             />
           </div>
@@ -431,17 +541,61 @@ function NewInspectionDialog({
             <Label>Internal Notes</Label>
             <Textarea
               placeholder="Private notes…"
-              value={form.internalNotes}
-              onChange={e => setForm(f => ({ ...f, internalNotes: e.target.value }))}
+              value={formFields.internalNotes}
+              onChange={e => setFormFields(f => ({ ...f, internalNotes: e.target.value }))}
               rows={2}
             />
+          </div>
+
+          {/* Photos */}
+          <div className="space-y-2">
+            <Label>Photos</Label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={e => {
+                const picked = e.target.files ? Array.from(e.target.files) : [];
+                if (picked.length) { addPhotos(picked); e.target.value = ""; }
+              }}
+            />
+            {photoPreviewUrls.length > 0 && (
+              <div className="flex gap-2 flex-wrap">
+                {photoPreviewUrls.map((url, idx) => (
+                  <div key={idx} className="relative group">
+                    <img src={url} alt={`Photo ${idx + 1}`} className="h-16 w-16 object-cover rounded-md border" />
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(idx)}
+                      className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <ImagePlus className="h-3.5 w-3.5 mr-1.5" />
+              {photoPreviewUrls.length > 0 ? "Add more photos" : "Add photos"}
+            </Button>
           </div>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={createMutation.isPending}>
-            Create {form.type === "estimate" ? "Estimate" : "Inspection"}
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving
+              ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Saving…</>
+              : `Create ${formFields.type === "estimate" ? "Estimate" : "Inspection"}`
+            }
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -457,27 +611,104 @@ function InspectionDetailDialog({
   piano,
   open,
   onOpenChange,
+  onDownloadPdf,
 }: {
   inspection: Inspection | null;
   customer: Customer | undefined;
   piano: Piano | undefined;
   open: boolean;
   onOpenChange: (v: boolean) => void;
+  onDownloadPdf: (inspection: Inspection, customer: Customer | undefined, piano: Piano | undefined) => void;
 }) {
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
-  const [status, setStatus] = useState(inspection?.status ?? "pending");
+  const photoFileInputRef = useRef<HTMLInputElement>(null);
 
-  const checklist = parseChecklist(inspection?.checklistItems);
-  const recommended = parseRecommended(inspection?.recommendedServices);
+  // ── Edit form state ──────────────────────────────────────────────────────
+  const [editFields, setEditFields] = useState({
+    type: "inspection" as "inspection" | "estimate",
+    inspectionDate: "",
+    overallCondition: "",
+    findings: "",
+    summary: "",
+    estimatedTotal: "",
+    internalNotes: "",
+  });
+  const [editChecklist, setEditChecklist] = useState<ChecklistItem[]>([]);
+  const [editRecommended, setEditRecommended] = useState<RecommendedService[]>([]);
 
-  const statusMutation = useMutation({
-    mutationFn: (newStatus: string) =>
-      apiRequest("PATCH", `/api/inspections/${inspection!.id}`, { status: newStatus }),
+  // Populate edit state when entering edit mode
+  function startEditing() {
+    if (!inspection) return;
+    setEditFields({
+      type: (inspection.type as "inspection" | "estimate") ?? "inspection",
+      inspectionDate: inspection.inspectionDate ?? "",
+      overallCondition: inspection.overallCondition ?? "",
+      findings: inspection.findings ?? "",
+      summary: inspection.summary ?? "",
+      estimatedTotal: inspection.estimatedTotal ?? "",
+      internalNotes: inspection.internalNotes ?? "",
+    });
+    setEditChecklist(parseChecklist(inspection.checklistItems).map(i => ({ ...i })));
+    const rec = parseRecommended(inspection.recommendedServices);
+    setEditRecommended(rec.length > 0 ? rec : [{ service: "", estimatedCost: "" }]);
+    setEditing(true);
+  }
+
+  // ── Mutations ────────────────────────────────────────────────────────────
+  const uploadPhotosMutation = useMutation({
+    mutationFn: async (files: File[]) => {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("photos", f));
+      const res = await fetch(`/api/inspections/${inspection!.id}/photos`, {
+        method: "POST",
+        body: fd,
+        credentials: "include",
+      });
+      if (!res.ok) {
+        let msg = "Upload failed";
+        try { const d = await res.json(); if (d?.message) msg = d.message; } catch {}
+        throw new Error(msg);
+      }
+      return res.json();
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
-      toast({ title: "Status updated" });
+      toast({ title: "Photos uploaded" });
     },
+    onError: (err: any) =>
+      toast({ title: err?.message || "Upload failed", variant: "destructive" }),
+  });
+
+  const deletePhotoMutation = useMutation({
+    mutationFn: (photoUrl: string) =>
+      apiRequest("DELETE", `/api/inspections/${inspection!.id}/photos`, { photoUrl }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
+      toast({ title: "Photo removed" });
+    },
+    onError: () => toast({ title: "Couldn't remove photo", variant: "destructive" }),
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      apiRequest("PATCH", `/api/inspections/${inspection!.id}`, {
+        type: editFields.type,
+        inspectionDate: editFields.inspectionDate,
+        findings: editFields.findings || null,
+        summary: editFields.summary || null,
+        estimatedTotal: editFields.estimatedTotal || null,
+        internalNotes: editFields.internalNotes || null,
+        checklistItems: JSON.stringify(editChecklist),
+        recommendedServices: JSON.stringify(editRecommended.filter(r => r.service.trim())),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
+      toast({ title: "Inspection saved" });
+      setEditing(false);
+    },
+    onError: (err: any) =>
+      toast({ title: err?.message || "Save failed", variant: "destructive" }),
   });
 
   const deleteMutation = useMutation({
@@ -491,9 +722,206 @@ function InspectionDetailDialog({
 
   if (!inspection) return null;
 
+  const checklist = parseChecklist(inspection?.checklistItems);
+  const recommended = parseRecommended(inspection?.recommendedServices);
   const criticalItems = checklist.filter(i => i.status === "critical");
   const attentionItems = checklist.filter(i => i.status === "needs_attention");
 
+  // ── Edit mode UI ─────────────────────────────────────────────────────────
+  if (editing) {
+    return (
+      <Dialog open={open} onOpenChange={v => { if (!v) setEditing(false); onOpenChange(v); }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit {editFields.type === "estimate" ? "Estimate" : "Inspection"}</DialogTitle>
+            {customer && (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {clientName(customer)}
+                {piano && ` · ${[piano.make, piano.pianoType].filter(Boolean).join(" ")}`}
+              </p>
+            )}
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Type */}
+            <div className="flex gap-2">
+              {(["inspection", "estimate"] as const).map(t => (
+                <Button
+                  key={t}
+                  variant={editFields.type === t ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setEditFields(f => ({ ...f, type: t }))}
+                  className="capitalize"
+                >
+                  {t === "inspection" ? <ClipboardList className="h-3.5 w-3.5 mr-1.5" /> : <FileText className="h-3.5 w-3.5 mr-1.5" />}
+                  {t}
+                </Button>
+              ))}
+            </div>
+
+            {/* Date */}
+            <div className="space-y-1">
+              <Label>Inspection Date</Label>
+              <Input
+                value={editFields.inspectionDate}
+                onChange={e => setEditFields(f => ({ ...f, inspectionDate: e.target.value }))}
+                placeholder="M/D/YY"
+              />
+            </div>
+
+            {/* Checklist */}
+            <div>
+              <Label className="text-sm font-semibold mb-2 block">Inspection Checklist</Label>
+              <div className="border rounded-md overflow-hidden">
+                {editChecklist.map((item, i) => (
+                  <div key={i} className="flex items-start gap-2 p-2 border-b last:border-0 hover:bg-muted/30">
+                    <div className="pt-0.5">
+                      <Select
+                        value={item.status}
+                        onValueChange={v => {
+                          const next = [...editChecklist];
+                          next[i] = { ...next[i], status: v as any };
+                          setEditChecklist(next);
+                        }}
+                      >
+                        <SelectTrigger className="w-[120px] h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ok">✅ OK</SelectItem>
+                          <SelectItem value="needs_attention">⚠️ Attention</SelectItem>
+                          <SelectItem value="critical">🔴 Critical</SelectItem>
+                          <SelectItem value="na">— N/A</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium">{item.item.split(/\s[—–-]\s/)[0]}</p>
+                      <Input
+                        className="h-6 text-xs mt-1"
+                        placeholder="Notes…"
+                        value={item.notes}
+                        onChange={e => {
+                          const next = [...editChecklist];
+                          next[i] = { ...next[i], notes: e.target.value };
+                          setEditChecklist(next);
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Findings */}
+            <div className="space-y-1">
+              <Label>Findings / Details</Label>
+              <Textarea
+                placeholder="Describe what you found…"
+                value={editFields.findings}
+                onChange={e => setEditFields(f => ({ ...f, findings: e.target.value }))}
+                rows={3}
+              />
+            </div>
+
+            {/* Recommended Services */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label className="text-sm font-semibold">Recommended Services</Label>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setEditRecommended(r => [...r, { service: "", estimatedCost: "" }])}
+                >
+                  <Plus className="h-3 w-3 mr-1" /> Add
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {editRecommended.map((r, i) => (
+                  <div key={i} className="flex gap-2 items-center">
+                    <Input
+                      className="flex-1 h-8 text-sm"
+                      placeholder="Service description…"
+                      value={r.service}
+                      onChange={e => {
+                        const next = [...editRecommended];
+                        next[i] = { ...next[i], service: e.target.value };
+                        setEditRecommended(next);
+                      }}
+                    />
+                    <Input
+                      className="w-24 h-8 text-sm"
+                      placeholder="$0.00"
+                      value={r.estimatedCost}
+                      onChange={e => {
+                        const next = [...editRecommended];
+                        next[i] = { ...next[i], estimatedCost: e.target.value };
+                        setEditRecommended(next);
+                      }}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => setEditRecommended(r => r.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {editRecommended.filter(r => r.estimatedCost).length > 0 && (
+                <div className="mt-1 flex items-center gap-2">
+                  <Label className="text-xs text-muted-foreground">Est. Total</Label>
+                  <Input
+                    className="w-28 h-7 text-sm"
+                    placeholder="$0.00"
+                    value={editFields.estimatedTotal}
+                    onChange={e => setEditFields(f => ({ ...f, estimatedTotal: e.target.value }))}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Summary */}
+            <div className="space-y-1">
+              <Label>Summary (for client)</Label>
+              <Textarea
+                placeholder="What the client needs to know…"
+                value={editFields.summary}
+                onChange={e => setEditFields(f => ({ ...f, summary: e.target.value }))}
+                rows={2}
+              />
+            </div>
+
+            {/* Internal Notes */}
+            <div className="space-y-1">
+              <Label>Internal Notes</Label>
+              <Textarea
+                placeholder="Private notes…"
+                value={editFields.internalNotes}
+                onChange={e => setEditFields(f => ({ ...f, internalNotes: e.target.value }))}
+                rows={2}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(false)}>Cancel</Button>
+            <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+              {saveMutation.isPending
+                ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Saving…</>
+                : "Save Changes"
+              }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  // ── Read-only view ───────────────────────────────────────────────────────
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -512,25 +940,12 @@ function InspectionDetailDialog({
                 </Link>
               )}
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <Badge className={`border text-xs ${statusColor(inspection.status)}`}>
-                {inspection.status}
-              </Badge>
-            </div>
           </div>
         </DialogHeader>
 
         <div className="space-y-5">
           {/* Quick stats */}
           <div className="flex flex-wrap gap-3">
-            {inspection.overallCondition && (
-              <div className="text-sm">
-                <span className="text-muted-foreground">Condition: </span>
-                <span className={`font-semibold capitalize ${conditionColor(inspection.overallCondition)}`}>
-                  {inspection.overallCondition}
-                </span>
-              </div>
-            )}
             {inspection.estimatedTotal && (
               <div className="text-sm">
                 <span className="text-muted-foreground">Est. Total: </span>
@@ -549,22 +964,6 @@ function InspectionDetailDialog({
             )}
           </div>
 
-          {/* Status actions */}
-          <div className="flex gap-2 flex-wrap">
-            {(["pending", "approved", "declined", "converted"] as const).map(s => (
-              <Button
-                key={s}
-                variant={inspection.status === s ? "default" : "outline"}
-                size="sm"
-                className="h-7 text-xs capitalize"
-                onClick={() => statusMutation.mutate(s)}
-                disabled={statusMutation.isPending}
-              >
-                {s}
-              </Button>
-            ))}
-          </div>
-
           {/* Checklist summary */}
           {checklist.length > 0 && (
             <div>
@@ -574,7 +973,7 @@ function InspectionDetailDialog({
                   <div key={i} className="flex items-start gap-2 text-sm p-2 rounded-md bg-muted/40">
                     {checklistStatusIcon(item.status)}
                     <div>
-                      <span className="font-medium">{item.item}</span>
+                      <span className="font-medium">{item.item.split(/\s[—–-]\s/)[0]}</span>
                       {item.notes && <span className="text-muted-foreground ml-2">— {item.notes}</span>}
                     </div>
                   </div>
@@ -593,7 +992,7 @@ function InspectionDetailDialog({
                   {checklist.map((item, i) => (
                     <div key={i} className="flex items-start gap-2 text-sm py-1">
                       {checklistStatusIcon(item.status)}
-                      <span className={item.status === "ok" ? "text-muted-foreground" : ""}>{item.item}</span>
+                      <span className={item.status === "ok" ? "text-muted-foreground" : ""}>{item.item.split(/\s[—–-]\s/)[0]}</span>
                       {item.notes && <span className="text-muted-foreground text-xs">— {item.notes}</span>}
                     </div>
                   ))}
@@ -646,6 +1045,67 @@ function InspectionDetailDialog({
               <p className="text-sm whitespace-pre-wrap">{inspection.internalNotes}</p>
             </div>
           )}
+
+          {/* Photos */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold">Photos</p>
+              <input
+                ref={photoFileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const picked = e.target.files ? Array.from(e.target.files) : [];
+                  if (picked.length) {
+                    uploadPhotosMutation.mutate(picked);
+                    e.target.value = "";
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs px-2"
+                onClick={() => photoFileInputRef.current?.click()}
+                disabled={uploadPhotosMutation.isPending}
+              >
+                {uploadPhotosMutation.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Uploading…</>
+                ) : (
+                  <><ImagePlus className="h-3 w-3 mr-1" />Add photos</>
+                )}
+              </Button>
+            </div>
+            {inspection.photos && inspection.photos.length > 0 ? (
+              <div className="flex gap-2 flex-wrap">
+                {inspection.photos.map((photo, idx) => (
+                  <div key={idx} className="relative group">
+                    <a href={photo} target="_blank" rel="noopener noreferrer">
+                      <img
+                        src={photo}
+                        alt={`Photo ${idx + 1}`}
+                        className="h-20 w-20 object-cover rounded-md border hover:opacity-90 transition-opacity"
+                      />
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => deletePhotoMutation.mutate(photo)}
+                      disabled={deletePhotoMutation.isPending}
+                      className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-5 w-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Remove photo"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">No photos yet</p>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="gap-2">
@@ -659,7 +1119,17 @@ function InspectionDetailDialog({
           >
             <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onDownloadPdf(inspection, customer, piano)}
+          >
+            <FileDown className="h-3.5 w-3.5 mr-1.5" /> Download PDF
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+          <Button variant="outline" size="sm" onClick={startEditing}>
+            <Edit className="h-3.5 w-3.5 mr-1.5" /> Edit
+          </Button>
           {customer && (
             <Link href={`/customers/${customer.id}`}>
               <Button size="sm">
@@ -680,11 +1150,13 @@ function InspectionCard({
   customer,
   piano,
   onClick,
+  onDownloadPdf,
 }: {
   inspection: Inspection;
   customer: Customer | undefined;
   piano: Piano | undefined;
   onClick: () => void;
+  onDownloadPdf: (inspection: Inspection, customer: Customer | undefined, piano: Piano | undefined) => void;
 }) {
   const recommended = parseRecommended(inspection.recommendedServices);
   const checklist = parseChecklist(inspection.checklistItems);
@@ -703,9 +1175,6 @@ function InspectionCard({
               <span className="font-medium text-sm">
                 {customer ? clientName(customer) : `Customer #${inspection.customerId}`}
               </span>
-              <Badge className={`border text-xs ${statusColor(inspection.status)}`}>
-                {inspection.status}
-              </Badge>
               {inspection.type === "estimate" && (
                 <Badge variant="outline" className="text-xs">Estimate</Badge>
               )}
@@ -717,21 +1186,26 @@ function InspectionCard({
               </p>
             )}
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-xs text-muted-foreground">{inspection.inspectionDate}</p>
-            {inspection.estimatedTotal && (
-              <p className="text-sm font-semibold">{inspection.estimatedTotal}</p>
-            )}
+          <div className="flex items-start gap-2 shrink-0">
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">{inspection.inspectionDate}</p>
+              {inspection.estimatedTotal && (
+                <p className="text-sm font-semibold">{inspection.estimatedTotal}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              title="Download PDF"
+              onClick={e => { e.stopPropagation(); onDownloadPdf(inspection, customer, piano); }}
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
 
-        {/* Condition + issues */}
+        {/* Issues */}
         <div className="flex items-center gap-3 mt-2 flex-wrap">
-          {inspection.overallCondition && (
-            <span className={`text-xs font-medium capitalize ${conditionColor(inspection.overallCondition)}`}>
-              {inspection.overallCondition} condition
-            </span>
-          )}
           {criticalCount > 0 && (
             <span className="text-xs text-red-500 font-medium flex items-center gap-1">
               <XCircle className="h-3 w-3" /> {criticalCount} critical
@@ -757,14 +1231,26 @@ function InspectionCard({
 
 // ── Main Page ────────────────────────────────────────────────────────────────
 
+type PdfTarget = {
+  inspection: Inspection;
+  customer: Customer | undefined;
+  piano: Piano | undefined;
+};
+
 export default function InspectionsPage() {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"all" | "inspection" | "estimate">("all");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [showNew, setShowNew] = useState(false);
   const [selected, setSelected] = useState<Inspection | null>(null);
   const [prefillCustomerId, setPrefillCustomerId] = useState<number | undefined>(undefined);
   const [prefillPianoId, setPrefillPianoId] = useState<number | undefined>(undefined);
+
+  // PDF generation state
+  const [pdfTarget, setPdfTarget] = useState<PdfTarget | null>(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const pdfRef = useRef<HTMLDivElement>(null);
+
+  const { toast } = useToast();
 
   // Auto-open new dialog when arriving from piano detail with URL params
   useEffect(() => {
@@ -807,7 +1293,6 @@ export default function InspectionsPage() {
   const filtered = useMemo(() => {
     return inspectionList.filter(i => {
       if (tab !== "all" && i.type !== tab) return false;
-      if (statusFilter !== "all" && i.status !== statusFilter) return false;
       if (search) {
         const customer = customerMap.get(i.customerId);
         const q = search.toLowerCase();
@@ -818,14 +1303,71 @@ export default function InspectionsPage() {
       }
       return true;
     });
-  }, [inspectionList, tab, statusFilter, search, customerMap]);
+  }, [inspectionList, tab, search, customerMap]);
 
-  const selectedCustomer = selected ? customerMap.get(selected.customerId) : undefined;
-  const selectedPiano = selected?.pianoId ? pianoMap.get(selected.pianoId) : undefined;
+  // Derive from live query data so the dialog reflects uploads/removals immediately
+  const liveSelected = selected
+    ? (inspectionList.find(i => i.id === selected.id) ?? selected)
+    : null;
+  const selectedCustomer = liveSelected ? customerMap.get(liveSelected.customerId) : undefined;
+  const selectedPiano = liveSelected?.pianoId ? pianoMap.get(liveSelected.pianoId) : undefined;
 
-  // Counts
-  const pendingCount = inspectionList.filter(i => i.status === "pending").length;
-  const approvedCount = inspectionList.filter(i => i.status === "approved").length;
+
+  // ── PDF download ──────────────────────────────────────────────────────────
+  async function downloadPdf(
+    inspection: Inspection,
+    customer: Customer | undefined,
+    piano: Piano | undefined,
+  ) {
+    if (downloadingPdf) return;
+    setDownloadingPdf(true);
+    setPdfTarget({ inspection, customer, piano });
+
+    // Wait two animation frames for React to commit the hidden element into the DOM
+    await new Promise<void>(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+
+    try {
+      if (!pdfRef.current) throw new Error("PDF container not found");
+      const html2pdf = (await import("html2pdf.js")).default;
+      const lastName = customer?.lastName ?? "Inspection";
+      const date     = inspection.inspectionDate.replace(/\//g, "-");
+      const type     = inspection.type === "estimate" ? "Estimate" : "Inspection";
+      const filename = `${lastName}_${date}_${type}.pdf`;
+
+      // Generate PDF, then stamp page numbers before saving
+      const worker = html2pdf()
+        .set({
+          margin: [12.7, 12.7, 12.7, 12.7],
+          filename,
+          image: { type: "jpeg", quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: "mm", format: "letter", orientation: "portrait" },
+        })
+        .from(pdfRef.current)
+        .toPdf();
+
+      // Add "Page N of M" footer on every page
+      const pdf = await worker.get("pdf") as any;
+      const totalPages: number = pdf.internal.getNumberOfPages();
+      const pageW: number = pdf.internal.pageSize.getWidth();
+      const pageH: number = pdf.internal.pageSize.getHeight();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(160, 160, 160);
+        pdf.text(`Page ${i} of ${totalPages}`, pageW / 2, pageH - 6, { align: "center" });
+      }
+      pdf.save(filename);
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      toast({ title: "Failed to generate PDF", variant: "destructive" });
+    } finally {
+      setDownloadingPdf(false);
+      setPdfTarget(null);
+    }
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-4">
@@ -834,7 +1376,7 @@ export default function InspectionsPage() {
         <div>
           <h1 className="text-xl font-bold tracking-tight">Inspections & Estimates</h1>
           <p className="text-sm text-muted-foreground">
-            {inspectionList.length} total · {pendingCount} pending · {approvedCount} approved
+            {inspectionList.length} total
           </p>
         </div>
         <Button onClick={() => setShowNew(true)}>
@@ -862,18 +1404,6 @@ export default function InspectionsPage() {
           </TabsList>
         </Tabs>
 
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[130px] h-8 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="approved">Approved</SelectItem>
-            <SelectItem value="declined">Declined</SelectItem>
-            <SelectItem value="converted">Converted</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
       {/* List */}
@@ -899,6 +1429,7 @@ export default function InspectionsPage() {
               customer={customerMap.get(inspection.customerId)}
               piano={inspection.pianoId ? pianoMap.get(inspection.pianoId) : undefined}
               onClick={() => setSelected(inspection)}
+              onDownloadPdf={downloadPdf}
             />
           ))}
         </div>
@@ -914,12 +1445,44 @@ export default function InspectionsPage() {
       />
 
       <InspectionDetailDialog
-        inspection={selected}
+        inspection={liveSelected}
         customer={selectedCustomer}
         piano={selectedPiano}
         open={!!selected}
         onOpenChange={open => { if (!open) setSelected(null); }}
+        onDownloadPdf={downloadPdf}
       />
+
+      {/* ── Hidden PDF render target ─────────────────────────────────────── */}
+      {pdfTarget && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: "-9999px",
+            width: "816px",  /* 8.5in × 96dpi */
+            background: "white",
+            padding: "48px",
+            zIndex: -1,
+          }}
+        >
+          <div ref={pdfRef}>
+            <InspectionPdfDocument
+              inspection={pdfTarget.inspection}
+              customer={pdfTarget.customer}
+              piano={pdfTarget.piano}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* PDF generating overlay */}
+      {downloadingPdf && (
+        <div className="fixed inset-0 bg-background/70 backdrop-blur-sm flex items-center justify-center z-50 gap-3">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm font-medium">Generating PDF…</span>
+        </div>
+      )}
     </div>
   );
 }

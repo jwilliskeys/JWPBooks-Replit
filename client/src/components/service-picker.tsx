@@ -1,17 +1,20 @@
-import { useState, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X, Plus, Check } from "lucide-react";
+import { X, Plus, Check, Search, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { ServiceCatalogItem, ServiceGroup } from "@shared/schema";
 
 interface ServicePickerProps {
   value: string[];
   onChange: (names: string[], isTuning: boolean, totalCost: number) => void;
+  hidePills?: boolean;
 }
 
 function parseCost(s: string | null | undefined): number {
@@ -28,8 +31,13 @@ function computeFromNames(names: string[], catalog: ServiceCatalogItem[]) {
   return { isTuning, totalCost };
 }
 
-export function ServicePicker({ value, onChange }: ServicePickerProps) {
+export function ServicePicker({ value, onChange, hidePills }: ServicePickerProps) {
   const [open, setOpen] = useState(false);
+  const [customizing, setCustomizing] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [search, setSearch] = useState("");
+  const customInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const { data: catalog } = useQuery<ServiceCatalogItem[]>({
     queryKey: ["/api/service-catalog"],
@@ -48,6 +56,37 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
     }
   }, [catalog]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (open) {
+      setCustomizing(false);
+      setCustomName("");
+      setSearch("");
+      setTimeout(() => searchInputRef.current?.focus(), 80);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (customizing) {
+      setTimeout(() => customInputRef.current?.focus(), 50);
+    }
+  }, [customizing]);
+
+  function closeDialog() {
+    setOpen(false);
+    setCustomizing(false);
+    setCustomName("");
+    setSearch("");
+  }
+
+  function addName(name: string) {
+    if (!catalog || !name.trim()) return;
+    if (value.includes(name)) { closeDialog(); return; }
+    const newNames = [...value, name];
+    const { isTuning, totalCost } = computeFromNames(newNames, catalog);
+    onChange(newNames, isTuning, totalCost);
+    closeDialog();
+  }
+
   function remove(name: string) {
     if (!catalog) return;
     const newNames = value.filter((n) => n !== name);
@@ -55,12 +94,10 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
     onChange(newNames, isTuning, totalCost);
   }
 
-  function add(svc: ServiceCatalogItem) {
-    if (!catalog || value.includes(svc.name)) return;
-    const newNames = [...value, svc.name];
-    const { isTuning, totalCost } = computeFromNames(newNames, catalog);
-    onChange(newNames, isTuning, totalCost);
-    setOpen(false);
+  function addCustom() {
+    const name = customName.trim();
+    if (!name) return;
+    addName(name);
   }
 
   const active = catalog?.filter((s) => s.isActive !== false) ?? [];
@@ -82,13 +119,20 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
     if (ungrouped.length > 0) sections.push({ label: "Other", items: ungrouped });
   }
 
+  const q = search.trim().toLowerCase();
+  const filteredSections = q
+    ? sections
+        .map((s) => ({ ...s, items: s.items.filter((i) => i.name.toLowerCase().includes(q)) }))
+        .filter((s) => s.items.length > 0)
+    : sections;
+
   if (!catalog || !groups) {
     return <div className="text-xs text-muted-foreground py-1">Loading services…</div>;
   }
 
   return (
     <div className="space-y-1.5">
-      {value.length > 0 && (
+      {!hidePills && value.length > 0 && (
         <div className="space-y-1">
           {value.map((name) => {
             const svc = catalog.find((s) => s.name === name);
@@ -120,37 +164,31 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
         </div>
       )}
 
-      {sections.length === 0 && value.length === 0 && (
-        <p className="text-sm text-muted-foreground">
-          No services configured. Add services in Settings.
-        </p>
-      )}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 w-full gap-1.5 text-xs"
+        data-testid="button-add-service"
+        onClick={() => setOpen(true)}
+      >
+        <Plus className="h-3 w-3" />
+        Add Service
+      </Button>
 
-      {sections.length > 0 && (
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button
+      <Dialog open={open} onOpenChange={o => { if (!o) closeDialog(); }}>
+        <DialogContent className="max-w-sm p-0 gap-0 flex flex-col h-[80vh] sm:h-[70vh]">
+          <DialogHeader className="flex-row items-center px-4 py-3 border-b space-y-0 shrink-0">
+            <DialogTitle className="text-base font-semibold flex-1">Add Service</DialogTitle>
+            <button
               type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 w-full gap-1.5 text-xs"
-              data-testid="button-add-service"
+              onClick={closeDialog}
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/40 transition-colors"
             >
-              <Plus className="h-3 w-3" />
-              Add Service
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent
-            portalled={false}
-            className="w-64 p-2 overflow-y-auto overscroll-contain"
-            style={{
-              maxHeight:
-                "min(16rem, var(--radix-popover-content-available-height))",
-              WebkitOverflowScrolling: "touch",
-            }}
-            align="start"
-            collisionPadding={12}
-          >
+              <X className="h-4 w-4" />
+            </button>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto overscroll-contain p-2">
             {sections.map(({ label, items }) => (
               <div key={label} className="mb-1.5 last:mb-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground px-2 py-1">
@@ -162,14 +200,14 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
                     <button
                       key={svc.id}
                       type="button"
-                      onClick={() => (isSelected ? remove(svc.name) : add(svc))}
-                      className="flex items-center w-full gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors"
+                      onClick={() => addName(svc.name)}
+                      className={`flex items-center w-full gap-3 px-4 py-3 hover:bg-accent transition-colors text-left ${isSelected ? "opacity-50" : ""}`}
                       data-testid={`service-option-${svc.id}`}
                     >
-                      <span className="h-3.5 w-3.5 shrink-0 flex items-center justify-center">
-                        {isSelected && <Check className="h-3.5 w-3.5 text-primary" />}
+                      <span className="h-5 w-5 shrink-0 flex items-center justify-center">
+                        {isSelected && <Check className="h-4 w-4 text-primary" />}
                       </span>
-                      <span className="flex-1 text-left">{svc.name}</span>
+                      <span className="flex-1 text-sm">{svc.name}</span>
                       {svc.defaultCost && (
                         <span className="text-xs text-muted-foreground shrink-0">
                           {svc.defaultCost}
@@ -180,9 +218,9 @@ export function ServicePicker({ value, onChange }: ServicePickerProps) {
                 })}
               </div>
             ))}
-          </PopoverContent>
-        </Popover>
-      )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

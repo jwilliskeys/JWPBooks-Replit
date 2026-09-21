@@ -249,75 +249,81 @@ const STEP_INFO: Record<Step, { label: string; sub?: string }> = {
   5: { label: "Contact Details" },
 };
 
-function StepNav({
+// ── Desktop-only sidebar (hidden on mobile) ───────────────────────────────────
+function StepNavDesktop({
   current,
   stepSubs,
-  onBack,
 }: {
   current: Step;
   stepSubs: Partial<Record<Step, string>>;
+}) {
+  return (
+    <aside className="hidden sm:flex flex-col w-56 shrink-0 bg-slate-100 rounded-xl p-4 gap-1 self-start sticky top-4">
+      {([1, 2, 3, 4, 5] as Step[]).map((step) => {
+        const done = step < current;
+        const active = step === current;
+        return (
+          <div
+            key={step}
+            className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
+              active ? "bg-white shadow-sm" : done ? "" : "opacity-40"
+            }`}
+          >
+            <div
+              className={`mt-0.5 flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold shrink-0 ${
+                done
+                  ? "bg-slate-800 text-white"
+                  : active
+                  ? "bg-slate-900 text-white"
+                  : "bg-slate-300 text-slate-600"
+              }`}
+            >
+              {done ? "✓" : step}
+            </div>
+            <div>
+              <p className={`text-sm font-semibold leading-tight ${active ? "text-slate-900" : "text-slate-600"}`}>
+                {STEP_INFO[step].label}
+              </p>
+              {stepSubs[step] && (
+                <p className="text-xs text-slate-500 mt-0.5 leading-snug">{stepSubs[step]}</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </aside>
+  );
+}
+
+// ── Mobile-only progress header (rendered above the card, not beside it) ──────
+function MobileStepHeader({
+  current,
+  onBack,
+}: {
+  current: Step;
   onBack: () => void;
 }) {
   return (
-    <>
-      {/* ── Desktop sidebar ─────────────────────────────────────────── */}
-      <aside className="hidden sm:flex flex-col w-56 shrink-0 bg-slate-100 rounded-xl p-4 gap-1 self-start sticky top-4">
-        {([1, 2, 3, 4, 5] as Step[]).map((step) => {
-          const done = step < current;
-          const active = step === current;
-          return (
+    <div className="sm:hidden flex items-center gap-3 mb-4">
+      {current > 1 && (
+        <button type="button" onClick={onBack} className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+      )}
+      <div className="flex-1">
+        <div className="flex gap-1 mb-1">
+          {([1, 2, 3, 4, 5] as Step[]).map(s => (
             <div
-              key={step}
-              className={`flex items-start gap-3 px-3 py-2.5 rounded-lg transition-colors ${
-                active ? "bg-white shadow-sm" : done ? "" : "opacity-40"
-              }`}
-            >
-              <div
-                className={`mt-0.5 flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold shrink-0 ${
-                  done
-                    ? "bg-slate-800 text-white"
-                    : active
-                    ? "bg-slate-900 text-white"
-                    : "bg-slate-300 text-slate-600"
-                }`}
-              >
-                {done ? "✓" : step}
-              </div>
-              <div>
-                <p className={`text-sm font-semibold leading-tight ${active ? "text-slate-900" : "text-slate-600"}`}>
-                  {STEP_INFO[step].label}
-                </p>
-                {stepSubs[step] && (
-                  <p className="text-xs text-slate-500 mt-0.5 leading-snug">{stepSubs[step]}</p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </aside>
-
-      {/* ── Mobile header ───────────────────────────────────────────── */}
-      <div className="sm:hidden flex items-center gap-3 mb-4">
-        {current > 1 && (
-          <button type="button" onClick={onBack} className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-        )}
-        <div className="flex-1">
-          <div className="flex gap-1 mb-1">
-            {([1, 2, 3, 4, 5] as Step[]).map(s => (
-              <div
-                key={s}
-                className={`h-1 flex-1 rounded-full transition-colors ${s <= current ? "bg-slate-800" : "bg-slate-200"}`}
-              />
-            ))}
-          </div>
-          <p className="text-sm font-semibold text-slate-800">
-            Step {current} — {STEP_INFO[current].label}
-          </p>
+              key={s}
+              className={`h-1 flex-1 rounded-full transition-colors ${s <= current ? "bg-slate-800" : "bg-slate-200"}`}
+            />
+          ))}
         </div>
+        <p className="text-sm font-semibold text-slate-800">
+          Step {current} — {STEP_INFO[current].label}
+        </p>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -1529,12 +1535,15 @@ export default function BookPage() {
           </div>
         )}
 
+        {/* Mobile progress bar — rendered above the card, not beside it */}
+        <MobileStepHeader current={step} onBack={goBack} />
+
         <div className="flex gap-5 items-start">
-          {/* Sidebar nav */}
-          <StepNav current={step} stepSubs={stepSubs} onBack={goBack} />
+          {/* Desktop sidebar */}
+          <StepNavDesktop current={step} stepSubs={stepSubs} />
 
           {/* Content card */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 overflow-hidden">
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 sm:p-6">
               {step === 1 && StepLocation()}
               {step === 2 && StepPianoService()}
