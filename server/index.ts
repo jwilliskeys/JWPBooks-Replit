@@ -6,6 +6,7 @@ import { seedDatabaseIfEmpty } from "./seed";
 import { seedOutreachIfEmpty } from "./seedOutreach";
 import { setupAuth } from "./simpleAuth";
 import { storage } from "./storage";
+import { registerMcpRoutes } from "./mcp";
 
 const app = express();
 const httpServer = createServer(app);
@@ -357,6 +358,7 @@ async function migrateStaleUploadUrls() {
   await migrateExistingDataToUser();
   await migrateStaleUploadUrls();
   await seedOutreachIfEmpty();
+  await registerMcpRoutes(app);
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {

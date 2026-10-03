@@ -1,0 +1,1 @@
+- [Claude business-data access](claude-business-data-access.md) — Claude may read and create/edit approved records through OAuth, but must never delete or receive the owner passcode.
