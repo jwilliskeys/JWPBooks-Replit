@@ -12,6 +12,7 @@
  */
 
 import type { BookingRequest } from "@shared/schema";
+import { formatBookingServices } from "@shared/booking-services";
 
 const RESEND_URL = "https://api.resend.com/emails";
 
@@ -68,7 +69,8 @@ function detailsTable(req: BookingRequest): string {
   const rows: Array<[string, string]> = [];
   if (req.requestedDate) rows.push(["Date", prettyDate(req.requestedDate)]);
   if (req.requestedTime) rows.push(["Time", req.requestedTime]);
-  if (req.serviceRequested) rows.push(["Service", req.serviceRequested]);
+  const services = formatBookingServices(req.serviceRequested);
+  if (services) rows.push(["Service", services]);
   if (req.streetAddress || req.cityNeighborhood) rows.push(["Location", req.streetAddress || req.cityNeighborhood || ""]);
   if (req.pianoType) rows.push(["Piano", req.pianoType]);
   return rows

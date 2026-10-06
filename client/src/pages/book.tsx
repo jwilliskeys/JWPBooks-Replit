@@ -18,9 +18,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PhoneInput } from "@/components/phone-input";
 import {
-  CheckCircle2, Piano, MapPin, AlertTriangle, ChevronLeft, ChevronRight,
+  Check, CheckCircle2, Piano, MapPin, AlertTriangle, ChevronLeft, ChevronRight,
   Clock, CalendarDays, Star, Loader2,
 } from "lucide-react";
+import { serializeBookingServices } from "@shared/booking-services";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,7 +74,7 @@ interface BookingPayload {
   pianoRoom: string;
   pianoYear: string;
   // Service
-  serviceRequested: string;
+  serviceRequested: string[];
   lastTuned: string;
   // Schedule
   preferredDate: string;
@@ -360,7 +361,7 @@ export default function BookPage() {
   const [form, setForm] = useState<BookingPayload>({
     streetAddress: "", addressLat: "", addressLng: "", cityNeighborhood: "",
     pianoType: "", pianoMake: "", pianoModel: "", pianoRoom: "", pianoYear: "",
-    serviceRequested: "", lastTuned: "",
+    serviceRequested: [], lastTuned: "",
     preferredDate: "", preferredTime: "", preferredTimes: "",
     firstName: "", lastName: "", phone: "", email: "", notes: "",
   });
@@ -395,13 +396,40 @@ export default function BookPage() {
 
   // ── Available slots query (only fires once lat/lng are known) ────────────
   const slotsEnabled = !!(form.addressLat && form.addressLng);
-  const { data: slotsData } = useQuery<SlotsResponse>({
+  const slotsQuery = useQuery<SlotsResponse>({
     queryKey: ["/api/booking/available-slots", form.addressLat, form.addressLng, addressCity],
-    queryFn: () =>
-      fetch(`/api/booking/available-slots?lat=${form.addressLat}&lng=${form.addressLng}&city=${encodeURIComponent(addressCity)}`)
-        .then(r => r.json()),
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/booking/available-slots?lat=${form.addressLat}&lng=${form.addressLng}&city=${encodeURIComponent(addressCity)}`,
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(body.message || "We couldn't check appointment availability. Please try again.");
+      }
+      return body as SlotsResponse;
+    },
     enabled: slotsEnabled,
   });
+  const { data: slotsData, isError: slotsError, error: slotsQueryError } = slotsQuery;
+  const slotsErrorMessage =
+    slotsQueryError instanceof Error
+      ? slotsQueryError.message
+      : "We couldn't check John's calendar. Please try again or contact John directly.";
+  const slotsErrorNotice = slotsError ? (
+    <div
+      role="alert"
+      className="rounded-xl border border-red-200 bg-red-50 p-4 flex items-start gap-3 text-sm text-red-800"
+      data-testid="text-availability-error"
+    >
+      <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+      <div className="space-y-2">
+        <p>{slotsErrorMessage}</p>
+        <Button type="button" variant="outline" size="sm" onClick={() => void slotsQuery.refetch()}>
+          Try again
+        </Button>
+      </div>
+    </div>
+  ) : null;
 
   // Auto-advance to correct month when dates load
   useEffect(() => {
@@ -558,7 +586,7 @@ export default function BookPage() {
           addressLng: data.addressLng,
           cityNeighborhood: data.cityNeighborhood,
           pianoType: data.pianoType || undefined,
-          serviceRequested: data.serviceRequested,
+          serviceRequested: serializeBookingServices(data.serviceRequested),
           lastTuned: data.lastTuned || undefined,
           requestedDate: data.preferredDate || undefined,
           requestedTime: data.preferredTime || undefined,
@@ -602,7 +630,7 @@ export default function BookPage() {
     if (s === 1 && !form.streetAddress.trim() && !form.cityNeighborhood.trim()) {
       errs.streetAddress = "Please enter an address or neighborhood";
     }
-    if (s === 2 && !form.serviceRequested) {
+    if (s === 2 && form.serviceRequested.length === 0) {
       errs.serviceRequested = "Please select a service";
     }
     if (s === 3 && !form.preferredDate) {
@@ -631,11 +659,12 @@ export default function BookPage() {
   }
 
   // ── Step sub-labels for sidebar ──────────────────────────────────────────
+  const selectedServicesSummary = form.serviceRequested.join(", ");
   const stepSubs: Partial<Record<Step, string>> = {
     1: form.streetAddress ? form.streetAddress.split(",").slice(0, 2).join(",") : undefined,
-    2: form.pianoType && form.serviceRequested
-      ? `${form.pianoType} · ${form.serviceRequested}`
-      : form.serviceRequested || undefined,
+    2: form.pianoType && selectedServicesSummary
+      ? `${form.pianoType} · ${selectedServicesSummary}`
+      : selectedServicesSummary || undefined,
     3: form.preferredDate || undefined,
     4: form.preferredTime || undefined,
   };
@@ -705,7 +734,7 @@ export default function BookPage() {
               <p className="text-slate-600">📅 {form.preferredDate}</p>
               <p className="text-slate-600">🕐 {form.preferredTime}</p>
               <p className="text-slate-600">📍 {form.streetAddress || form.cityNeighborhood}</p>
-              <p className="text-slate-600">🎹 {form.serviceRequested}</p>
+              <p className="text-slate-600">🎹 {selectedServicesSummary}</p>
             </div>
           )}
           <div className="bg-white rounded-xl border border-slate-200 p-4 text-left text-sm text-slate-500 space-y-1">
@@ -1090,37 +1119,56 @@ export default function BookPage() {
 
         {/* Service selection */}
         <div className="border-t border-slate-100 pt-5">
-          <h3 className="text-base font-bold text-slate-900 mb-3">Choose Service</h3>
+          <h3 className="text-base font-bold text-slate-900 mb-1">Choose Services</h3>
+          <p className="text-sm text-slate-500 mb-3">Select all services you’d like to request.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {serviceOptions.map(svc => {
-              const selected = form.serviceRequested === svc.name;
+            {serviceOptions.map((svc, index) => {
+              const selected = form.serviceRequested.includes(svc.name);
+              const checkboxId = `booking-service-${index}`;
               return (
                 <button
                   key={svc.name}
                   type="button"
-                  onClick={() => setF("serviceRequested", selected ? "" : svc.name)}
-                  className={`flex flex-col gap-1 px-4 py-3 rounded-xl border-2 transition-all text-left ${
+                  onClick={() =>
+                    setF(
+                      "serviceRequested",
+                      selected
+                        ? form.serviceRequested.filter(name => name !== svc.name)
+                        : [...form.serviceRequested, svc.name],
+                    )
+                  }
+                  role="checkbox"
+                  aria-checked={selected}
+                  aria-labelledby={`${checkboxId}-label`}
+                  className={`flex items-start gap-3 px-4 py-3 rounded-xl border-2 transition-all text-left ${
                     selected
-                      ? "border-slate-900 bg-slate-900 text-white"
+                      ? "border-slate-900 bg-slate-50 text-slate-900"
                       : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
                   }`}
                 >
-                  <span className="flex items-center justify-between gap-2 w-full">
-                    <span className="text-sm font-semibold">{svc.name}</span>
-                    <span className="flex items-center gap-1.5 shrink-0">
+                  <span
+                    aria-hidden="true"
+                    className={`mt-0.5 h-5 w-5 shrink-0 rounded border flex items-center justify-center ${
+                      selected ? "border-slate-900 bg-slate-900 text-white" : "border-slate-300 bg-white"
+                    }`}
+                  >
+                    {selected && <Check className="h-4 w-4" />}
+                  </span>
+                  <span id={`${checkboxId}-label`} className="min-w-0 flex-1 flex flex-col gap-1">
+                    <span className="flex items-center justify-between gap-2 w-full">
+                      <span className="text-sm font-semibold">{svc.name}</span>
                       {svc.price && (
-                        <span className={`text-sm font-bold tabular-nums ${selected ? "text-white" : "text-slate-900"}`}>
+                        <span className="text-sm font-bold tabular-nums text-slate-900">
                           {svc.price}
                         </span>
                       )}
-                      {selected && <CheckCircle2 className="h-4 w-4 shrink-0" />}
                     </span>
+                    {svc.description && (
+                      <span className="text-xs font-normal leading-snug text-slate-500">
+                        {svc.description}
+                      </span>
+                    )}
                   </span>
-                  {svc.description && (
-                    <span className={`text-xs font-normal leading-snug ${selected ? "text-slate-300" : "text-slate-500"}`}>
-                      {svc.description}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -1161,6 +1209,7 @@ export default function BookPage() {
             {conflictMessage}
           </div>
         )}
+        {slotsErrorNotice}
 
         {slotsData?.isUtah && (
           <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700 font-medium">
@@ -1181,7 +1230,7 @@ export default function BookPage() {
           </div>
         )}
 
-        {slotsEnabled && !slotsData?.message && (
+        {slotsEnabled && !slotsData?.message && !slotsError && (
           <>
             <p className="text-sm text-slate-600">
               Pick the date you'd prefer. If nothing is open that day, we'll find the closest available times for you.
@@ -1328,7 +1377,7 @@ export default function BookPage() {
       firstChoice = { date: best.date, slot: best.slots[0] };
     }
 
-    if (slotSearching) {
+    if (slotSearching && !slotsError) {
       return (
         <div className="space-y-4">
           <h2 className="text-xl font-bold text-slate-900">Choose an Appointment Time</h2>
@@ -1347,9 +1396,10 @@ export default function BookPage() {
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-slate-900">Choose an Appointment Time</h2>
+        {slotsErrorNotice}
 
         {/* Day columns — every open day shows ALL its times; scroll right for more */}
-        {dayColumns.length > 0 && (
+        {!slotsError && dayColumns.length > 0 && (
           <>
             {anchorOpen ? (
               <p className="text-sm text-slate-600 leading-relaxed">
@@ -1410,7 +1460,7 @@ export default function BookPage() {
         )}
 
         {/* Nothing open anywhere in the booking window */}
-        {dayColumns.length === 0 && (
+        {!slotsError && dayColumns.length === 0 && (
           <div className="text-sm text-slate-500 bg-slate-50 rounded-lg p-6 text-center">
             No online openings are available right now. Please contact John directly and he'll
             find a time that works.
@@ -1427,6 +1477,17 @@ export default function BookPage() {
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-slate-900">Primary Contact Information</h2>
+        {mutation.isError && !(mutation.error as Error & { conflict?: boolean }).conflict && (
+          <div
+            role="alert"
+            className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            data-testid="text-booking-submit-error"
+          >
+            {mutation.error instanceof Error
+              ? mutation.error.message
+              : "We couldn't submit your request. Please try again."}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div>

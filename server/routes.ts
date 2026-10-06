@@ -12,6 +12,7 @@ import { Client as ObjectStorageClient } from "@replit/object-storage";
 import { parseDeltaFlightPdf } from "./parsePdf";
 import { researchCityLeads, researchConfigured } from "./research";
 import * as ics from "./ics";
+import { parseBookingServices } from "@shared/booking-services";
 
 // ── Object Storage ────────────────────────────────────────────────────────────
 const objectStorage = new ObjectStorageClient();
@@ -2557,6 +2558,15 @@ export async function registerRoutes(
     slcTrips: { name: string; startDate: string; endDate: string }[];
   }
 
+  class BookingAvailabilityUnavailableError extends Error {
+    constructor() {
+      super(
+        "The Falcetti calendar couldn't be checked, so appointment availability can't be confirmed right now. Please try again shortly or contact John directly.",
+      );
+      this.name = "BookingAvailabilityUnavailableError";
+    }
+  }
+
   async function loadBookingData(ownerUserId: string): Promise<BookingData> {
     const booking = await import("./booking");
     const { db: drizzleDb } = await import("./db");
@@ -2650,6 +2660,7 @@ export async function registerRoutes(
     // (Repeating events only block their base date for now.)
     const events = await drizzleDb
       .select({
+        eventType: calendarEvents.eventType,
         date: calendarEvents.date,
         endDate: calendarEvents.endDate,
         startTime: calendarEvents.startTime,
@@ -2659,6 +2670,7 @@ export async function registerRoutes(
       .from(calendarEvents)
       .where(eqOp(calendarEvents.userId, ownerUserId));
     for (const ev of events) {
+      if (ev.eventType === "memo") continue;
       const start = booking.normalizeDateStr(ev.date);
       if (!start) continue;
       const end = booking.normalizeDateStr(ev.endDate) ?? start;
@@ -2677,6 +2689,84 @@ export async function registerRoutes(
             ? `${endMins - startMins} min`
             : null;
         (busyByDate[start] ??= []).push({ time: ev.startTime, duration: durationLabel });
+      }
+    }
+
+    // Falcetti shifts are imported from the configured Gazelle/iCalendar feed.
+    // If the feed is enabled but unreachable, do not show potentially false
+    // openings; the caller returns a clear temporary-unavailable response.
+    const calendarSync = readCalendarSync();
+    if (calendarSync.gazelleUrl && calendarSync.falcettiEnabled !== false) {
+      let rawEvents: ics.RawEvent[];
+      try {
+        rawEvents = await loadGazelleEvents(calendarSync.gazelleUrl);
+      } catch {
+        throw new BookingAvailabilityUnavailableError();
+      }
+
+      const feedWindowEnd = new Date(horizonEndDate);
+      feedWindowEnd.setHours(23, 59, 59, 999);
+      const occurrences = ics.expandFeed(rawEvents, todayDate, feedWindowEnd);
+      const dateKeyFromUtc = (date: Date) =>
+        `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+      const millisecondsPerMinute = 60 * 1000;
+      const millisecondsPerDay = 24 * 60 * millisecondsPerMinute;
+
+      for (const occurrence of occurrences) {
+        const startMs = Date.UTC(
+          occurrence.start.y,
+          occurrence.start.mo - 1,
+          occurrence.start.d,
+          occurrence.start.h,
+          occurrence.start.mi,
+        );
+        let endMs = Date.UTC(
+          occurrence.end.y,
+          occurrence.end.mo - 1,
+          occurrence.end.d,
+          occurrence.end.h,
+          occurrence.end.mi,
+        );
+
+        if (occurrence.allDay) {
+          if (endMs <= startMs) endMs = startMs + millisecondsPerDay;
+          for (let dayStart = startMs; dayStart < endMs; dayStart += millisecondsPerDay) {
+            const date = dateKeyFromUtc(new Date(dayStart));
+            if (date >= todayStr) blockedDates.add(date);
+          }
+          continue;
+        }
+
+        if (endMs <= startMs) endMs = startMs + 60 * millisecondsPerMinute;
+        for (let cursor = startMs; cursor < endMs;) {
+          const current = new Date(cursor);
+          const dayStart = Date.UTC(
+            current.getUTCFullYear(),
+            current.getUTCMonth(),
+            current.getUTCDate(),
+          );
+          const segmentEnd = Math.min(endMs, dayStart + millisecondsPerDay);
+          const durationMinutes = Math.max(
+            1,
+            Math.ceil((segmentEnd - cursor) / millisecondsPerMinute),
+          );
+          const date = dateKeyFromUtc(current);
+          if (date >= todayStr) {
+            const time = ics.naiveToTimeLabel({
+              y: current.getUTCFullYear(),
+              mo: current.getUTCMonth() + 1,
+              d: current.getUTCDate(),
+              h: current.getUTCHours(),
+              mi: current.getUTCMinutes(),
+              allDay: false,
+            });
+            (busyByDate[date] ??= []).push({
+              time,
+              duration: `${durationMinutes} min`,
+            });
+          }
+          cursor = segmentEnd;
+        }
       }
     }
 
@@ -2832,7 +2922,7 @@ export async function registerRoutes(
 
       res.json({ availableDates, isUtah: false });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(error instanceof BookingAvailabilityUnavailableError ? 503 : 500).json({ message: error.message });
     }
   });
 
@@ -3472,46 +3562,51 @@ export async function registerRoutes(
       await storage.syncCustomerFromPianos(customer.id);
     }
 
-    // ── Service line: match the request's service against the catalog ──────
-    const serviceName = existing.serviceRequested || "Standard Tuning";
+    // ── Service lines: match each requested service against the catalog ────
     const catalog = await storage.getServiceCatalog(userId);
-    const catalogMatch = catalog.find(
-      c => c.name.trim().toLowerCase() === serviceName.trim().toLowerCase(),
-    );
-    const eachAmount = catalogMatch?.defaultCost
-      ? parseFloat(String(catalogMatch.defaultCost).replace(/[^0-9.]/g, "")) || 0
-      : 0;
-    const catDurMins = (() => {
-      const s = catalogMatch?.defaultDuration ?? "";
-      let total = 0;
-      const hr = s.match(/(\d+(?:\.\d+)?)\s*h/i);
-      const min = s.match(/(\d+)\s*m/i);
-      if (hr) total += Math.round(parseFloat(hr[1]) * 60);
-      if (min) total += parseInt(min[1]);
-      return total;
-    })();
-    const isTuning = catalogMatch ? !!catalogMatch.isTuning : /tuning/i.test(serviceName);
-    const line = {
-      lineId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: catalogMatch?.name ?? serviceName,
-      expenseType: "Fixed Rate Labor",
-      quantity: 1,
-      eachAmount,
-      durationMinutes: catDurMins || 90,
-      isTuning,
-      isTaxable: false,
-    };
-    const serviceItems = JSON.stringify([{ pianoId: piano?.id ?? null, lines: [line] }]);
+    const requestedServices = parseBookingServices(existing.serviceRequested);
+    const serviceNames = requestedServices.length ? requestedServices : ["Standard Tuning"];
+    const serviceLines = serviceNames.map((serviceName) => {
+      const catalogMatch = catalog.find(
+        c => c.name.trim().toLowerCase() === serviceName.trim().toLowerCase(),
+      );
+      const eachAmount = catalogMatch?.defaultCost
+        ? parseFloat(String(catalogMatch.defaultCost).replace(/[^0-9.]/g, "")) || 0
+        : 0;
+      const durationText = catalogMatch?.defaultDuration ?? "";
+      let durationMinutes = 0;
+      const hours = durationText.match(/(\d+(?:\.\d+)?)\s*h/i);
+      const minutes = durationText.match(/(\d+)\s*m/i);
+      if (hours) durationMinutes += Math.round(parseFloat(hours[1]) * 60);
+      if (minutes) durationMinutes += parseInt(minutes[1], 10);
+      const isTuning = catalogMatch ? !!catalogMatch.isTuning : /tuning/i.test(serviceName);
+
+      return {
+        lineId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: catalogMatch?.name ?? serviceName,
+        expenseType: "Fixed Rate Labor",
+        quantity: 1,
+        eachAmount,
+        durationMinutes: durationMinutes || 90,
+        isTuning,
+        isTaxable: false,
+      };
+    });
+    const primaryDurationMinutes = serviceLines[0]?.durationMinutes ?? 90;
+    const totalAmount = serviceLines.reduce((total, line) => total + line.eachAmount, 0);
+    const isTuning = serviceLines.length > 0 && serviceLines.every((line) => line.isTuning);
+    const serviceNamesForAppointment = serviceLines.map((line) => line.name);
+    const serviceItems = JSON.stringify([{ pianoId: piano?.id ?? null, lines: serviceLines }]);
 
     const appointment = await storage.createAppointment({
       customerId: customer.id,
       pianoId: piano?.id ?? undefined,
       date,
       time,
-      duration: opts.duration ?? (catDurMins ? `${Math.floor(catDurMins / 60)} hr ${catDurMins % 60 ? `${catDurMins % 60} min` : ""}`.trim() : "1 hr 30 min"),
+      duration: opts.duration ?? `${Math.floor(primaryDurationMinutes / 60)} hr ${primaryDurationMinutes % 60 ? `${primaryDurationMinutes % 60} min` : ""}`.trim(),
       isTuning,
-      servicesRequested: line.name,
-      priceEstimate: eachAmount > 0 ? `$${eachAmount.toFixed(2)}` : undefined,
+      servicesRequested: serviceNamesForAppointment.join(", "),
+      priceEstimate: totalAmount > 0 ? `$${totalAmount.toFixed(2)}` : undefined,
       serviceItems,
       notes: opts.notes || `From booking request submitted by ${existing.firstName} ${existing.lastName}.`,
       status: "scheduled",
@@ -3605,7 +3700,7 @@ export async function registerRoutes(
 
       res.status(201).json({ ...request, autoApproved: false });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(error instanceof BookingAvailabilityUnavailableError ? 503 : 500).json({ message: error.message });
     }
   });
 

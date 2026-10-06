@@ -57,6 +57,7 @@ import {
   parseDurationToMinutes,
 } from "@/lib/scheduling";
 import { clientName } from "@shared/client-name";
+import { parseBookingServices } from "@shared/booking-services";
 
 // Primary home base (Somerville). Only swaps to the Centerville, UT base
 // below during SLC trip days — see isSLCDay in TodayItinerary.
@@ -1432,11 +1433,14 @@ function ApproveScheduleDialog({
                 Service
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {req.serviceRequested && (
-                  <span className="inline-flex items-center rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold">
-                    {req.serviceRequested}
+                {parseBookingServices(req.serviceRequested).map((service, index) => (
+                  <span
+                    key={`${req.id}-service-${index}`}
+                    className="inline-flex items-center rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold"
+                  >
+                    {service}
                   </span>
-                )}
+                ))}
                 {req.pianoType && (
                   <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium">
                     {req.pianoType}
