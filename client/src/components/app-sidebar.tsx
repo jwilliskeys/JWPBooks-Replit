@@ -39,12 +39,12 @@ function JwpEmblem({ className }: { className?: string }) {
         <rect x="460.7" y="392" width="5" height="200" />
         <rect x="515.1" y="392" width="5" height="200" />
         {/* black keys — real piano 2+3 grouping (band starts on B) */}
-        <rect x="117.87" y="392" width="31.55" height="98.4" />
-        <rect x="178.58" y="392" width="31.55" height="98.4" />
-        <rect x="280.12" y="392" width="31.55" height="98.4" />
-        <rect x="338.62" y="392" width="31.55" height="98.4" />
-        <rect x="397.13" y="392" width="31.55" height="98.4" />
-        <rect x="498.67" y="392" width="31.55" height="98.4" />
+        <rect x="117.87" y="392" width="31.55" height="108.4" />
+        <rect x="178.58" y="392" width="31.55" height="108.4" />
+        <rect x="280.12" y="392" width="31.55" height="108.4" />
+        <rect x="338.62" y="392" width="31.55" height="108.4" />
+        <rect x="397.13" y="392" width="31.55" height="108.4" />
+        <rect x="498.67" y="392" width="31.55" height="108.4" />
       </g>
       {/* JWP — Libre Baskerville Bold outlines */}
       <path
@@ -82,12 +82,7 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarHeader className="px-4 pt-6 pb-4">
         <Link href="/" className="flex flex-col items-center gap-3 text-center">
-          <img
-            src="/jwp-logo-fallboard.png?v=4"
-            alt="John Willis Piano logo"
-            className="h-36 w-36 select-none"
-            draggable={false}
-          />
+          <JwpEmblem className="h-36 w-36 select-none" />
           <div className="flex flex-col gap-0.5">
             <span className="font-serif font-bold tracking-tight text-[20px] leading-tight">John Willis Piano</span>
             <span className="text-muted-foreground text-[13px] uppercase tracking-[0.18em]">Piano Booking System</span>
