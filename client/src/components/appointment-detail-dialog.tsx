@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   SectionBar,
+  DurationMismatchNotice,
   PianoCard,
   PianoPickerView,
   ClientSearchBox,
@@ -50,6 +51,7 @@ import {
   serializeServiceItems,
   groupsServiceNames,
   groupsTotal,
+  groupsDuration,
   groupsHaveTuning,
   linesTotal,
   lineFromCatalog,
@@ -617,6 +619,25 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                               {formatMoney(groupsTotal(editGroups ?? []))}
                             </span>
                           </div>
+                          {groupsDuration(editGroups ?? []) > 0 && (
+                            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/20 border text-sm">
+                              <span className="text-muted-foreground">Service duration (sum of lines)</span>
+                              <span className="font-medium tabular-nums">
+                                {formatDurationMinutes(groupsDuration(editGroups ?? []))}
+                              </span>
+                            </div>
+                          )}
+                          {!form.isAllDay && (
+                            <DurationMismatchNotice
+                              serviceMinutes={groupsDuration(editGroups ?? [])}
+                              appointmentMinutes={form.durationMinutes}
+                              onUseServiceDuration={() => setForm(f => ({
+                                ...f,
+                                durationMinutes: groupsDuration(editGroups ?? []),
+                              }))}
+                              testIdPrefix="standard-edit"
+                            />
+                          )}
                         </>
                       )}
                     </div>

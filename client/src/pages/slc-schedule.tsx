@@ -82,7 +82,13 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { MoveAppointmentDialog, type MoveRequestPrev } from "@/components/move-appointment-dialog";
-import { SectionBar } from "@/components/appointment-editor";
+import {
+  DurationMismatchNotice,
+  PianoCard,
+  PianoPickerView,
+  SectionBar,
+  type PianoSection,
+} from "@/components/appointment-editor";
 import {
   arrayMove,
   SortableContext,
@@ -106,7 +112,7 @@ import {
   parseTimeString,
   parseDurationString,
 } from "@/components/time-stepper";
-import type { Trip, TripAppointment, Customer, Piano, Invoice } from "@shared/schema";
+import type { Trip, TripAppointment, Customer, Piano, Invoice, ServiceCatalogItem } from "@shared/schema";
 import {
   SCHEDULE_C_CATEGORIES,
   getCatInfo,
@@ -125,6 +131,19 @@ import {
   minutesToTimeStr,
   type ExistingAppointment,
 } from "@/lib/scheduling";
+import {
+  type ServiceItemGroup,
+  formatMoney,
+  groupsDuration,
+  groupsHaveTuning,
+  groupsServiceNames,
+  groupsTotal,
+  lineFromCatalog,
+  lineTotal,
+  newLineId,
+  parseServiceItems,
+  serializeServiceItems,
+} from "@/lib/service-lines";
 
 // Trip Planner is SLC-trip-specific, so home base here is always the
 // Centerville, UT address (vs. the Somerville home base used everywhere else).
@@ -153,7 +172,12 @@ function formatIcsDateTime(dateStr: string, timeStr: string): string {
   return `${year}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}${String(minute).padStart(2, "0")}00`;
 }
 
-function generateIcs(appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined): string {
+function generateIcs(
+  appt: TripAppointment,
+  cust: Customer | undefined,
+  piano: Piano | null | undefined,
+  pianoMap?: Map<number, Piano>,
+): string {
   const dtStart = formatIcsDateTime(appt.date, appt.time || "8:00 AM");
   const durationMins = parseDurationToMinutes(appt.duration || "2 hours");
   const startMins = parseTimeToMinutes(appt.time || "8:00 AM");
@@ -162,7 +186,19 @@ function generateIcs(appt: TripAppointment, cust: Customer | undefined, piano: P
   const customerName = cust ? clientName(cust) : "Unknown";
   const summary = `${customerName} \u2013 ${appt.servicesRequested || "Piano Service"}`;
   const location = buildCustomerAddress(cust);
-  const pianoStr = piano ? [piano.make, piano.pianoType].filter(Boolean).join(" ") : "";
+  const groups = parseServiceItems(appt.serviceItems) ?? [];
+  const pianoIds = Array.from(new Set([
+    ...groups.flatMap((group) => group.pianoId === null ? [] : [group.pianoId]),
+    ...(appt.pianoId === null ? [] : [appt.pianoId]),
+  ]));
+  const pianoStr = pianoIds
+    .map((id) => {
+      const linkedPiano = pianoMap?.get(id) ?? (piano?.id === id ? piano : undefined);
+      return linkedPiano
+        ? [linkedPiano.make, linkedPiano.model, linkedPiano.pianoType].filter(Boolean).join(" ")
+        : `Piano #${id}`;
+    })
+    .join("; ") || (piano ? [piano.make, piano.model, piano.pianoType].filter(Boolean).join(" ") : "");
   const descParts: string[] = [];
   if (pianoStr) descParts.push(pianoStr);
   if (appt.priceEstimate) descParts.push(`Est. ${appt.priceEstimate}`);
@@ -253,6 +289,59 @@ function parsePrice(str: string | null | undefined): number {
   if (!str) return 0;
   const num = parseFloat(str.replace(/[^0-9.]/g, ""));
   return isNaN(num) ? 0 : num;
+}
+
+function legacyTripServiceGroups(
+  appointment: TripAppointment,
+  catalog: ServiceCatalogItem[],
+): ServiceItemGroup[] {
+  const names = (appointment.servicesRequested ?? "")
+    .split(/\n|,/)
+    .map((name) => name.trim())
+    .filter(Boolean);
+  const lines = names.map((name) => {
+    const match = catalog.find((service) => service.name.toLowerCase() === name.toLowerCase());
+    return match
+      ? lineFromCatalog(match)
+      : {
+          lineId: newLineId(),
+          name,
+          expenseType: "Fixed Rate Labor" as const,
+          quantity: 1,
+          eachAmount: 0,
+          durationMinutes: 0,
+          isTuning: name.toLowerCase().includes("tuning"),
+          isTaxable: false,
+        };
+  });
+  const legacyPriceCents = Math.round(parsePrice(appointment.priceEstimate) * 100);
+  if (legacyPriceCents > 0 && lines.length > 0) {
+    const weights = lines.map((line) => Math.round(lineTotal(line) * 100));
+    const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+    let allocatedCents = 0;
+    lines.forEach((line, index) => {
+      const cents = index === lines.length - 1
+        ? legacyPriceCents - allocatedCents
+        : weightTotal > 0
+          ? Math.round(legacyPriceCents * weights[index] / weightTotal)
+          : Math.floor(legacyPriceCents / lines.length);
+      allocatedCents += cents;
+      line.eachAmount = Math.max(0, cents / 100 / (line.quantity || 1));
+    });
+  } else if (legacyPriceCents > 0 && names.length === 0) {
+    lines.push({
+      lineId: newLineId(),
+      name: "Existing service estimate",
+      expenseType: "Fixed Rate Labor",
+      quantity: 1,
+      eachAmount: legacyPriceCents / 100,
+      durationMinutes: 0,
+      isTuning: false,
+      isTaxable: false,
+    });
+  }
+
+  return [{ pianoId: appointment.pianoId ?? null, lines }];
 }
 
 function isTripActive(trip: Trip): boolean {
@@ -375,10 +464,22 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, cu
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const cust = customerMap.get(appt.customerId);
   const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+  const serviceGroups = parseServiceItems(appt.serviceItems) ?? [];
+  const pianoIds = Array.from(new Set([
+    ...serviceGroups.flatMap((group) => group.pianoId === null ? [] : [group.pianoId]),
+    ...(appt.pianoId === null ? [] : [appt.pianoId]),
+  ]));
   const isCompleted = appt.status === "completed";
   const addressParts = [cust?.address, cust?.city, cust?.state, cust?.zipCode].filter(Boolean);
   const addressStr = addressParts.join(", ");
-  const pianoStr = [piano?.make, piano?.pianoType].filter(Boolean).join(" ");
+  const pianoStr = pianoIds
+    .map((id) => {
+      const linkedPiano = pianoMap.get(id);
+      return linkedPiano
+        ? [linkedPiano.make, linkedPiano.model, linkedPiano.pianoType].filter(Boolean).join(" ") || `Piano #${id}`
+        : `Piano #${id}`;
+    })
+    .join(", ");
 
   return (
     <div ref={setNodeRef} style={style}>
@@ -427,7 +528,7 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, cu
             </p>
           )}
           {pianoStr && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <p className="text-xs text-muted-foreground flex items-center gap-1 truncate" title={pianoStr}>
               <Music className="h-3 w-3 shrink-0" />
               {pianoStr}
             </p>
@@ -1898,13 +1999,10 @@ export default function SlcSchedule() {
   const [editingAppt, setEditingAppt] = useState<TripAppointment | null>(null);
   const [editingTripId, setEditingTripId] = useState<number | null>(null);
   const [editDayExistingAppts, setEditDayExistingAppts] = useState<ExistingAppointment[]>([]);
-  const [editPianoId, setEditPianoId] = useState<string>("none");
-  const [editPianoCbOpen, setEditPianoCbOpen] = useState(false);
+  const [editGroups, setEditGroups] = useState<ServiceItemGroup[] | null>(null);
+  const [showEditPianoPicker, setShowEditPianoPicker] = useState(false);
   const [editTime, setEditTime] = useState("");
   const [editDuration, setEditDuration] = useState("");
-  const [editServices, setEditServices] = useState("");
-  const [editSelectedNames, setEditSelectedNames] = useState<string[]>([]);
-  const [editPrice, setEditPrice] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [editConflictError, setEditConflictError] = useState("");
 
@@ -1928,6 +2026,20 @@ export default function SlcSchedule() {
   const { data: allPianos } = useQuery<Piano[]>({
     queryKey: ["/api/pianos"],
   });
+
+  const {
+    data: serviceCatalog,
+    isError: isServiceCatalogError,
+    refetch: refetchServiceCatalog,
+  } = useQuery<ServiceCatalogItem[]>({
+    queryKey: ["/api/service-catalog"],
+    enabled: !!editingAppt,
+  });
+
+  useEffect(() => {
+    if (!editingAppt || editGroups !== null || !serviceCatalog) return;
+    setEditGroups(legacyTripServiceGroups(editingAppt, serviceCatalog));
+  }, [editingAppt, editGroups, serviceCatalog]);
 
   const { data: allInvoices } = useQuery<Invoice[]>({
     queryKey: ["/api/invoices"],
@@ -2189,16 +2301,21 @@ export default function SlcSchedule() {
 
   const confirmAppointmentMutation = useMutation({
     mutationFn: async ({ appt, cust, piano, tripId }: { appt: TripAppointment; cust: Customer | undefined; piano: Piano | null | undefined; tripId: number }) => {
-      const isTuning = (appt.servicesRequested || "").toLowerCase().includes("tuning");
+      const groups = parseServiceItems(appt.serviceItems);
+      const isTuning = groups
+        ? groupsHaveTuning(groups)
+        : (appt.servicesRequested || "").toLowerCase().includes("tuning");
       const res = await apiRequest("POST", "/api/appointments", {
         customerId: appt.customerId,
-        pianoId: appt.pianoId ?? null,
+        pianoId: groups?.find((group) => group.pianoId !== null)?.pianoId ?? appt.pianoId ?? null,
         date: appt.date,
         time: appt.time,
+        duration: appt.duration,
         servicesRequested: appt.servicesRequested,
         priceEstimate: appt.priceEstimate,
         notes: appt.notes,
         isTuning,
+        serviceItems: appt.serviceItems ?? undefined,
         status: "scheduled",
       });
       const newAppt = await res.json();
@@ -2208,7 +2325,7 @@ export default function SlcSchedule() {
     onSuccess: ({ appt, cust, piano, tripId }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      const icsContent = generateIcs(appt, cust, piano);
+      const icsContent = generateIcs(appt, cust, piano, pianoMap);
       const custName = cust ? clientName(cust, "appointment").replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
       toast({ title: "Appointment confirmed and added to calendar" });
@@ -2293,40 +2410,62 @@ export default function SlcSchedule() {
     setEditingAppt(appt);
     setEditingTripId(tripId);
     setEditDayExistingAppts(dayExistingAppts);
-    setEditPianoId(appt.pianoId ? String(appt.pianoId) : "none");
-    setEditPianoCbOpen(false);
+    setEditGroups(parseServiceItems(appt.serviceItems));
+    setShowEditPianoPicker(false);
     const timeMins = parseTimeString(appt.time || "8:00 AM");
     setEditTime(formatTimeMinutes(timeMins > 0 ? timeMins : DEFAULT_TIME_MINUTES));
     const durMins = parseDurationString(appt.duration || "2 hours");
     setEditDuration(formatDurationMinutes(durMins > 0 ? durMins : DEFAULT_DURATION_MINUTES));
-    const existingNames = appt.servicesRequested
-      ? appt.servicesRequested.split(",").map((s) => s.trim()).filter(Boolean)
-      : [];
-    setEditSelectedNames(existingNames);
-    setEditServices(appt.servicesRequested || "");
-    setEditPrice(appt.priceEstimate || "");
     setEditNotes(appt.notes || "");
     setEditConflictError("");
   }
 
+  function addEditPiano(piano: Piano) {
+    setEditGroups((current) => {
+      const groups = current ?? [];
+      if (groups.some((group) => group.pianoId === piano.id)) return groups;
+      return [...groups, { pianoId: piano.id, lines: [] }];
+    });
+    setShowEditPianoPicker(false);
+  }
+
+  function addEditMiscGroup() {
+    setEditGroups((current) => {
+      const groups = current ?? [];
+      if (groups.some((group) => group.pianoId === null)) return groups;
+      return [...groups, { pianoId: null, lines: [] }];
+    });
+  }
+
+  function updateEditGroup(index: number, patch: Partial<ServiceItemGroup>) {
+    setEditGroups((current) =>
+      (current ?? []).map((group, groupIndex) =>
+        groupIndex === index ? { ...group, ...patch } : group,
+      ),
+    );
+  }
+
   function handleSaveEdit() {
-    if (!editingAppt || !editingTripId) return;
+    if (!editingAppt || !editingTripId || editGroups === null) return;
     const cust = customerMap.get(editingAppt.customerId);
     const custCity = cust?.city || "";
     const result = checkTimeConflict(editTime, editDuration, custCity, editDayExistingAppts);
     if (!result.valid) {
       setEditConflictError(result.message || "Time conflict");
     }
+    const names = groupsServiceNames(editGroups);
+    const total = groupsTotal(editGroups);
     editAppointmentMutation.mutate({
       id: editingAppt.id,
       tripId: editingTripId,
       data: {
         time: editTime,
         duration: editDuration,
-        pianoId: editPianoId !== "none" ? parseInt(editPianoId) : null,
-        servicesRequested: editServices || undefined,
-        priceEstimate: editPrice || undefined,
-        notes: editNotes || undefined,
+        pianoId: editGroups.find((group) => group.pianoId !== null)?.pianoId ?? null,
+        serviceItems: serializeServiceItems(editGroups),
+        servicesRequested: names.join(", ") || null,
+        priceEstimate: total > 0 ? formatMoney(total) : null,
+        notes: editNotes || null,
       },
     });
   }
@@ -2342,7 +2481,7 @@ export default function SlcSchedule() {
 
   function handleConfirmAppointment(appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) {
     if (appt.linkedAppointmentId) {
-      const icsContent = generateIcs(appt, cust, piano);
+      const icsContent = generateIcs(appt, cust, piano, pianoMap);
       const custName = cust ? clientName(cust, "appointment").replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
       toast({ title: "Already added to appointments — calendar file re-downloaded" });
@@ -3062,80 +3201,149 @@ export default function SlcSchedule() {
 
                 {/* ── RIGHT: pianos & services ── */}
                 <div className="space-y-4">
-                  <SectionBar title="Pianos &amp; Services" />
-              {(() => {
-                const editCustomerPianos = (allPianos ?? []).filter(
-                  p => p.customerId === editingAppt.customerId,
-                );
-                if (editCustomerPianos.length === 0) return null;
-                const current = editCustomerPianos.find(p => String(p.id) === editPianoId);
-                const currentLabel = current
-                  ? [current.make, current.model, current.pianoType].filter(Boolean).join(" ") || `Piano #${current.id}`
-                  : "No specific piano";
-                return (
-                  <div className="space-y-2">
-                    <Label>Piano</Label>
-                    <Popover open={editPianoCbOpen} onOpenChange={setEditPianoCbOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          role="combobox"
-                          className="w-full justify-between font-normal"
-                          data-testid="select-edit-appt-piano"
-                        >
-                          <span className="truncate">{currentLabel}</span>
-                          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-full p-0" align="start">
-                        <Command>
-                          <CommandInput placeholder="Search piano..." />
-                          <CommandList>
-                            <CommandEmpty>No piano found.</CommandEmpty>
-                            <CommandGroup>
-                              <CommandItem
-                                value="none"
-                                onSelect={() => { setEditPianoId("none"); setEditPianoCbOpen(false); }}
-                              >
-                                <Check className={`mr-2 h-4 w-4 ${editPianoId === "none" ? "opacity-100" : "opacity-0"}`} />
-                                No specific piano
-                              </CommandItem>
-                              {editCustomerPianos.map((p) => {
-                                const label = [p.make, p.model, p.pianoType].filter(Boolean).join(" ") || `Piano #${p.id}`;
-                                return (
-                                  <CommandItem
-                                    key={p.id}
-                                    value={label}
-                                    onSelect={() => { setEditPianoId(String(p.id)); setEditPianoCbOpen(false); }}
-                                  >
-                                    <Check className={`mr-2 h-4 w-4 ${editPianoId === String(p.id) ? "opacity-100" : "opacity-0"}`} />
-                                    {label}
-                                  </CommandItem>
-                                );
-                              })}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
+                  <SectionBar title="Client Information" />
+                  <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+                    {(() => {
+                      const client = customerMap.get(editingAppt.customerId);
+                      const address = [client?.address, client?.city, client?.state, client?.zipCode]
+                        .filter(Boolean)
+                        .join(", ");
+                      return (
+                        <>
+                          <p className="text-sm font-semibold">
+                            {client ? clientName(client) : "Unknown client"}
+                          </p>
+                          {address && <p className="text-xs text-muted-foreground mt-0.5">{address}</p>}
+                        </>
+                      );
+                    })()}
                   </div>
-                );
-              })()}
-              <div className="space-y-2">
-                <Label>Services</Label>
-                <ServicePicker
-                  value={editSelectedNames}
-                  onChange={(names, _isTuning, totalCost) => {
-                    setEditSelectedNames(names);
-                    setEditServices(names.join(", "));
-                    setEditPrice(totalCost > 0 ? `$${totalCost.toFixed(0)}` : "");
-                  }}
-                />
-              </div>
-              <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-muted/40 border text-sm">
-                <span className="text-muted-foreground">Price estimate (sum of services)</span>
-                <span className="font-semibold tabular-nums" data-testid="text-edit-price">{editPrice || "$0"}</span>
-              </div>
+
+                  <SectionBar title="Pianos &amp; Services">
+                    {showEditPianoPicker ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => setShowEditPianoPicker(false)}
+                        data-testid="button-cancel-edit-add-piano"
+                      >
+                        Back
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="h-7 text-xs"
+                          onClick={() => setShowEditPianoPicker(true)}
+                          disabled={editGroups === null}
+                          data-testid="button-trip-edit-add-piano"
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                          Add Piano
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={addEditMiscGroup}
+                          disabled={editGroups === null || !!editGroups?.some((group) => group.pianoId === null)}
+                          data-testid="button-trip-edit-add-misc"
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                          Add Misc
+                        </Button>
+                      </>
+                    )}
+                  </SectionBar>
+
+                  {showEditPianoPicker ? (
+                    <div className="h-[360px] flex flex-col">
+                      <PianoPickerView
+                        pianos={(allPianos ?? []).filter(
+                          (piano) =>
+                            piano.customerId === editingAppt.customerId &&
+                            piano.isActive !== false &&
+                            !(editGroups ?? []).some((group) => group.pianoId === piano.id),
+                        )}
+                        onSelect={addEditPiano}
+                        onClose={() => setShowEditPianoPicker(false)}
+                      />
+                    </div>
+                  ) : isServiceCatalogError ? (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                      <p>Could not load the service list. Reload it before editing this appointment.</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="mt-2 border-destructive/30 text-destructive"
+                        onClick={() => { void refetchServiceCatalog(); }}
+                        data-testid="button-retry-service-catalog"
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : editGroups === null ? (
+                    <p className="text-sm text-muted-foreground py-4">Loading services…</p>
+                  ) : (
+                    <>
+                      {editGroups.length === 0 ? (
+                        <p className="text-sm text-muted-foreground text-center py-4">
+                          No pianos or services yet — add one above.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {editGroups.map((group, index) => {
+                            const section: PianoSection = {
+                              sectionId: `${group.pianoId ?? "misc"}-${index}`,
+                              pianoId: group.pianoId,
+                              lines: group.lines,
+                              isMisc: group.pianoId === null,
+                            };
+                            return (
+                              <PianoCard
+                                key={section.sectionId}
+                                section={section}
+                                piano={group.pianoId === null ? undefined : pianoMap.get(group.pianoId)}
+                                onUpdate={(patch) => updateEditGroup(index, patch)}
+                                onRemove={() => setEditGroups((groups) => (groups ?? []).filter((_, i) => i !== index))}
+                                showRemove
+                              />
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-muted/40 border text-sm">
+                        <span className="text-muted-foreground">Price estimate (sum of services)</span>
+                        <span className="font-semibold tabular-nums" data-testid="text-edit-price">
+                          {formatMoney(groupsTotal(editGroups))}
+                        </span>
+                      </div>
+                      {groupsDuration(editGroups) > 0 && (
+                        <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/20 border text-sm">
+                          <span className="text-muted-foreground">Service duration (sum of lines)</span>
+                          <span className="font-medium tabular-nums">
+                            {formatDurationMinutes(groupsDuration(editGroups))}
+                          </span>
+                        </div>
+                      )}
+                      <DurationMismatchNotice
+                        serviceMinutes={groupsDuration(editGroups)}
+                        appointmentMinutes={parseDurationString(editDuration)}
+                        onUseServiceDuration={() => {
+                          setEditDuration(formatDurationMinutes(groupsDuration(editGroups)));
+                          setEditConflictError("");
+                        }}
+                        testIdPrefix="trip-edit"
+                      />
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -3145,7 +3353,7 @@ export default function SlcSchedule() {
                 </Button>
                 <Button
                   onClick={handleSaveEdit}
-                  disabled={editAppointmentMutation.isPending}
+                  disabled={editAppointmentMutation.isPending || editGroups === null || isServiceCatalogError}
                   data-testid="button-save-edit"
                 >
                   Save Changes

@@ -88,6 +88,54 @@ function formatMoney(n: number): string {
   return `$${n.toFixed(2)}`;
 }
 
+async function validateAppointmentPianoLinks(
+  userId: string,
+  customerId: number,
+  pianoId: number | null | undefined,
+  serviceItems: string | null | undefined,
+): Promise<{ status: number; message: string } | null> {
+  const groupPianoIds: number[] = [];
+  if (serviceItems) {
+    let groups: unknown;
+    try {
+      groups = JSON.parse(serviceItems);
+    } catch {
+      return { status: 400, message: "Service items must be valid JSON." };
+    }
+    if (!Array.isArray(groups)) {
+      return { status: 400, message: "Service items must be a list of piano groups." };
+    }
+    for (const group of groups) {
+      if (!group || typeof group !== "object" || Array.isArray(group) || !("pianoId" in group)) {
+        return { status: 400, message: "Each service group must include a piano selection." };
+      }
+      const groupPianoId = (group as { pianoId: unknown }).pianoId;
+      if (groupPianoId === null) continue;
+      if (!Number.isSafeInteger(groupPianoId) || Number(groupPianoId) <= 0) {
+        return { status: 400, message: "A service group has an invalid piano selection." };
+      }
+      const id = Number(groupPianoId);
+      if (groupPianoIds.includes(id)) {
+        return { status: 400, message: "A piano can only be added once to an appointment." };
+      }
+      groupPianoIds.push(id);
+    }
+  }
+
+  const linkedPianoIds = new Set<number>(groupPianoIds);
+  if (pianoId != null) linkedPianoIds.add(pianoId);
+  for (const id of linkedPianoIds) {
+    const piano = await storage.getPiano(id);
+    if (!piano) return { status: 400, message: "A selected piano could not be found." };
+    const owner = await storage.getCustomer(piano.customerId);
+    if (!owner || owner.userId !== userId) return { status: 403, message: "Forbidden" };
+    if (piano.customerId !== customerId) {
+      return { status: 400, message: "All appointment pianos must belong to the selected client." };
+    }
+  }
+  return null;
+}
+
 // Auto-generates a draft invoice from a just-completed appointment. Prefers the
 // itemized services actually picked in the Complete Appointment dialog (per-piano
 // services + misc services, each with its own catalog price and quantity) — the
@@ -1103,12 +1151,13 @@ export async function registerRoutes(
       }
       const customer = await storage.getCustomer(parsed.data.customerId);
       if (!customer || customer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
-      if (parsed.data.pianoId) {
-        const piano = await storage.getPiano(parsed.data.pianoId);
-        if (!piano) return res.status(404).json({ message: "Piano not found" });
-        const pianoOwner = await storage.getCustomer(piano.customerId);
-        if (!pianoOwner || pianoOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
-      }
+      const pianoLinkError = await validateAppointmentPianoLinks(
+        userId,
+        parsed.data.customerId,
+        parsed.data.pianoId,
+        parsed.data.serviceItems,
+      );
+      if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
       const appointment = await storage.createAppointment(parsed.data, userId);
       res.status(201).json(appointment);
     } catch (error: any) {
@@ -1128,16 +1177,19 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
-      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+      if (parsed.data.customerId !== undefined && parsed.data.customerId !== existing.customerId) {
         const newCustomer = await storage.getCustomer(parsed.data.customerId);
         if (!newCustomer || newCustomer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
-      if (parsed.data.pianoId && parsed.data.pianoId !== existing.pianoId) {
-        const newPiano = await storage.getPiano(parsed.data.pianoId);
-        if (!newPiano) return res.status(404).json({ message: "Piano not found" });
-        const pianoOwner = await storage.getCustomer(newPiano.customerId);
-        if (!pianoOwner || pianoOwner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
-      }
+      const customerId = parsed.data.customerId ?? existing.customerId;
+      const pianoId = Object.prototype.hasOwnProperty.call(parsed.data, "pianoId")
+        ? parsed.data.pianoId
+        : existing.pianoId;
+      const serviceItems = Object.prototype.hasOwnProperty.call(parsed.data, "serviceItems")
+        ? parsed.data.serviceItems
+        : existing.serviceItems;
+      const pianoLinkError = await validateAppointmentPianoLinks(userId, customerId, pianoId, serviceItems);
+      if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
       const appointment = await storage.updateAppointment(id, parsed.data);
       if (!appointment) return res.status(404).json({ message: "Appointment not found" });
       res.json(appointment);
@@ -1569,6 +1621,13 @@ export async function registerRoutes(
         const customer = await storage.getCustomer(parsed.data.customerId);
         if (!customer || customer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
+      const pianoLinkError = await validateAppointmentPianoLinks(
+        userId,
+        parsed.data.customerId,
+        parsed.data.pianoId,
+        parsed.data.serviceItems,
+      );
+      if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
       const appointment = await storage.createTripAppointment(parsed.data);
       res.status(201).json(appointment);
     } catch (error: any) {
@@ -1594,10 +1653,19 @@ export async function registerRoutes(
         const newTrip = await storage.getTrip(parsed.data.tripId);
         if (!newTrip || newTrip.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
-      if (parsed.data.customerId && parsed.data.customerId !== existing.customerId) {
+      if (parsed.data.customerId !== undefined && parsed.data.customerId !== existing.customerId) {
         const newCustomer = await storage.getCustomer(parsed.data.customerId);
         if (!newCustomer || newCustomer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       }
+      const customerId = parsed.data.customerId ?? existing.customerId;
+      const pianoId = Object.prototype.hasOwnProperty.call(parsed.data, "pianoId")
+        ? parsed.data.pianoId
+        : existing.pianoId;
+      const serviceItems = Object.prototype.hasOwnProperty.call(parsed.data, "serviceItems")
+        ? parsed.data.serviceItems
+        : existing.serviceItems;
+      const pianoLinkError = await validateAppointmentPianoLinks(userId, customerId, pianoId, serviceItems);
+      if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
       const appointment = await storage.updateTripAppointment(id, parsed.data);
       if (!appointment) return res.status(404).json({ message: "Trip appointment not found" });
       res.json(appointment);

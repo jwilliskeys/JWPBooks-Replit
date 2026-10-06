@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, ArrowLeft, X, ExternalLink, UserRound, Repeat, Car, Clock } from "lucide-react";
+import { Search, ArrowLeft, X, ExternalLink, UserRound, Repeat, Car, Clock, AlertCircle } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -187,6 +187,42 @@ export function SectionBar({ title, children }: { title: string; children?: Reac
   );
 }
 
+export function DurationMismatchNotice({
+  serviceMinutes,
+  appointmentMinutes,
+  onUseServiceDuration,
+  testIdPrefix = "appointment",
+}: {
+  serviceMinutes: number;
+  appointmentMinutes: number;
+  onUseServiceDuration: () => void;
+  testIdPrefix?: string;
+}) {
+  if (serviceMinutes <= 0 || serviceMinutes === appointmentMinutes) return null;
+
+  return (
+    <div
+      className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+      data-testid={`duration-mismatch-${testIdPrefix}`}
+    >
+      <AlertCircle className="h-4 w-4 shrink-0" />
+      <p className="flex-1">
+        Services total {formatDurationMinutes(serviceMinutes)}, but the appointment is {formatDurationMinutes(appointmentMinutes)}.
+      </p>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10"
+        onClick={onUseServiceDuration}
+        data-testid={`button-match-service-duration-${testIdPrefix}`}
+      >
+        Set to {formatDurationMinutes(serviceMinutes)}
+      </Button>
+    </div>
+  );
+}
+
 // ─── Piano card (Gazelle-style: photo, details, link, tuning badges) ─────────
 
 interface PianoCardProps {
@@ -204,6 +240,7 @@ export function PianoCard({ section, piano, onUpdate, onRemove, showRemove, onNa
   const photo = piano?.photos?.[0];
   const { label: nextLabel, urgent } = nextTuningLabel(piano?.lastTuned, piano?.tuningInterval);
   const tunedBadge = lastTunedBadge(piano?.lastTuned);
+  const tunedStatus = tunedBadge ?? (piano ? "NEVER TUNED" : null);
   const everyBadge = intervalBadge(piano?.tuningInterval);
 
   return (
@@ -237,11 +274,11 @@ export function PianoCard({ section, piano, onUpdate, onRemove, showRemove, onNa
               {nextLabel}
             </p>
           )}
-          {(tunedBadge || everyBadge) && (
+          {(tunedStatus || everyBadge) && (
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              {tunedBadge && (
+              {tunedStatus && (
                 <span className="inline-flex items-center rounded bg-muted-foreground/80 text-background px-1.5 py-0.5 text-[9px] font-bold tracking-wide">
-                  {tunedBadge}
+                  {tunedStatus}
                 </span>
               )}
               {everyBadge && (
