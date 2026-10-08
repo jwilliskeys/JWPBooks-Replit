@@ -20,6 +20,7 @@ import {
   ClipboardCheck, ChevronDown, ExternalLink,
 } from "lucide-react";
 import { parseTimeToMinutes } from "@/lib/scheduling";
+import { MonthlyIncomeChart } from "@/components/monthly-income-chart";
 import {
   SCHEDULE_C_CATEGORIES,
   getCatInfo,
@@ -1708,6 +1709,9 @@ export default function FinancesPage() {
   const { data: invoices, isLoading: invoicesLoading } = useQuery<Invoice[]>({
     queryKey: ["/api/invoices"],
   });
+  const { data: customers, isLoading: customersLoading } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+  });
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-5xl mx-auto">
@@ -1719,6 +1723,8 @@ export default function FinancesPage() {
           Income summary, tax estimates, mileage, and expenses
         </p>
       </div>
+
+      <MonthlyIncomeChart />
 
       <div className="grid gap-4 grid-cols-1 lg:grid-cols-2">
         <IncomePanel invoices={invoices} loading={invoicesLoading} />
