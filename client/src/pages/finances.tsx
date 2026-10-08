@@ -1709,9 +1709,6 @@ export default function FinancesPage() {
   const { data: invoices, isLoading: invoicesLoading } = useQuery<Invoice[]>({
     queryKey: ["/api/invoices"],
   });
-  const { data: customers, isLoading: customersLoading } = useQuery<Customer[]>({
-    queryKey: ["/api/customers"],
-  });
 
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-5xl mx-auto">

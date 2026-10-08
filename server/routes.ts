@@ -13,6 +13,7 @@ import { parseDeltaFlightPdf } from "./parsePdf";
 import { researchCityLeads, researchConfigured } from "./research";
 import * as ics from "./ics";
 import { parseBookingServices } from "@shared/booking-services";
+import { appointmentOccursOn, parseAnyDate } from "@shared/appointment-repeat";
 
 // ── Object Storage ────────────────────────────────────────────────────────────
 const objectStorage = new ObjectStorageClient();
@@ -1657,6 +1658,71 @@ export async function registerRoutes(
       if (parsed.data.customerId !== undefined && parsed.data.customerId !== existing.customerId) {
         const newCustomer = await storage.getCustomer(parsed.data.customerId);
         if (!newCustomer || newCustomer.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      }
+      const scheduleMoved =
+        (parsed.data.date !== undefined && parsed.data.date !== existing.date) ||
+        (parsed.data.time !== undefined && parsed.data.time !== existing.time);
+      if (scheduleMoved) {
+        const booking = await import("./booking");
+        const targetDate = parseAnyDate(parsed.data.date ?? existing.date);
+        const tripStart = parseAnyDate(trip.startDate);
+        const tripEnd = parseAnyDate(trip.endDate);
+        if (!targetDate || !tripStart || !tripEnd) {
+          return res.status(400).json({ message: "The trip or appointment date is invalid." });
+        }
+        const dayStamp = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+        const targetDay = dayStamp(targetDate);
+        if (targetDay < dayStamp(tripStart) || targetDay > dayStamp(tripEnd)) {
+          return res.status(400).json({ message: "Trip appointments must stay within the trip dates." });
+        }
+
+        const targetTime = parsed.data.time ?? existing.time;
+        const targetStart = booking.parseTimeToMinutes(targetTime);
+        if (targetStart === null) {
+          return res.status(400).json({ message: "The appointment time is invalid." });
+        }
+        const targetDuration = booking.parseDurationToMinutes(parsed.data.duration ?? existing.duration, 120);
+        const targetEnd = targetStart + targetDuration;
+        const sameDay = (value: string | null | undefined) => {
+          const date = parseAnyDate(value);
+          return !!date && dayStamp(date) === targetDay;
+        };
+        const overlaps = (time: string | null | undefined, duration: string | null | undefined, allDay = false) => {
+          if (allDay) return true;
+          const start = booking.parseTimeToMinutes(time);
+          if (start === null) return false;
+          const end = start + booking.parseDurationToMinutes(duration, 120);
+          return targetStart < end && targetEnd > start;
+        };
+
+        const regularAppointments = await storage.getAppointments(userId);
+        const regularConflict = regularAppointments.some((appointment) => {
+          if (
+            appointment.id === existing.linkedAppointmentId ||
+            appointment.status?.toLowerCase() === "cancelled" ||
+            !appointmentOccursOn(appointment, targetDate)
+          ) {
+            return false;
+          }
+          return overlaps(appointment.time, appointment.duration, !!appointment.isAllDay);
+        });
+        if (regularConflict) {
+          return res.status(409).json({ message: "That time conflicts with another appointment." });
+        }
+
+        const tripsForUser = await storage.getTrips(userId);
+        const tripStops = (await Promise.all(
+          tripsForUser.map((userTrip) => storage.getTripAppointments(userTrip.id)),
+        )).flat();
+        const tripConflict = tripStops.some((appointment) =>
+          appointment.id !== existing.id &&
+          appointment.status?.toLowerCase() !== "cancelled" &&
+          sameDay(appointment.date) &&
+          overlaps(appointment.time, appointment.duration),
+        );
+        if (tripConflict) {
+          return res.status(409).json({ message: "That time conflicts with another trip appointment." });
+        }
       }
       const customerId = parsed.data.customerId ?? existing.customerId;
       const pianoId = Object.prototype.hasOwnProperty.call(parsed.data, "pianoId")

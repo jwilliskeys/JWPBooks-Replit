@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   DndContext,
@@ -312,7 +312,7 @@ function ScheduleGridDropzone({
   children,
   height,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   height: number;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: "schedule-grid" });

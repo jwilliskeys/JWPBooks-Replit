@@ -1,3 +1,4 @@
 - [Claude business-data access](claude-business-data-access.md) — Claude may read and create/edit approved records through OAuth, but must never delete or receive the owner passcode.
 - [Logo direction](logo-direction.md) — Keep the monochrome circular JWP emblem; extend only the black keys unless the user asks for a redesign.
 - [Appointment service snapshots](appointment-service-snapshots.md) — Appointment-level service edits must not change reusable master catalog defaults.
+- [Route patch context](route-patch-context.md) — Anchor server route edits to the handler when similar validation blocks appear in multiple endpoints.
