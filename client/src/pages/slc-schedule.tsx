@@ -155,6 +155,28 @@ function buildCustomerAddress(cust: { address?: string | null; city?: string | n
   return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
 }
 
+function formatCompactTimeRange(startMinutes: number, endMinutes: number): string {
+  const start = minutesToTimeStr(startMinutes);
+  const end = minutesToTimeStr(endMinutes);
+  const startPeriod = start.slice(-2);
+  const endPeriod = end.slice(-2);
+  const compactStart = start.replace(/\s[AP]M$/, "");
+  return startPeriod === endPeriod ? `${compactStart}–${end}` : `${start}–${end}`;
+}
+
+function appointmentTimeRange(appt: TripAppointment, driveToNextMinutes: number | null): string {
+  const startMinutes = parseTimeToMinutes(appt.time || "");
+  if (startMinutes < 0) return appt.time || "Time not set";
+
+  const serviceMinutes = parseDurationToMinutes(appt.duration || "2 hours");
+  const driveMinutes =
+    driveToNextMinutes != null && Number.isFinite(driveToNextMinutes) && driveToNextMinutes >= 0
+      ? driveToNextMinutes
+      : 0;
+  const roundedBlockMinutes = Math.ceil((serviceMinutes + driveMinutes) / 30) * 30;
+  return formatCompactTimeRange(startMinutes, startMinutes + roundedBlockMinutes);
+}
+
 function formatIcsDateTime(dateStr: string, timeStr: string): string {
   const dateParts = dateStr.split("/");
   if (dateParts.length !== 3) return "";
@@ -451,6 +473,7 @@ interface SortableApptRowProps {
   totalAppts: number;
   driveMinutes: number | null;
   driveMiles: number | null;
+  driveToNextMinutes: number | null;
   customerMap: Map<number, Customer>;
   pianoMap: Map<number, Piano>;
   onEdit: () => void;
@@ -459,7 +482,7 @@ interface SortableApptRowProps {
   onConfirm: () => void;
 }
 
-function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm }: SortableApptRowProps) {
+function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm }: SortableApptRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: appt.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const cust = customerMap.get(appt.customerId);
@@ -485,13 +508,13 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, cu
     <div ref={setNodeRef} style={style}>
       {/* Drive time separator above this appointment (index > 0) */}
       {index > 0 && driveMinutes != null && driveMinutes >= 0 && (
-        <div className="flex items-center gap-1.5 py-1.5 px-4 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1.5 py-1 px-3 text-[11px] text-muted-foreground">
           <Car className="h-3 w-3 shrink-0" />
           <span>{driveMinutes} min{driveMiles != null && driveMiles >= 0 ? ` · ${driveMiles} mi` : ""}</span>
           <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
         </div>
       )}
-      <div className={`flex items-start gap-2 px-3 py-2.5 rounded-lg mx-2 mb-1 ${isCompleted ? "opacity-55" : ""} hover:bg-muted/40 transition-colors group`} data-testid={`trip-appointment-${appt.id}`}>
+      <div className={`flex items-start gap-1.5 px-2 py-1.5 rounded-lg mx-1.5 mb-0.5 ${isCompleted ? "opacity-55" : ""} hover:bg-muted/40 transition-colors group`} data-testid={`trip-appointment-${appt.id}`}>
         {/* Drag handle */}
         <button
           className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors shrink-0 touch-none"
@@ -503,28 +526,32 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, cu
         </button>
         {/* Content */}
         <div className="flex-1 min-w-0 space-y-0.5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-foreground">{appt.time}</span>
-            {appt.duration && <span className="text-xs text-muted-foreground">({appt.duration})</span>}
+          <div className="flex items-center gap-2 min-w-0">
+            <span
+              className="text-xs font-semibold text-foreground whitespace-nowrap"
+              title="Estimated block including service time and drive to the next stop"
+            >
+              {appointmentTimeRange(appt, driveToNextMinutes)}
+            </span>
             {isCompleted && <Badge variant="secondary" className="text-[10px] px-1 py-0">Done</Badge>}
           </div>
           {cust ? (
             <Link href={`/customers/${cust.id}`}>
-              <span className="text-sm font-medium hover:underline cursor-pointer block" data-testid={`text-itinerary-customer-${appt.id}`}>{clientName(cust)}</span>
+              <span className="text-sm font-medium hover:underline cursor-pointer block truncate whitespace-nowrap" title={clientName(cust)} data-testid={`text-itinerary-customer-${appt.id}`}>{clientName(cust)}</span>
             </Link>
           ) : (
-            <span className="text-sm font-medium text-muted-foreground">Unknown client</span>
+            <span className="text-sm font-medium text-muted-foreground block truncate whitespace-nowrap">Unknown client</span>
           )}
           {addressStr && (
-            <p className="text-xs text-muted-foreground flex items-start gap-1">
+            <p className="text-xs text-muted-foreground flex items-start gap-1 min-w-0">
               <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-              {addressStr}
+              <span className="line-clamp-3 min-w-0 break-words">{addressStr}</span>
             </p>
           )}
           {cust?.phone && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
+            <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0" title={formatPhone(cust.phone)}>
               <Phone className="h-3 w-3 shrink-0" />
-              {formatPhone(cust.phone)}
+              <span className="truncate min-w-0">{formatPhone(cust.phone)}</span>
             </p>
           )}
           {pianoStr && (
@@ -533,7 +560,7 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, cu
               {pianoStr}
             </p>
           )}
-          {appt.servicesRequested && <p className="text-xs text-muted-foreground">{appt.servicesRequested}</p>}
+          {appt.servicesRequested && <p className="text-xs text-muted-foreground truncate" title={appt.servicesRequested}>{appt.servicesRequested}</p>}
           {appt.priceEstimate && (
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <DollarSign className="h-3 w-3" />{appt.priceEstimate}
@@ -641,7 +668,7 @@ function DayItinerarySection({
   return (
     <div className="flex flex-col h-full" data-testid={`itinerary-day-${dateStr}`}>
       {/* Day header */}
-      <div className="px-3 py-2 bg-muted/30 border-b rounded-t-lg">
+      <div className="px-2.5 py-1.5 bg-muted/30 border-b rounded-t-lg">
         <div className="flex items-start justify-between gap-2">
           <span className="font-semibold text-sm leading-tight">{dayName}</span>
           <Button variant="ghost" size="sm" className="h-6 text-xs gap-1 shrink-0 px-2 -mr-1 -mt-0.5" onClick={() => onOpenAddDialog(dateStr)} data-testid={`button-add-itinerary-appt-${dateStr}`}>
@@ -666,7 +693,7 @@ function DayItinerarySection({
       {/* Appointments */}
       <div
         ref={setDayDropRef}
-        className={`py-1.5 flex-1 min-h-[100px] rounded-b-lg transition-colors ${isDayOver ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
+        className={`py-1 flex-1 min-h-[100px] rounded-b-lg transition-colors ${isDayOver ? "bg-primary/5 ring-1 ring-inset ring-primary/30" : ""}`}
       >
         {dayAppts.length === 0 ? (
           <p className="text-xs text-muted-foreground text-center py-4 px-2">
@@ -693,6 +720,7 @@ function DayItinerarySection({
                     totalAppts={dayAppts.length}
                     driveMinutes={drivingTimes ? drivingTimes[i] : null}
                     driveMiles={drivingDistances ? drivingDistances[i] : null}
+                    driveToNextMinutes={drivingTimes ? drivingTimes[i + 1] ?? null : null}
                     customerMap={customerMap}
                     pianoMap={pianoMap}
                     onEdit={() => onOpenEditDialog(appt)}
