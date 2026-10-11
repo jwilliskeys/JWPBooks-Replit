@@ -2203,11 +2203,16 @@ export default function SlcSchedule() {
   });
 
   const editAppointmentMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; tripId: number; data: any }) =>
-      apiRequest("PATCH", `/api/trip-appointments/${id}`, data),
+    mutationFn: ({ id, data }: { id: number; tripId: number; data: any; overlapWarning?: string | null }) =>
+      apiRequest("PATCH", `/api/trip-appointments/${id}`, { ...data, allowTemporaryOverlap: true }),
     onSuccess: (_res, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", variables.tripId, "appointments"] });
-      toast({ title: "Appointment updated" });
+      toast(variables.overlapWarning
+        ? {
+            title: "Appointment saved with a time conflict",
+            description: `${variables.overlapWarning}. Move that appointment to a different time next.`,
+          }
+        : { title: "Appointment updated" });
       setEditingAppt(null);
       setEditingTripId(null);
     },
@@ -2458,6 +2463,7 @@ export default function SlcSchedule() {
     editAppointmentMutation.mutate({
       id: editingAppt.id,
       tripId: editingTripId,
+      overlapWarning: result.valid ? null : result.message,
       data: {
         time: editTime,
         duration: editDuration,
@@ -3194,7 +3200,7 @@ export default function SlcSchedule() {
               {editConflictError && (
                 <div className="flex items-start gap-2 p-2 rounded-md bg-orange-50 border border-orange-200 text-sm text-orange-700 dark:bg-orange-950/20 dark:border-orange-800 dark:text-orange-400" data-testid="text-edit-conflict-error">
                   <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <span>{editConflictError} — saved anyway.</span>
+                  <span>{editConflictError}. Save this time, then move the overlapping appointment.</span>
                 </div>
               )}
                 </div>

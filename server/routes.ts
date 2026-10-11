@@ -1646,6 +1646,7 @@ export async function registerRoutes(
       if (!existing) return res.status(404).json({ message: "Trip appointment not found" });
       const trip = await storage.getTrip(existing.tripId);
       if (!trip || trip.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      const allowTemporaryOverlap = req.body?.allowTemporaryOverlap === true;
       const updateSchema = insertTripAppointmentSchema.partial();
       const parsed = updateSchema.safeParse(req.body);
       if (!parsed.success) {
@@ -1683,45 +1684,47 @@ export async function registerRoutes(
         }
         const targetDuration = booking.parseDurationToMinutes(parsed.data.duration ?? existing.duration, 120);
         const targetEnd = targetStart + targetDuration;
-        const sameDay = (value: string | null | undefined) => {
-          const date = parseAnyDate(value);
-          return !!date && dayStamp(date) === targetDay;
-        };
-        const overlaps = (time: string | null | undefined, duration: string | null | undefined, allDay = false) => {
-          if (allDay) return true;
-          const start = booking.parseTimeToMinutes(time);
-          if (start === null) return false;
-          const end = start + booking.parseDurationToMinutes(duration, 120);
-          return targetStart < end && targetEnd > start;
-        };
+        if (!allowTemporaryOverlap) {
+          const sameDay = (value: string | null | undefined) => {
+            const date = parseAnyDate(value);
+            return !!date && dayStamp(date) === targetDay;
+          };
+          const overlaps = (time: string | null | undefined, duration: string | null | undefined, allDay = false) => {
+            if (allDay) return true;
+            const start = booking.parseTimeToMinutes(time);
+            if (start === null) return false;
+            const end = start + booking.parseDurationToMinutes(duration, 120);
+            return targetStart < end && targetEnd > start;
+          };
 
-        const regularAppointments = await storage.getAppointments(userId);
-        const regularConflict = regularAppointments.some((appointment) => {
-          if (
-            appointment.id === existing.linkedAppointmentId ||
-            appointment.status?.toLowerCase() === "cancelled" ||
-            !appointmentOccursOn(appointment, targetDate)
-          ) {
-            return false;
+          const regularAppointments = await storage.getAppointments(userId);
+          const regularConflict = regularAppointments.some((appointment) => {
+            if (
+              appointment.id === existing.linkedAppointmentId ||
+              appointment.status?.toLowerCase() === "cancelled" ||
+              !appointmentOccursOn(appointment, targetDate)
+            ) {
+              return false;
+            }
+            return overlaps(appointment.time, appointment.duration, !!appointment.isAllDay);
+          });
+          if (regularConflict) {
+            return res.status(409).json({ message: "That time conflicts with another appointment." });
           }
-          return overlaps(appointment.time, appointment.duration, !!appointment.isAllDay);
-        });
-        if (regularConflict) {
-          return res.status(409).json({ message: "That time conflicts with another appointment." });
-        }
 
-        const tripsForUser = await storage.getTrips(userId);
-        const tripStops = (await Promise.all(
-          tripsForUser.map((userTrip) => storage.getTripAppointments(userTrip.id)),
-        )).flat();
-        const tripConflict = tripStops.some((appointment) =>
-          appointment.id !== existing.id &&
-          appointment.status?.toLowerCase() !== "cancelled" &&
-          sameDay(appointment.date) &&
-          overlaps(appointment.time, appointment.duration),
-        );
-        if (tripConflict) {
-          return res.status(409).json({ message: "That time conflicts with another trip appointment." });
+          const tripsForUser = await storage.getTrips(userId);
+          const tripStops = (await Promise.all(
+            tripsForUser.map((userTrip) => storage.getTripAppointments(userTrip.id)),
+          )).flat();
+          const tripConflict = tripStops.some((appointment) =>
+            appointment.id !== existing.id &&
+            appointment.status?.toLowerCase() !== "cancelled" &&
+            sameDay(appointment.date) &&
+            overlaps(appointment.time, appointment.duration),
+          );
+          if (tripConflict) {
+            return res.status(409).json({ message: "That time conflicts with another trip appointment." });
+          }
         }
       }
       const customerId = parsed.data.customerId ?? existing.customerId;
