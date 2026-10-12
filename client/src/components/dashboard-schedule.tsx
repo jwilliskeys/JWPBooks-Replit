@@ -165,33 +165,53 @@ function TripAppointmentRow({
   appointment,
   customer,
   onSelectDate,
+  onBook,
+  isBooking,
 }: {
   appointment: TripAppointment;
   customer: Customer | undefined;
   onSelectDate: (date: Date) => void;
+  onBook: () => void;
+  isBooking: boolean;
 }) {
   const date = parseAnyDate(appointment.date);
+  const canBook = !appointment.linkedAppointmentId &&
+    !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase());
   return (
-    <button
-      type="button"
-      onClick={() => date && onSelectDate(date)}
-      className="flex w-full items-start gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent"
-      data-testid={`dashboard-trip-stop-${appointment.id}`}
-    >
-      <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1">
-        <span className="flex flex-wrap items-center gap-1.5">
-          <span className="truncate text-sm font-medium">{customer ? clientName(customer) : "Unknown client"}</span>
-          <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${tripStatusClass(appointment)}`}>
-            {tripStatusLabel(appointment)}
-          </Badge>
+    <div className="flex items-center gap-1 rounded-md px-1 transition-colors hover:bg-accent" data-testid={`dashboard-trip-stop-${appointment.id}`}>
+      <button
+        type="button"
+        onClick={() => date && onSelectDate(date)}
+        className="flex min-w-0 flex-1 items-start gap-2.5 py-2 pl-1 text-left"
+        aria-label={`Show ${customer ? clientName(customer) : "unknown client"} on ${appointment.date}`}
+      >
+        <CalendarDays className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="truncate text-sm font-medium">{customer ? clientName(customer) : "Unknown client"}</span>
+            <Badge variant="outline" className={`h-5 px-1.5 text-[10px] ${tripStatusClass(appointment)}`}>
+              {tripStatusLabel(appointment)}
+            </Badge>
+          </span>
+          <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+            {appointment.date} · {formatTime(appointment.time)}
+            {appointment.servicesRequested ? ` · ${appointment.servicesRequested}` : ""}
+          </span>
         </span>
-        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-          {appointment.date} · {formatTime(appointment.time)}
-          {appointment.servicesRequested ? ` · ${appointment.servicesRequested}` : ""}
-        </span>
-      </span>
-    </button>
+      </button>
+      {canBook && (
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-7 shrink-0 px-2 text-xs"
+          onClick={onBook}
+          disabled={isBooking}
+          data-testid={`button-book-dashboard-trip-stop-${appointment.id}`}
+        >
+          {isBooking ? "Booking…" : "Book appointment"}
+        </Button>
+      )}
+    </div>
   );
 }
 
@@ -393,10 +413,10 @@ export function DashboardSchedule() {
     },
   });
 
-  const bookTripMutation = useMutation({
-    mutationFn: async (tripId: number) => {
-      const response = await apiRequest("POST", `/api/trips/${tripId}/book-unbooked`);
-      return response.json() as Promise<{ booked: number; alreadyBooked: number; failed: number }>;
+  const bookTripAppointmentMutation = useMutation({
+    mutationFn: async (tripAppointmentId: number) => {
+      const response = await apiRequest("POST", `/api/trip-appointments/${tripAppointmentId}/book`);
+      return response.json() as Promise<{ alreadyBooked: boolean }>;
     },
     onSuccess: async (result) => {
       await Promise.all([
@@ -404,14 +424,10 @@ export function DashboardSchedule() {
         queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
       ]);
       toast({
-        title: result.failed
-          ? `Booked ${result.booked}; ${result.failed} need retry`
-          : `Booked ${result.booked} trip appointment${result.booked === 1 ? "" : "s"}`,
-        description: result.alreadyBooked ? `${result.alreadyBooked} were already booked.` : undefined,
-        variant: result.failed ? "destructive" : "default",
+        title: result.alreadyBooked ? "Appointment is already booked" : "Appointment booked",
       });
     },
-    onError: (error: any) => toast({ title: "Trip booking failed", description: error.message, variant: "destructive" }),
+    onError: (error: any) => toast({ title: "Could not book appointment", description: error.message, variant: "destructive" }),
   });
 
   const tripDateChips = useMemo(() => {
@@ -618,20 +634,6 @@ export function DashboardSchedule() {
                   {tripAppointmentsForCard.filter((appointment) => !appointment.linkedAppointmentId).length} not booked
                 </Badge>
               </div>
-              {tripAppointmentsForCard.some((appointment) =>
-                !appointment.linkedAppointmentId &&
-                !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase())
-              ) && (
-                <Button
-                  size="sm"
-                  className="w-full"
-                  disabled={bookTripMutation.isPending}
-                  onClick={() => bookTripMutation.mutate(upcomingTrip.id)}
-                  data-testid="button-book-upcoming-trip"
-                >
-                  {bookTripMutation.isPending ? "Booking trip…" : "Book all unbooked appointments"}
-                </Button>
-              )}
               <div className="max-h-[420px] space-y-0.5 overflow-y-auto rounded-md border p-1" data-testid="dashboard-trip-stops">
                 {tripAppointmentsLoading ? (
                   <div className="space-y-2 p-2">
@@ -647,6 +649,8 @@ export function DashboardSchedule() {
                       appointment={appointment}
                       customer={customerMap.get(appointment.customerId)}
                       onSelectDate={setDate}
+                      onBook={() => bookTripAppointmentMutation.mutate(appointment.id)}
+                      isBooking={bookTripAppointmentMutation.isPending && bookTripAppointmentMutation.variables === appointment.id}
                     />
                   ))
                 )}

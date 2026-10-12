@@ -3,3 +3,4 @@
 - [Appointment service snapshots](appointment-service-snapshots.md) — Appointment-level service edits must not change reusable master catalog defaults.
 - [Route patch context](route-patch-context.md) — Anchor server route edits to the handler when similar validation blocks appear in multiple endpoints.
 - [SLC outreach warmth](slc-outreach-warmth.md) — Rank SLC suggestions by the existing outreach status; unmatched contacts stay neutral rather than matching by name.
+- [SLC trip booking](slc-trip-booking.md) — Trip stops remain uncommitted until the user books that individual appointment; never commit an entire trip at once.

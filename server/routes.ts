@@ -1639,25 +1639,6 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/trips/:id/book-unbooked", async (req, res) => {
-    try {
-      const userId = getUserId(req);
-      const tripId = parseInt(req.params.id);
-      if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
-      const trip = await storage.getTrip(tripId);
-      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
-      const results = await storage.bulkBookTripAppointments(tripId, userId);
-      res.json({
-        booked: results.filter((item) => !item.alreadyBooked && !item.error).length,
-        alreadyBooked: results.filter((item) => item.alreadyBooked).length,
-        failed: results.filter((item) => !!item.error).length,
-        results,
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
   app.get("/api/trips/:id/appointments", async (req, res) => {
     try {
       const userId = getUserId(req);
@@ -1698,6 +1679,23 @@ export async function registerRoutes(
       const appointment = await storage.createTripAppointment(parsed.data);
       await storage.setTripOutreachCandidateScheduled(tripId, parsed.data.customerId, appointment.id);
       res.status(201).json(appointment);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/trip-appointments/:id/book", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const tripAppointment = await storage.getTripAppointment(id);
+      if (!tripAppointment) return res.status(404).json({ message: "Trip appointment not found" });
+      const trip = await storage.getTrip(tripAppointment.tripId);
+      if (!trip || trip.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      const result = await storage.bookTripAppointment(id, userId);
+      if (!result) return res.status(409).json({ message: "Cancelled or completed trip appointments cannot be booked." });
+      res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

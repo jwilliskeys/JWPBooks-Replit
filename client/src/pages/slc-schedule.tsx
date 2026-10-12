@@ -52,7 +52,6 @@ import {
   Home,
   Car,
   Star,
-  CalendarPlus,
   CalendarCheck,
   FileText,
   ExternalLink,
@@ -481,9 +480,10 @@ interface SortableApptRowProps {
   onComplete: () => void;
   onDelete: () => void;
   onConfirm: () => void;
+  isBooking: boolean;
 }
 
-function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm }: SortableApptRowProps) {
+function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm, isBooking }: SortableApptRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: appt.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const cust = customerMap.get(appt.customerId);
@@ -534,6 +534,11 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
             >
               {appointmentTimeRange(appt, driveToNextMinutes)}
             </span>
+            {appt.linkedAppointmentId && (
+              <Badge variant="outline" className="text-[10px] px-1 py-0 border-green-600/30 bg-green-500/10 text-green-700 dark:text-green-400">
+                Booked
+              </Badge>
+            )}
             {isCompleted && <Badge variant="secondary" className="text-[10px] px-1 py-0">Done</Badge>}
           </div>
           {cust ? (
@@ -569,7 +574,7 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
           )}
         </div>
         {/* Action buttons */}
-        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="flex items-center gap-0.5 shrink-0">
           <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit" data-testid={`button-edit-trip-appt-${appt.id}`}>
             <Pencil className="h-3 w-3" />
           </Button>
@@ -578,15 +583,28 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
               <CheckCircle className="h-3 w-3" />
             </Button>
           )}
-          <Button
-            variant="ghost" size="icon"
-            className={`h-6 w-6 ${appt.linkedAppointmentId ? "text-green-600 dark:text-green-400" : "text-blue-600 dark:text-blue-400"}`}
-            onClick={onConfirm}
-            title={appt.linkedAppointmentId ? "Already confirmed — click to re-download" : "Confirm & add to calendar"}
-            data-testid={`button-confirm-trip-appt-${appt.id}`}
-          >
-            {appt.linkedAppointmentId ? <CalendarCheck className="h-3 w-3" /> : <CalendarPlus className="h-3 w-3" />}
-          </Button>
+          {appt.linkedAppointmentId ? (
+            <Button
+              variant="ghost" size="icon"
+              className="h-6 w-6 text-green-600 dark:text-green-400"
+              onClick={onConfirm}
+              title="Already booked — click to re-download calendar file"
+              data-testid={`button-confirm-trip-appt-${appt.id}`}
+            >
+              <CalendarCheck className="h-3 w-3" />
+            </Button>
+          ) : !isCompleted && appt.status?.toLowerCase() !== "cancelled" ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-7 shrink-0 px-2 text-xs"
+              onClick={onConfirm}
+              disabled={isBooking}
+              data-testid={`button-book-trip-appt-${appt.id}`}
+            >
+              {isBooking ? "Booking…" : "Book appointment"}
+            </Button>
+          ) : null}
           <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={onDelete} title="Delete" data-testid={`button-delete-trip-appt-${appt.id}`}>
             <Trash2 className="h-3 w-3" />
           </Button>
@@ -607,13 +625,14 @@ interface DayItinerarySectionProps {
   onCompleteAppointment: (appt: TripAppointment) => void;
   onDeleteAppointment: (id: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
+  bookingAppointmentId: number | null;
   onMileageReported?: (dateStr: string, miles: number | null) => void;
 }
 
 function DayItinerarySection({
   dateStr, dayDate, dayAppts, customerMap, pianoMap,
   onOpenAddDialog, onOpenEditDialog, onCompleteAppointment, onDeleteAppointment,
-  onConfirmAppointment, onMileageReported,
+  onConfirmAppointment, bookingAppointmentId, onMileageReported,
 }: DayItinerarySectionProps) {
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
@@ -732,6 +751,7 @@ function DayItinerarySection({
                       const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
                       onConfirmAppointment(appt, cust, piano);
                     }}
+                    isBooking={bookingAppointmentId === appt.id}
                   />
                 ))}
             </SortableContext>
@@ -898,8 +918,7 @@ interface TripPanelProps {
   onCompleteAppointment: (appt: TripAppointment, tripId: number) => void;
   onDeleteAppointment: (id: number, tripId: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) => void;
-  onBulkBook: (tripId: number) => void;
-  bulkBookPending: boolean;
+  bookingAppointmentId: number | null;
   onDeleteTrip: (id: number) => void;
   deleteIsPending: boolean;
   onRequestMove: (appt: TripAppointment, targetDate: string, prevAppt: TripAppointment | null, tripId: number) => void;
@@ -916,8 +935,7 @@ function TripPanel({
   onCompleteAppointment,
   onDeleteAppointment,
   onConfirmAppointment,
-  onBulkBook,
-  bulkBookPending,
+  bookingAppointmentId,
   onDeleteTrip,
   deleteIsPending,
   onRequestMove,
@@ -1263,21 +1281,6 @@ function TripPanel({
                 </div>
               </div>
             </div>
-            {(tripAppointments ?? []).some((appointment) => !appointment.linkedAppointmentId && !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase())) && (
-              <Button
-                size="sm"
-                variant="secondary"
-                className="shrink-0"
-                disabled={bulkBookPending}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onBulkBook(trip.id);
-                }}
-                data-testid={`button-book-trip-${trip.id}`}
-              >
-                {bulkBookPending ? "Booking…" : "Book unbooked"}
-              </Button>
-            )}
             <Button
               variant="ghost"
               size="icon"
@@ -1375,6 +1378,7 @@ function TripPanel({
                         onCompleteAppointment={(appt) => onCompleteAppointment(appt, trip.id)}
                         onDeleteAppointment={(id) => onDeleteAppointment(id, trip.id)}
                         onConfirmAppointment={(appt, cust, piano) => onConfirmAppointment(appt, cust, piano, trip.id)}
+                        bookingAppointmentId={bookingAppointmentId}
                         onMileageReported={handleMileageReported}
                       />
                     </div>
@@ -2354,62 +2358,23 @@ export default function SlcSchedule() {
 
   const confirmAppointmentMutation = useMutation({
     mutationFn: async ({ appt, cust, piano, tripId }: { appt: TripAppointment; cust: Customer | undefined; piano: Piano | null | undefined; tripId: number }) => {
-      const groups = parseServiceItems(appt.serviceItems);
-      const isTuning = groups
-        ? groupsHaveTuning(groups)
-        : (appt.servicesRequested || "").toLowerCase().includes("tuning");
-      const res = await apiRequest("POST", "/api/appointments", {
-        customerId: appt.customerId,
-        pianoId: groups?.find((group) => group.pianoId !== null)?.pianoId ?? appt.pianoId ?? null,
-        date: appt.date,
-        time: appt.time,
-        duration: appt.duration,
-        servicesRequested: appt.servicesRequested,
-        priceEstimate: appt.priceEstimate,
-        notes: appt.notes,
-        isTuning,
-        serviceItems: appt.serviceItems ?? undefined,
-        status: "scheduled",
-      });
-      const newAppt = await res.json();
-      await apiRequest("PATCH", `/api/trip-appointments/${appt.id}`, { linkedAppointmentId: newAppt.id });
-      return { appt, cust, piano, tripId };
+      const res = await apiRequest("POST", `/api/trip-appointments/${appt.id}/book`);
+      const result = await res.json() as { appointmentId: number; alreadyBooked: boolean };
+      return { appt, cust, piano, tripId, alreadyBooked: result.alreadyBooked };
     },
-    onSuccess: ({ appt, cust, piano, tripId }) => {
+    onSuccess: ({ appt, cust, piano, tripId, alreadyBooked }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/trips/${tripId}/outreach-candidates`] });
       const icsContent = generateIcs(appt, cust, piano, pianoMap);
       const custName = cust ? clientName(cust, "appointment").replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
-      toast({ title: "Appointment confirmed and added to calendar" });
+      toast({ title: alreadyBooked ? "Appointment is already booked" : "Appointment booked and added to calendar" });
     },
     onError: (error: any) => {
       toast({ title: error?.message || "Failed to confirm appointment", variant: "destructive" });
     },
   });
-
-  const bulkBookTripMutation = useMutation({
-    mutationFn: async (tripId: number) => {
-      const response = await apiRequest("POST", `/api/trips/${tripId}/book-unbooked`);
-      return response.json() as Promise<{ booked: number; alreadyBooked: number; failed: number }>;
-    },
-    onSuccess: async (result, tripId) => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] }),
-        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
-        queryClient.invalidateQueries({ queryKey: [`/api/trips/${tripId}/outreach-candidates`] }),
-      ]);
-      toast({
-        title: result.failed
-          ? `Booked ${result.booked}; ${result.failed} need retry`
-          : `Booked ${result.booked} trip appointment${result.booked === 1 ? "" : "s"}`,
-        description: result.alreadyBooked ? `${result.alreadyBooked} were already booked.` : undefined,
-        variant: result.failed ? "destructive" : "default",
-      });
-    },
-    onError: (error: any) => toast({ title: "Trip booking failed", description: error.message, variant: "destructive" }),
-  });
-
 
   function toggleTrip(tripId: number) {
     setExpandedTripIds(prev => {
@@ -2697,8 +2662,11 @@ export default function SlcSchedule() {
               onCompleteAppointment={handleCompleteAppointment}
               onDeleteAppointment={(id, tripId) => deleteAppointmentMutation.mutate({ id, tripId })}
               onConfirmAppointment={handleConfirmAppointment}
-              onBulkBook={(tripId) => bulkBookTripMutation.mutate(tripId)}
-              bulkBookPending={bulkBookTripMutation.isPending}
+              bookingAppointmentId={
+                confirmAppointmentMutation.isPending
+                  ? confirmAppointmentMutation.variables?.appt.id ?? null
+                  : null
+              }
               onDeleteTrip={(id) => deleteTripMutation.mutate(id)}
               deleteIsPending={deleteTripMutation.isPending}
               onRequestMove={(appt, targetDate, prevAppt, tripId) => setMoveReq({ appt, targetDate, prevAppt, tripId })}

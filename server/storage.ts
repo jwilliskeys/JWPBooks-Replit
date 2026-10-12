@@ -241,7 +241,7 @@ export interface IStorage {
   removeTripOutreachCandidate(id: number, tripId: number): Promise<boolean>;
   setTripOutreachCandidateScheduled(tripId: number, customerId: number, tripAppointmentId: number): Promise<void>;
   setTripOutreachCandidateBooked(tripId: number, customerId: number, tripAppointmentId: number): Promise<void>;
-  bulkBookTripAppointments(tripId: number, userId: string): Promise<Array<{ tripAppointmentId: number; appointmentId?: number; alreadyBooked: boolean; error?: string }>>;
+  bookTripAppointment(tripAppointmentId: number, userId: string): Promise<{ tripAppointment: TripAppointment; appointmentId: number; alreadyBooked: boolean } | null>;
   getInvoices(userId: string): Promise<Invoice[]>;
   getInvoicesByCustomer(customerId: number, userId: string): Promise<Invoice[]>;
   getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]>;
@@ -791,68 +791,64 @@ export class DatabaseStorage implements IStorage {
       ));
   }
 
-  async bulkBookTripAppointments(
-    tripId: number,
+  async bookTripAppointment(
+    tripAppointmentId: number,
     userId: string,
-  ): Promise<Array<{ tripAppointmentId: number; appointmentId?: number; alreadyBooked: boolean; error?: string }>> {
-    const stops = await this.getTripAppointments(tripId);
-    const results: Array<{ tripAppointmentId: number; appointmentId?: number; alreadyBooked: boolean; error?: string }> = [];
-    for (const stop of stops) {
-      try {
-        const result = await db.transaction(async (tx) => {
-        const [current] = await tx.select().from(tripAppointments)
-          .where(eq(tripAppointments.id, stop.id))
-          .for("update");
-        if (!current) throw new Error(`Trip stop ${stop.id} no longer exists.`);
-        if (current.linkedAppointmentId) {
-          await tx.update(tripOutreachCandidates)
-            .set({ status: "booked", tripAppointmentId: current.id })
-            .where(and(
-              eq(tripOutreachCandidates.tripId, tripId),
-              eq(tripOutreachCandidates.customerId, current.customerId),
-            ));
-          return { tripAppointmentId: current.id, appointmentId: current.linkedAppointmentId, alreadyBooked: true };
-        }
-        if (current.status === "cancelled" || current.status === "completed") return null;
-        let groups: Array<{ lines?: Array<{ isTuning?: boolean }> }> = [];
-        try { groups = current.serviceItems ? JSON.parse(current.serviceItems) : []; } catch {}
-        const isTuning = groups.some((group) => group.lines?.some((line) => line.isTuning))
-          || (current.servicesRequested || "").toLowerCase().includes("tuning");
-        const [appointment] = await tx.insert(appointments).values({
-          userId,
-          customerId: current.customerId,
-          pianoId: groups.flatMap((group: any) => group.pianoId != null ? [group.pianoId] : [])[0] ?? current.pianoId,
-          date: current.date,
-          time: current.time,
-          duration: current.duration,
-          servicesRequested: current.servicesRequested,
-          priceEstimate: current.priceEstimate,
-          notes: current.notes,
-          isTuning,
-          serviceItems: current.serviceItems,
-          status: "scheduled",
-        }).returning();
-        await tx.update(tripAppointments)
-          .set({ linkedAppointmentId: appointment.id })
-          .where(eq(tripAppointments.id, current.id));
+  ): Promise<{ tripAppointment: TripAppointment; appointmentId: number; alreadyBooked: boolean } | null> {
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tripAppointments)
+        .where(eq(tripAppointments.id, tripAppointmentId))
+        .for("update");
+      if (!current) return null;
+      if (current.linkedAppointmentId) {
         await tx.update(tripOutreachCandidates)
           .set({ status: "booked", tripAppointmentId: current.id })
           .where(and(
-            eq(tripOutreachCandidates.tripId, tripId),
+            eq(tripOutreachCandidates.tripId, current.tripId),
             eq(tripOutreachCandidates.customerId, current.customerId),
           ));
-        return { tripAppointmentId: current.id, appointmentId: appointment.id, alreadyBooked: false };
-        });
-        if (result) results.push(result);
-      } catch (error: any) {
-        results.push({
-          tripAppointmentId: stop.id,
-          alreadyBooked: false,
-          error: error?.message ?? "Could not book this stop.",
-        });
+        return {
+          tripAppointment: current,
+          appointmentId: current.linkedAppointmentId,
+          alreadyBooked: true,
+        };
       }
-    }
-    return results;
+      if (current.status === "cancelled" || current.status === "completed") return null;
+
+      let groups: Array<{ pianoId?: number | null; lines?: Array<{ isTuning?: boolean }> }> = [];
+      try { groups = current.serviceItems ? JSON.parse(current.serviceItems) : []; } catch {}
+      const isTuning = groups.some((group) => group.lines?.some((line) => line.isTuning))
+        || (current.servicesRequested || "").toLowerCase().includes("tuning");
+      const [appointment] = await tx.insert(appointments).values({
+        userId,
+        customerId: current.customerId,
+        pianoId: groups.find((group) => group.pianoId != null)?.pianoId ?? current.pianoId,
+        date: current.date,
+        time: current.time,
+        duration: current.duration,
+        servicesRequested: current.servicesRequested,
+        priceEstimate: current.priceEstimate,
+        notes: current.notes,
+        isTuning,
+        serviceItems: current.serviceItems,
+        status: "scheduled",
+      }).returning();
+      const [bookedStop] = await tx.update(tripAppointments)
+        .set({ linkedAppointmentId: appointment.id })
+        .where(eq(tripAppointments.id, current.id))
+        .returning();
+      await tx.update(tripOutreachCandidates)
+        .set({ status: "booked", tripAppointmentId: current.id })
+        .where(and(
+          eq(tripOutreachCandidates.tripId, current.tripId),
+          eq(tripOutreachCandidates.customerId, current.customerId),
+        ));
+      return {
+        tripAppointment: bookedStop ?? { ...current, linkedAppointmentId: appointment.id },
+        appointmentId: appointment.id,
+        alreadyBooked: false,
+      };
+    });
   }
 
   async getInvoices(userId: string): Promise<Invoice[]> {
