@@ -2,3 +2,4 @@
 - [Logo direction](logo-direction.md) — Keep the monochrome circular JWP emblem; extend only the black keys unless the user asks for a redesign.
 - [Appointment service snapshots](appointment-service-snapshots.md) — Appointment-level service edits must not change reusable master catalog defaults.
 - [Route patch context](route-patch-context.md) — Anchor server route edits to the handler when similar validation blocks appear in multiple endpoints.
+- [SLC outreach warmth](slc-outreach-warmth.md) — Rank SLC suggestions by the existing outreach status; unmatched contacts stay neutral rather than matching by name.

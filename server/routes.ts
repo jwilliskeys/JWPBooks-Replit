@@ -1648,7 +1648,7 @@ export async function registerRoutes(
       if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
       const results = await storage.bulkBookTripAppointments(tripId, userId);
       res.json({
-        booked: results.filter((item) => !item.alreadyBooked).length,
+        booked: results.filter((item) => !item.alreadyBooked && !item.error).length,
         alreadyBooked: results.filter((item) => item.alreadyBooked).length,
         failed: results.filter((item) => !!item.error).length,
         results,
