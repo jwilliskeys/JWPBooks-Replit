@@ -1593,6 +1593,71 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/trips/:id/outreach-candidates", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const tripId = parseInt(req.params.id);
+      if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
+      res.json(await storage.getTripOutreachCandidates(tripId));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/trips/:id/outreach-candidates", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const tripId = parseInt(req.params.id);
+      const customerId = Number(req.body?.customerId);
+      if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
+      if (!Number.isSafeInteger(customerId) || customerId <= 0) return res.status(400).json({ message: "A valid customer is required" });
+      const customer = await storage.getCustomer(customerId);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      res.status(201).json(await storage.addTripOutreachCandidate(tripId, customerId));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/trips/:tripId/outreach-candidates/:candidateId", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const tripId = parseInt(req.params.tripId);
+      const candidateId = parseInt(req.params.candidateId);
+      if (isNaN(tripId) || isNaN(candidateId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
+      const removed = await storage.removeTripOutreachCandidate(candidateId, tripId);
+      if (!removed) return res.status(404).json({ message: "Candidate not found" });
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/trips/:id/book-unbooked", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const tripId = parseInt(req.params.id);
+      if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
+      const results = await storage.bulkBookTripAppointments(tripId, userId);
+      res.json({
+        booked: results.filter((item) => !item.alreadyBooked).length,
+        alreadyBooked: results.filter((item) => item.alreadyBooked).length,
+        failed: results.filter((item) => !!item.error).length,
+        results,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/trips/:id/appointments", async (req, res) => {
     try {
       const userId = getUserId(req);
@@ -1631,6 +1696,7 @@ export async function registerRoutes(
       );
       if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
       const appointment = await storage.createTripAppointment(parsed.data);
+      await storage.setTripOutreachCandidateScheduled(tripId, parsed.data.customerId, appointment.id);
       res.status(201).json(appointment);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1738,6 +1804,9 @@ export async function registerRoutes(
       if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
       const appointment = await storage.updateTripAppointment(id, parsed.data);
       if (!appointment) return res.status(404).json({ message: "Trip appointment not found" });
+      if (appointment.linkedAppointmentId) {
+        await storage.setTripOutreachCandidateBooked(appointment.tripId, appointment.customerId, appointment.id);
+      }
       res.json(appointment);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

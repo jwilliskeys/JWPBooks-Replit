@@ -393,6 +393,27 @@ export function DashboardSchedule() {
     },
   });
 
+  const bookTripMutation = useMutation({
+    mutationFn: async (tripId: number) => {
+      const response = await apiRequest("POST", `/api/trips/${tripId}/book-unbooked`);
+      return response.json() as Promise<{ booked: number; alreadyBooked: number; failed: number }>;
+    },
+    onSuccess: async (result) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [tripAppointmentsKey] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
+      ]);
+      toast({
+        title: result.failed
+          ? `Booked ${result.booked}; ${result.failed} need retry`
+          : `Booked ${result.booked} trip appointment${result.booked === 1 ? "" : "s"}`,
+        description: result.alreadyBooked ? `${result.alreadyBooked} were already booked.` : undefined,
+        variant: result.failed ? "destructive" : "default",
+      });
+    },
+    onError: (error: any) => toast({ title: "Trip booking failed", description: error.message, variant: "destructive" }),
+  });
+
   const tripDateChips = useMemo(() => {
     if (!upcomingTrip) return [];
     const start = parseAnyDate(upcomingTrip.startDate);
@@ -597,6 +618,20 @@ export function DashboardSchedule() {
                   {tripAppointmentsForCard.filter((appointment) => !appointment.linkedAppointmentId).length} not booked
                 </Badge>
               </div>
+              {tripAppointmentsForCard.some((appointment) =>
+                !appointment.linkedAppointmentId &&
+                !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase())
+              ) && (
+                <Button
+                  size="sm"
+                  className="w-full"
+                  disabled={bookTripMutation.isPending}
+                  onClick={() => bookTripMutation.mutate(upcomingTrip.id)}
+                  data-testid="button-book-upcoming-trip"
+                >
+                  {bookTripMutation.isPending ? "Booking trip…" : "Book all unbooked appointments"}
+                </Button>
+              )}
               <div className="max-h-[420px] space-y-0.5 overflow-y-auto rounded-md border p-1" data-testid="dashboard-trip-stops">
                 {tripAppointmentsLoading ? (
                   <div className="space-y-2 p-2">

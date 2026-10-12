@@ -102,6 +102,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { ServicePicker } from "@/components/service-picker";
+import { SlcOutreachPipeline } from "@/components/slc-outreach-pipeline";
 import {
   TimeStepperWidget,
   DurationStepperWidget,
@@ -897,6 +898,8 @@ interface TripPanelProps {
   onCompleteAppointment: (appt: TripAppointment, tripId: number) => void;
   onDeleteAppointment: (id: number, tripId: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) => void;
+  onBulkBook: (tripId: number) => void;
+  bulkBookPending: boolean;
   onDeleteTrip: (id: number) => void;
   deleteIsPending: boolean;
   onRequestMove: (appt: TripAppointment, targetDate: string, prevAppt: TripAppointment | null, tripId: number) => void;
@@ -913,6 +916,8 @@ function TripPanel({
   onCompleteAppointment,
   onDeleteAppointment,
   onConfirmAppointment,
+  onBulkBook,
+  bulkBookPending,
   onDeleteTrip,
   deleteIsPending,
   onRequestMove,
@@ -1258,6 +1263,21 @@ function TripPanel({
                 </div>
               </div>
             </div>
+            {(tripAppointments ?? []).some((appointment) => !appointment.linkedAppointmentId && !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase())) && (
+              <Button
+                size="sm"
+                variant="secondary"
+                className="shrink-0"
+                disabled={bulkBookPending}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onBulkBook(trip.id);
+                }}
+                data-testid={`button-book-trip-${trip.id}`}
+              >
+                {bulkBookPending ? "Booking…" : "Book unbooked"}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -2368,6 +2388,28 @@ export default function SlcSchedule() {
     },
   });
 
+  const bulkBookTripMutation = useMutation({
+    mutationFn: async (tripId: number) => {
+      const response = await apiRequest("POST", `/api/trips/${tripId}/book-unbooked`);
+      return response.json() as Promise<{ booked: number; alreadyBooked: number; failed: number }>;
+    },
+    onSuccess: async (result, tripId) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
+        queryClient.invalidateQueries({ queryKey: [`/api/trips/${tripId}/outreach-candidates`] }),
+      ]);
+      toast({
+        title: result.failed
+          ? `Booked ${result.booked}; ${result.failed} need retry`
+          : `Booked ${result.booked} trip appointment${result.booked === 1 ? "" : "s"}`,
+        description: result.alreadyBooked ? `${result.alreadyBooked} were already booked.` : undefined,
+        variant: result.failed ? "destructive" : "default",
+      });
+    },
+    onError: (error: any) => toast({ title: "Trip booking failed", description: error.message, variant: "destructive" }),
+  });
+
 
   function toggleTrip(tripId: number) {
     setExpandedTripIds(prev => {
@@ -2378,13 +2420,17 @@ export default function SlcSchedule() {
     });
   }
 
-  function openAddDialog(dateStr: string, tripId: number, existingAppts: ExistingAppointment[], dayArea: string) {
+  function openAddDialog(dateStr: string, tripId: number, existingAppts: ExistingAppointment[], dayArea: string, customerId?: number) {
     setDialogDate(dateStr);
     setDialogTripId(tripId);
     setDialogExistingAppts(existingAppts);
     setDialogDayArea(dayArea);
-    setSelectedCustomerId("");
-    setSelectedPianoIds([]);
+    setSelectedCustomerId(customerId ? String(customerId) : "");
+    setSelectedPianoIds(customerId
+      ? (allPianos ?? [])
+          .filter((piano) => piano.customerId === customerId && piano.isActive !== false)
+          .map((piano) => String(piano.id))
+      : []);
     setCustomerSearch("");
     setApptServices("");
     setApptPrice("");
@@ -2610,6 +2656,17 @@ export default function SlcSchedule() {
       </div>
 
       {/* Overdue SLC Clients */}
+      <SlcOutreachPipeline
+        trip={sortedTrips.find((trip) => parseDateStr(trip.endDate) >= new Date(new Date().setHours(0, 0, 0, 0))) ?? sortedTrips[0] ?? null}
+        customers={customers ?? []}
+        pianos={allPianos ?? []}
+        onSchedule={(customer) => {
+          const trip = sortedTrips.find((item) => parseDateStr(item.endDate) >= new Date(new Date().setHours(0, 0, 0, 0))) ?? sortedTrips[0];
+          if (!trip) return;
+          openAddDialog(trip.startDate, trip.id, [], getServiceRegion(customer.city ?? "") || "Salt Lake City", customer.id);
+        }}
+      />
+
       {customers && (
         <OverdueSLCClients
           customers={customers}
@@ -2640,6 +2697,8 @@ export default function SlcSchedule() {
               onCompleteAppointment={handleCompleteAppointment}
               onDeleteAppointment={(id, tripId) => deleteAppointmentMutation.mutate({ id, tripId })}
               onConfirmAppointment={handleConfirmAppointment}
+              onBulkBook={(tripId) => bulkBookTripMutation.mutate(tripId)}
+              bulkBookPending={bulkBookTripMutation.isPending}
               onDeleteTrip={(id) => deleteTripMutation.mutate(id)}
               deleteIsPending={deleteTripMutation.isPending}
               onRequestMove={(appt, targetDate, prevAppt, tripId) => setMoveReq({ appt, targetDate, prevAppt, tripId })}

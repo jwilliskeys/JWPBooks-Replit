@@ -175,6 +175,15 @@ export const tripAppointments = pgTable("trip_appointments", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const tripOutreachCandidates = pgTable("trip_outreach_candidates", {
+  id: serial("id").primaryKey(),
+  tripId: integer("trip_id").notNull(),
+  customerId: integer("customer_id").notNull(),
+  status: text("status").notNull().default("candidate"),
+  tripAppointmentId: integer("trip_appointment_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [unique("trip_outreach_trip_customer_unique").on(table.tripId, table.customerId)]);
+
 export const invoices = pgTable("invoices", {
   id: serial("id").primaryKey(),
   userId: text("user_id"),
@@ -316,6 +325,7 @@ export type Trip = typeof trips.$inferSelect;
 export type InsertTrip = z.infer<typeof insertTripSchema>;
 export type TripAppointment = typeof tripAppointments.$inferSelect;
 export type InsertTripAppointment = z.infer<typeof insertTripAppointmentSchema>;
+export type TripOutreachCandidate = typeof tripOutreachCandidates.$inferSelect;
 
 export const insertInvoiceSchema = createInsertSchema(invoices).omit({
   id: true,

@@ -111,6 +111,15 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "end_date" text;
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "repeat_frequency" text;
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "repeat_end_date" text;
+      CREATE TABLE IF NOT EXISTS "trip_outreach_candidates" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "trip_id" integer NOT NULL,
+        "customer_id" integer NOT NULL,
+        "status" text NOT NULL DEFAULT 'candidate',
+        "trip_appointment_id" integer,
+        "created_at" timestamp DEFAULT now(),
+        CONSTRAINT "trip_outreach_trip_customer_unique" UNIQUE ("trip_id", "customer_id")
+      );
       CREATE TABLE IF NOT EXISTS "inspections" (
         "id" serial PRIMARY KEY NOT NULL,
         "user_id" text,
