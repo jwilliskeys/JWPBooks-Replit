@@ -101,7 +101,6 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { formatPhone } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { ServicePicker } from "@/components/service-picker";
-import { SlcOutreachPipeline } from "@/components/slc-outreach-pipeline";
 import {
   TimeStepperWidget,
   DurationStepperWidget,
@@ -515,99 +514,105 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
           <div className="flex-1 border-t border-dashed border-muted-foreground/20" />
         </div>
       )}
-      <div className={`flex items-start gap-1.5 px-2 py-1.5 rounded-lg mx-1.5 mb-0.5 ${isCompleted ? "opacity-55" : ""} hover:bg-muted/40 transition-colors group`} data-testid={`trip-appointment-${appt.id}`}>
-        {/* Drag handle */}
-        <button
-          className="mt-0.5 cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground transition-colors shrink-0 touch-none"
-          {...attributes}
-          {...listeners}
-          aria-label="Drag to reorder"
-        >
-          <GripVertical className="h-4 w-4" />
-        </button>
-        {/* Content */}
-        <div className="flex-1 min-w-0 space-y-0.5">
-          <div className="flex items-center gap-2 min-w-0">
-            <span
-              className="text-xs font-semibold text-foreground whitespace-nowrap"
-              title="Estimated block including service time and drive to the next stop"
-            >
-              {appointmentTimeRange(appt, driveToNextMinutes)}
-            </span>
-            {appt.linkedAppointmentId && (
-              <Badge variant="outline" className="text-[10px] px-1 py-0 border-green-600/30 bg-green-500/10 text-green-700 dark:text-green-400">
-                Booked
-              </Badge>
+      <div className={`mx-1.5 mb-1 rounded-lg px-2 py-1.5 transition-colors hover:bg-muted/40 ${isCompleted ? "opacity-55" : ""}`} data-testid={`trip-appointment-${appt.id}`}>
+        <div className="flex min-w-0 items-start gap-1.5">
+          {/* Drag handle */}
+          <button
+            className="mt-0.5 shrink-0 cursor-grab text-muted-foreground/40 transition-colors hover:text-muted-foreground active:cursor-grabbing touch-none"
+            {...attributes}
+            {...listeners}
+            aria-label="Drag to reorder"
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+          {/* Details use the full card width; actions are kept below. */}
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <span
+                className="whitespace-nowrap text-xs font-semibold text-foreground"
+                title="Estimated block including service time and drive to the next stop"
+              >
+                {appointmentTimeRange(appt, driveToNextMinutes)}
+              </span>
+              {appt.linkedAppointmentId && (
+                <Badge variant="outline" className="border-green-600/30 bg-green-500/10 px-1 py-0 text-[10px] text-green-700 dark:text-green-400">
+                  Booked
+                </Badge>
+              )}
+              {isCompleted && <Badge variant="secondary" className="px-1 py-0 text-[10px]">Done</Badge>}
+            </div>
+            {cust ? (
+              <Link href={`/customers/${cust.id}`}>
+                <span className="block truncate whitespace-nowrap text-sm font-medium hover:underline" title={clientName(cust)} data-testid={`text-itinerary-customer-${appt.id}`}>{clientName(cust)}</span>
+              </Link>
+            ) : (
+              <span className="block truncate whitespace-nowrap text-sm font-medium text-muted-foreground">Unknown client</span>
             )}
-            {isCompleted && <Badge variant="secondary" className="text-[10px] px-1 py-0">Done</Badge>}
+            {addressStr && (
+              <p className="flex min-w-0 items-start gap-1 text-xs text-muted-foreground">
+                <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
+                <span className="line-clamp-3 min-w-0 break-words">{addressStr}</span>
+              </p>
+            )}
+            {cust?.phone && (
+              <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" title={formatPhone(cust.phone)}>
+                <Phone className="h-3 w-3 shrink-0" />
+                <span className="min-w-0 truncate">{formatPhone(cust.phone)}</span>
+              </p>
+            )}
+            {pianoStr && (
+              <p className="flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground" title={pianoStr}>
+                <Music className="h-3 w-3 shrink-0" />
+                <span className="truncate">{pianoStr}</span>
+              </p>
+            )}
+            {appt.servicesRequested && <p className="truncate text-xs text-muted-foreground" title={appt.servicesRequested}>{appt.servicesRequested}</p>}
+            {appt.priceEstimate && (
+              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                <DollarSign className="h-3 w-3" />{appt.priceEstimate}
+              </p>
+            )}
           </div>
-          {cust ? (
-            <Link href={`/customers/${cust.id}`}>
-              <span className="text-sm font-medium hover:underline cursor-pointer block truncate whitespace-nowrap" title={clientName(cust)} data-testid={`text-itinerary-customer-${appt.id}`}>{clientName(cust)}</span>
-            </Link>
-          ) : (
-            <span className="text-sm font-medium text-muted-foreground block truncate whitespace-nowrap">Unknown client</span>
-          )}
-          {addressStr && (
-            <p className="text-xs text-muted-foreground flex items-start gap-1 min-w-0">
-              <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-              <span className="line-clamp-3 min-w-0 break-words">{addressStr}</span>
-            </p>
-          )}
-          {cust?.phone && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1 min-w-0" title={formatPhone(cust.phone)}>
-              <Phone className="h-3 w-3 shrink-0" />
-              <span className="truncate min-w-0">{formatPhone(cust.phone)}</span>
-            </p>
-          )}
-          {pianoStr && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1 truncate" title={pianoStr}>
-              <Music className="h-3 w-3 shrink-0" />
-              {pianoStr}
-            </p>
-          )}
-          {appt.servicesRequested && <p className="text-xs text-muted-foreground truncate" title={appt.servicesRequested}>{appt.servicesRequested}</p>}
-          {appt.priceEstimate && (
-            <p className="text-xs text-muted-foreground flex items-center gap-1">
-              <DollarSign className="h-3 w-3" />{appt.priceEstimate}
-            </p>
-          )}
         </div>
-        {/* Action buttons */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onEdit} title="Edit" data-testid={`button-edit-trip-appt-${appt.id}`}>
-            <Pencil className="h-3 w-3" />
-          </Button>
-          {!isCompleted && (
-            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={onComplete} title="Complete" data-testid={`button-complete-trip-appt-${appt.id}`}>
-              <CheckCircle className="h-3 w-3" />
+        <div className="ml-5 mt-1 flex min-w-0 flex-wrap items-center justify-between gap-1 border-t border-border/60 pt-1">
+          <div className="min-w-0">
+            {!appt.linkedAppointmentId && !isCompleted && appt.status?.toLowerCase() !== "cancelled" && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="h-7 whitespace-nowrap px-2 text-xs"
+                onClick={onConfirm}
+                disabled={isBooking}
+                data-testid={`button-book-trip-appt-${appt.id}`}
+              >
+                {isBooking ? "Booking…" : "Book appointment"}
+              </Button>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} title="Edit" data-testid={`button-edit-trip-appt-${appt.id}`}>
+              <Pencil className="h-3.5 w-3.5" />
             </Button>
-          )}
-          {appt.linkedAppointmentId ? (
-            <Button
-              variant="ghost" size="icon"
-              className="h-6 w-6 text-green-600 dark:text-green-400"
-              onClick={onConfirm}
-              title="Already booked — click to re-download calendar file"
-              data-testid={`button-confirm-trip-appt-${appt.id}`}
-            >
-              <CalendarCheck className="h-3 w-3" />
+            {!isCompleted && (
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onComplete} title="Complete" data-testid={`button-complete-trip-appt-${appt.id}`}>
+                <CheckCircle className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            {appt.linkedAppointmentId && (
+              <Button
+                variant="ghost" size="icon"
+                className="h-7 w-7 text-green-600 dark:text-green-400"
+                onClick={onConfirm}
+                title="Already booked — click to re-download calendar file"
+                data-testid={`button-confirm-trip-appt-${appt.id}`}
+              >
+                <CalendarCheck className="h-3.5 w-3.5" />
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete} title="Delete" data-testid={`button-delete-trip-appt-${appt.id}`}>
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
-          ) : !isCompleted && appt.status?.toLowerCase() !== "cancelled" ? (
-            <Button
-              variant="secondary"
-              size="sm"
-              className="h-7 shrink-0 px-2 text-xs"
-              onClick={onConfirm}
-              disabled={isBooking}
-              data-testid={`button-book-trip-appt-${appt.id}`}
-            >
-              {isBooking ? "Booking…" : "Book appointment"}
-            </Button>
-          ) : null}
-          <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={onDelete} title="Delete" data-testid={`button-delete-trip-appt-${appt.id}`}>
-            <Trash2 className="h-3 w-3" />
-          </Button>
+          </div>
         </div>
       </div>
     </div>
@@ -1356,7 +1361,7 @@ function TripPanel({
                   return (
                     <div
                       key={dateStr}
-                      className="flex-shrink-0 w-[260px] sm:w-[280px] border rounded-lg bg-card/30 flex flex-col self-stretch"
+                      className="w-[280px] shrink-0 self-stretch rounded-lg border bg-card/30 sm:w-[300px]"
                       data-testid={`column-day-${dateStr}`}
                     >
                       <DayItinerarySection
@@ -2365,7 +2370,6 @@ export default function SlcSchedule() {
     onSuccess: ({ appt, cust, piano, tripId, alreadyBooked }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] });
       queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
-      queryClient.invalidateQueries({ queryKey: [`/api/trips/${tripId}/outreach-candidates`] });
       const icsContent = generateIcs(appt, cust, piano, pianoMap);
       const custName = cust ? clientName(cust, "appointment").replace(/\s+/g, "_") : "appointment";
       downloadIcs(icsContent, `${custName}_${appt.date.replace(/\//g, "-")}.ics`);
@@ -2619,18 +2623,6 @@ export default function SlcSchedule() {
           Add New Trip
         </Button>
       </div>
-
-      {/* Overdue SLC Clients */}
-      <SlcOutreachPipeline
-        trip={sortedTrips.find((trip) => parseDateStr(trip.endDate) >= new Date(new Date().setHours(0, 0, 0, 0))) ?? sortedTrips[0] ?? null}
-        customers={customers ?? []}
-        pianos={allPianos ?? []}
-        onSchedule={(customer) => {
-          const trip = sortedTrips.find((item) => parseDateStr(item.endDate) >= new Date(new Date().setHours(0, 0, 0, 0))) ?? sortedTrips[0];
-          if (!trip) return;
-          openAddDialog(trip.startDate, trip.id, [], getServiceRegion(customer.city ?? "") || "Salt Lake City", customer.id);
-        }}
-      />
 
       {customers && (
         <OverdueSLCClients
