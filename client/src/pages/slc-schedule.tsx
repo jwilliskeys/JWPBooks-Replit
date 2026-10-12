@@ -2283,6 +2283,9 @@ export default function SlcSchedule() {
       apiRequest("PATCH", `/api/trip-appointments/${id}`, { status: "completed" }),
     onSuccess: async (_res, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/trips", variables.tripId, "appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pianos"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
 
       let invoiceUpdateFailed = false;
       if (completePaymentMethod && completePaymentMethod !== "none" && completingLinkedInvoice && completingLinkedInvoice.status !== "paid") {

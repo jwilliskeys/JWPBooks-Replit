@@ -1800,8 +1800,15 @@ export async function registerRoutes(
         : existing.serviceItems;
       const pianoLinkError = await validateAppointmentPianoLinks(userId, customerId, pianoId, serviceItems);
       if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
-      const appointment = await storage.updateTripAppointment(id, parsed.data);
-      if (!appointment) return res.status(404).json({ message: "Trip appointment not found" });
+      const appointment = parsed.data.status === "completed"
+        ? await storage.completeTripAppointment(id, parsed.data)
+        : await storage.updateTripAppointment(id, parsed.data);
+      if (!appointment) {
+        if (parsed.data.status === "completed") {
+          return res.status(409).json({ message: "Cancelled trip appointments cannot be completed." });
+        }
+        return res.status(404).json({ message: "Trip appointment not found" });
+      }
       if (appointment.linkedAppointmentId) {
         await storage.setTripOutreachCandidateBooked(appointment.tripId, appointment.customerId, appointment.id);
       }

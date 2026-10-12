@@ -2,6 +2,13 @@ import { db } from "./db";
 import { eq, and, asc, desc, ne } from "drizzle-orm";
 import { clientName } from "@shared/client-name";
 import {
+  getTripPianoServiceGroups,
+  hasTuningService,
+  isLaterServiceDate,
+  parseServiceDate,
+  shouldRecordCompletedServices,
+} from "./tuning-completion";
+import {
   customers,
   pianos,
   serviceRecords,
@@ -116,17 +123,10 @@ function rewritePianoInServiceItems(raw: string | null | undefined, fromId: numb
 }
 
 function newerDateStr(a: string | null | undefined, b: string | null | undefined): string | null {
-  const ts = (s: string | null | undefined): number => {
-    if (!s) return NaN;
-    const parts = s.split("/");
-    if (parts.length !== 3) return NaN;
-    let year = parseInt(parts[2]);
-    if (year < 100) year += 2000;
-    return new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1])).getTime();
-  };
+  const ts = parseServiceDate;
   const ta = ts(a), tb = ts(b);
-  if (isNaN(ta)) return b ?? null;
-  if (isNaN(tb)) return a ?? null;
+  if (ta === null) return b ?? null;
+  if (tb === null) return a ?? null;
   return ta >= tb ? (a ?? null) : (b ?? null);
 }
 
@@ -235,6 +235,7 @@ export interface IStorage {
   getTripAppointment(id: number): Promise<TripAppointment | undefined>;
   createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment>;
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
+  completeTripAppointment(id: number, data?: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
   getTripOutreachCandidates(tripId: number): Promise<TripOutreachCandidate[]>;
   addTripOutreachCandidate(tripId: number, customerId: number): Promise<TripOutreachCandidate>;
@@ -632,20 +633,14 @@ export class DatabaseStorage implements IStorage {
 
   async syncPianoLastTuned(pianoId: number): Promise<void> {
     const records = await this.getServiceRecordsByPiano(pianoId);
-    const tuningRecords = records.filter(r => r.serviceType === "tuning");
-    let mostRecentDate: Date | null = null;
+    const tuningRecords = records.filter(r => r.isTuning || /tuning/i.test(r.serviceType || ""));
+    let mostRecentDate: number | null = null;
     let mostRecentStr: string | null = null;
     for (const r of tuningRecords) {
-      if (!r.serviceDate) continue;
-      const parts = r.serviceDate.split("/");
-      if (parts.length === 3) {
-        let year = parseInt(parts[2]);
-        if (year < 100) year += 2000;
-        const d = new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
-        if (!mostRecentDate || d > mostRecentDate) {
-          mostRecentDate = d;
-          mostRecentStr = r.serviceDate;
-        }
+      const date = parseServiceDate(r.serviceDate);
+      if (date !== null && (mostRecentDate === null || date > mostRecentDate)) {
+        mostRecentDate = date;
+        mostRecentStr = r.serviceDate;
       }
     }
     await this.updatePiano(pianoId, { lastTuned: mostRecentStr });
@@ -742,6 +737,75 @@ export class DatabaseStorage implements IStorage {
   async updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined> {
     const [updated] = await db.update(tripAppointments).set(data).where(eq(tripAppointments.id, id)).returning();
     return updated;
+  }
+
+  async completeTripAppointment(
+    id: number,
+    data: Partial<InsertTripAppointment> = {},
+  ): Promise<TripAppointment | undefined> {
+    const customerId = await db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tripAppointments)
+        .where(eq(tripAppointments.id, id))
+        .for("update");
+      if (!current || current.status === "cancelled") return undefined;
+
+      const updatedFields = { ...data };
+      delete updatedFields.status;
+      const [updated] = await tx.update(tripAppointments)
+        .set({ ...updatedFields, status: "completed" })
+        .where(eq(tripAppointments.id, id))
+        .returning();
+      if (current.status === "completed") return undefined;
+      const completedStop = { ...current, ...updatedFields, status: "completed" };
+
+      if (completedStop.linkedAppointmentId) {
+        await tx.update(appointments)
+          .set({ status: "completed" })
+          .where(eq(appointments.id, completedStop.linkedAppointmentId));
+      }
+
+      const groups = getTripPianoServiceGroups(
+        completedStop.serviceItems,
+        completedStop.pianoId,
+        completedStop.servicesRequested,
+      );
+
+      const perPiano = new Map<number, Array<Record<string, unknown>>>();
+      for (const group of groups) {
+        if (group.pianoId === null) continue;
+        perPiano.set(group.pianoId, [...(perPiano.get(group.pianoId) ?? []), ...group.lines]);
+      }
+
+      for (const [pianoId, lines] of perPiano) {
+        const [piano] = await tx.select().from(pianos).where(eq(pianos.id, pianoId)).for("update");
+        if (!piano || piano.customerId !== completedStop.customerId) continue;
+        const isTuning = lines.some((line) =>
+          hasTuningService(line.isTuning === true, String(line.name ?? ""), null));
+        await tx.insert(serviceRecords).values({
+          customerId: completedStop.customerId,
+          pianoId,
+          serviceDate: completedStop.date,
+          serviceType: isTuning ? "tuning" : "service",
+          notes: completedStop.notes || null,
+          cost: null,
+          humidity: null,
+          temperature: null,
+          services: JSON.stringify(lines),
+          isTuning,
+          appointmentId: completedStop.linkedAppointmentId ?? null,
+        });
+        if (isTuning && isLaterServiceDate(completedStop.date, piano.lastTuned)) {
+          await tx.update(pianos).set({ lastTuned: completedStop.date }).where(eq(pianos.id, pianoId));
+        }
+      }
+
+      await tx.update(customers)
+        .set({ lastContacted: completedStop.date })
+        .where(eq(customers.id, completedStop.customerId));
+      return updated?.customerId;
+    });
+    if (customerId !== undefined) await this.syncCustomerFromPianos(customerId);
+    return this.getTripAppointment(id);
   }
 
   async deleteTripAppointment(id: number): Promise<boolean> {
@@ -1040,14 +1104,24 @@ export class DatabaseStorage implements IStorage {
     appointmentDate: string;
     customerId: number;
   }): Promise<void> {
+    let completed = false;
     await db.transaction(async (tx) => {
+      const [appointment] = await tx.select().from(appointments)
+        .where(eq(appointments.id, appointmentId))
+        .for("update");
+      if (!appointment) return;
       await tx.update(appointments)
         .set({ status: data.result, notes: data.clientNotes || null })
         .where(eq(appointments.id, appointmentId));
+      if (!shouldRecordCompletedServices(data.result)) return;
+      completed = true;
 
+      const existingRecords = await tx.select().from(serviceRecords)
+        .where(eq(serviceRecords.appointmentId, appointmentId));
       for (const rec of data.pianoRecords) {
         const serviceType = rec.serviceType || (rec.isTuning ? "tuning" : "service");
-        await tx.insert(serviceRecords).values({
+        const isTuning = hasTuningService(rec.isTuning, serviceType, rec.services);
+        const values = {
           customerId: data.customerId,
           pianoId: rec.pianoId ?? null,
           serviceDate: data.appointmentDate,
@@ -1057,20 +1131,27 @@ export class DatabaseStorage implements IStorage {
           humidity: rec.humidity || null,
           temperature: rec.temperature || null,
           services: rec.services || "[]",
-          isTuning: rec.isTuning,
+          isTuning,
           appointmentId,
           pianoscope: rec.pianoscope || null,
-        });
+        };
+        const existingRecord = existingRecords.find((record) => record.pianoId === (rec.pianoId ?? null));
+        if (existingRecord) {
+          await tx.update(serviceRecords).set(values).where(eq(serviceRecords.id, existingRecord.id));
+        } else {
+          await tx.insert(serviceRecords).values(values);
+        }
 
-        if (rec.isTuning && rec.pianoId) {
-          await tx.update(pianos)
-            .set({ lastTuned: data.appointmentDate })
-            .where(eq(pianos.id, rec.pianoId));
+        if (isTuning && rec.pianoId) {
+          const [piano] = await tx.select().from(pianos).where(eq(pianos.id, rec.pianoId)).for("update");
+          if (piano && isLaterServiceDate(data.appointmentDate, piano.lastTuned)) {
+            await tx.update(pianos).set({ lastTuned: data.appointmentDate }).where(eq(pianos.id, rec.pianoId));
+          }
         }
       }
 
       if (data.miscServices && data.miscServices !== "[]") {
-        await tx.insert(serviceRecords).values({
+        const values = {
           customerId: data.customerId,
           pianoId: null,
           serviceDate: data.appointmentDate,
@@ -1082,7 +1163,13 @@ export class DatabaseStorage implements IStorage {
           services: data.miscServices,
           isTuning: false,
           appointmentId,
-        });
+        };
+        const existingMisc = existingRecords.find((record) => record.pianoId === null && record.serviceType === "misc");
+        if (existingMisc) {
+          await tx.update(serviceRecords).set(values).where(eq(serviceRecords.id, existingMisc.id));
+        } else {
+          await tx.insert(serviceRecords).values(values);
+        }
       }
 
       await tx.update(customers)
@@ -1090,7 +1177,7 @@ export class DatabaseStorage implements IStorage {
         .where(eq(customers.id, data.customerId));
     });
 
-    await this.syncCustomerFromPianos(data.customerId);
+    if (completed) await this.syncCustomerFromPianos(data.customerId);
   }
 
   async syncCustomerFromPianos(customerId: number): Promise<void> {
@@ -1104,18 +1191,13 @@ export class DatabaseStorage implements IStorage {
     const pianoType = pianoTypes.join(", ") || null;
 
     let mostRecentTuned: string | null = null;
-    let mostRecentDate: Date | null = null;
+    let mostRecentDate: number | null = null;
     for (const p of activePianos) {
       if (!p.lastTuned) continue;
-      const parts = p.lastTuned.split("/");
-      if (parts.length === 3) {
-        let year = parseInt(parts[2]);
-        if (year < 100) year += 2000;
-        const d = new Date(year, parseInt(parts[0]) - 1, parseInt(parts[1]));
-        if (!mostRecentDate || d > mostRecentDate) {
-          mostRecentDate = d;
-          mostRecentTuned = p.lastTuned;
-        }
+      const date = parseServiceDate(p.lastTuned);
+      if (date !== null && (mostRecentDate === null || date > mostRecentDate)) {
+        mostRecentDate = date;
+        mostRecentTuned = p.lastTuned;
       }
     }
     await this.updateCustomer(customerId, { pianoType, lastTuned: mostRecentTuned });
