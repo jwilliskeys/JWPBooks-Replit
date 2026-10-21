@@ -81,6 +81,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { MoveAppointmentDialog, type MoveRequestPrev } from "@/components/move-appointment-dialog";
+import { AppointmentDialog } from "@/components/appointment-dialog";
 import {
   DurationMismatchNotice,
   PianoCard,
@@ -204,7 +205,7 @@ function generateIcs(
   const endStr = minutesToTimeStr(startMins + durationMins);
   const dtEnd = formatIcsDateTime(appt.date, endStr);
   const customerName = cust ? clientName(cust) : "Unknown";
-  const summary = `${customerName} \u2013 ${appt.servicesRequested || "Piano Service"}`;
+  const summary = `${appt.title || customerName} \u2013 ${appt.servicesRequested || "Piano Service"}`;
   const location = buildCustomerAddress(cust);
   const groups = parseServiceItems(appt.serviceItems) ?? [];
   const pianoIds = Array.from(new Set([
@@ -449,7 +450,7 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
             </div>
             {cust ? (
               <Link href={`/customers/${cust.id}`}>
-                <span className="block truncate whitespace-nowrap text-sm font-medium hover:underline" title={clientName(cust)} data-testid={`text-itinerary-customer-${appt.id}`}>{clientName(cust)}</span>
+                <span className="block truncate whitespace-nowrap text-sm font-medium hover:underline" title={appt.title || clientName(cust)} data-testid={`text-itinerary-customer-${appt.id}`}>{appt.title || clientName(cust)}</span>
               </Link>
             ) : (
               <span className="block truncate whitespace-nowrap text-sm font-medium text-muted-foreground">Unknown client</span>
@@ -1943,6 +1944,7 @@ export default function SlcSchedule() {
   const [dialogTripId, setDialogTripId] = useState<number | null>(null);
   const [dialogExistingAppts, setDialogExistingAppts] = useState<ExistingAppointment[]>([]);
   const [dialogDayArea, setDialogDayArea] = useState("");
+  const [dialogCustomerId, setDialogCustomerId] = useState<number | undefined>();
   const [customerSearch, setCustomerSearch] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>("");
   // Multiple pianos per visit (Gazelle-style): one trip-appointment row is
@@ -2299,19 +2301,7 @@ export default function SlcSchedule() {
     setDialogTripId(tripId);
     setDialogExistingAppts(existingAppts);
     setDialogDayArea(dayArea);
-    setSelectedCustomerId(customerId ? String(customerId) : "");
-    setSelectedPianoIds(customerId
-      ? (allPianos ?? [])
-          .filter((piano) => piano.customerId === customerId && piano.isActive !== false)
-          .map((piano) => String(piano.id))
-      : []);
-    setCustomerSearch("");
-    setApptServices("");
-    setApptPrice("");
-    setApptSelectedNames([]);
-    setAddDialogKey((k) => k + 1);
-    setApptNotes("");
-    setConflictError("");
+    setDialogCustomerId(customerId);
 
     // Smart default time
     const nextTime = getNextAvailableTime(dayArea, formatDurationMinutes(DEFAULT_DURATION_MINUTES), existingAppts);
@@ -2706,7 +2696,7 @@ export default function SlcSchedule() {
       </Dialog>
 
       {/* ── Add Appointment Dialog ──────────────────────────────────────────── */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={false} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -2960,6 +2950,18 @@ export default function SlcSchedule() {
             </div>
         </DialogContent>
       </Dialog>
+      <AppointmentDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        customerId={dialogCustomerId}
+        customerName={dialogCustomerId && customerMap.get(dialogCustomerId) ? clientName(customerMap.get(dialogCustomerId)!) : undefined}
+        initialDate={dialogDate}
+        initialTimeMinutes={apptTimeMinutes}
+        initialDurationMinutes={DEFAULT_DURATION_MINUTES}
+        tripId={dialogTripId ?? undefined}
+        serviceAreaLabel={dialogDayArea ? getClusterName(dialogDayArea) : undefined}
+        additionalExistingAppointments={dialogExistingAppts}
+      />
 
       {/* ── Complete Appointment Dialog ─────────────────────────────────────── */}
       <Dialog open={completeDialogOpen} onOpenChange={(open) => {

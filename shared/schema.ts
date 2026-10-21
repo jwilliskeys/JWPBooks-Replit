@@ -168,6 +168,7 @@ export const tripAppointments = pgTable("trip_appointments", {
   servicesRequested: text("services_requested"),
   priceEstimate: text("price_estimate"),
   notes: text("notes"),
+  title: text("title"),
   serviceItems: text("service_items"),
   status: text("status").default("scheduled"),
   serviceArea: text("service_area"),

@@ -74,6 +74,11 @@ interface AppointmentDialogProps {
   pianoId?: number;
   customerName?: string;
   initialDate?: string;
+  initialTimeMinutes?: number;
+  initialDurationMinutes?: number;
+  tripId?: number;
+  serviceAreaLabel?: string;
+  additionalExistingAppointments?: ExistingAppointment[];
 }
 
 // ─── Finalize & Save Dialog ──────────────────────────────────────────────────
@@ -82,6 +87,7 @@ interface FinalizeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   date: string;
+  initialDate?: string;
   onDateChange: (mdyy: string) => void;
   sections: PianoSection[];
   setSections: (s: PianoSection[]) => void;
@@ -95,6 +101,11 @@ interface FinalizeDialogProps {
   totalDurationMinutes: number;
   allAppointments: Appointment[] | undefined;
   customerMap: Map<number, Customer>;
+  tripId?: number;
+  serviceAreaLabel?: string;
+  initialTimeMinutes?: number;
+  initialDurationMinutes?: number;
+  additionalExistingAppointments?: ExistingAppointment[];
   onSuccess: () => void;
 }
 
@@ -102,6 +113,7 @@ function FinalizeDialog({
   open,
   onOpenChange,
   date,
+  initialDate,
   onDateChange,
   sections,
   setSections,
@@ -115,6 +127,11 @@ function FinalizeDialog({
   totalDurationMinutes,
   allAppointments,
   customerMap,
+  tripId,
+  serviceAreaLabel,
+  initialTimeMinutes,
+  initialDurationMinutes,
+  additionalExistingAppointments,
   onSuccess,
 }: FinalizeDialogProps) {
   const { toast } = useToast();
@@ -151,8 +168,9 @@ function FinalizeDialog({
       setEndDate("");
       setRepeatFreq("none");
       setRepeatEndDate("");
-      setTimeMinutes(DEFAULT_TIME_MINUTES);
-      setLocalDuration(totalDurationMinutes || 90);
+      setTimeMinutes(initialTimeMinutes ?? DEFAULT_TIME_MINUTES);
+      setLocalDuration(totalDurationMinutes || initialDurationMinutes || 90);
+      setAppointmentTitle(clientFullName);
       setConflictError("");
       setShowItinerary(false);
       setShowPianoPicker(false);
@@ -214,14 +232,16 @@ function FinalizeDialog({
   const selectedCustomerCity = selectedCustomer?.city ?? "";
 
   const existingApptsForDate = useMemo((): ExistingAppointment[] => {
-    if (!date || !allAppointments) return [];
-    return allAppointments
+    if (!date) return [];
+    const calendarAppointments = allAppointments ?? [];
+    const tripAppointments = date === initialDate ? (additionalExistingAppointments ?? []) : [];
+    return [...calendarAppointments
       .filter(a => a.date === date && a.status !== "cancelled")
       .map(a => {
         const cust = customerMap.get(a.customerId);
         return { time: a.time, duration: a.duration ?? "2 hours", city: cust?.city || "" };
-      });
-  }, [date, allAppointments, customerMap]);
+      }), ...tripAppointments];
+  }, [date, initialDate, allAppointments, customerMap, additionalExistingAppointments]);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -257,18 +277,29 @@ function FinalizeDialog({
         repeatFrequency: repeatFreq !== "none" ? repeatFreq : undefined,
         repeatEndDate: repeatFreq !== "none" && repeatEndDate ? repeatEndDate : undefined,
       };
-      const res = await apiRequest("POST", "/api/appointments", payload);
+      const res = tripId
+        ? await apiRequest("POST", `/api/trips/${tripId}/appointments`, {
+            ...payload,
+            tripId,
+            serviceArea: selectedCustomer?.city || serviceAreaLabel,
+          })
+        : await apiRequest("POST", "/api/appointments", payload);
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      if (tripId) {
+        queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
+      }
       if (effectiveCustomerId) {
         queryClient.invalidateQueries({ queryKey: ["/api/customers", String(effectiveCustomerId), "appointments"] });
       }
       onSuccess();
       onOpenChange(false);
       const pianoCount = sections.filter(s => !s.isMisc && s.pianoId).length;
-      toast({ title: pianoCount > 1 ? `Appointment scheduled (${pianoCount} pianos)` : "Appointment scheduled" });
+      toast({ title: tripId ? "Appointment added to trip" : pianoCount > 1 ? `Appointment scheduled (${pianoCount} pianos)` : "Appointment scheduled" });
     },
     onError: () => toast({ title: "Failed to schedule appointment", variant: "destructive" }),
   });
@@ -278,9 +309,9 @@ function FinalizeDialog({
       const timeStr = formatTimeMinutes(timeMinutes);
       const durationStr = formatDurationMinutes(localDuration);
       const result = checkTimeConflict(timeStr, durationStr, selectedCustomerCity, existingApptsForDate);
-      if (!result.valid) {
+       if (!result.valid) {
         setConflictError(result.message || "Time conflict detected.");
-        return;
+         if (!tripId) return;
       }
     }
     createMutation.mutate();
@@ -310,6 +341,9 @@ function FinalizeDialog({
             {/* ── LEFT PANEL ── */}
             <div className="p-5 space-y-4">
               <SectionBar title="Details" />
+              {tripId && serviceAreaLabel && (
+                <p className="text-sm text-muted-foreground">Service Area: {serviceAreaLabel}</p>
+              )}
 
               {/* Itinerary link */}
               {date && (
@@ -490,6 +524,11 @@ export function AppointmentDialog({
   pianoId,
   customerName,
   initialDate,
+  initialTimeMinutes,
+  initialDurationMinutes,
+  tripId,
+  serviceAreaLabel,
+  additionalExistingAppointments,
 }: AppointmentDialogProps) {
   const [pickerMountKey, setPickerMountKey] = useState(0);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
@@ -807,7 +846,7 @@ export function AppointmentDialog({
                   className="text-sm"
                   data-testid="button-book-appointment"
                 >
-                  {bookLabel}
+                   {tripId ? "Book appointment" : bookLabel}
                 </Button>
               </div>
             </div>
@@ -820,6 +859,7 @@ export function AppointmentDialog({
         open={showFinalizeDialog}
         onOpenChange={setShowFinalizeDialog}
         date={date}
+        initialDate={initialDate}
         onDateChange={setDate}
         sections={sections}
         setSections={setSections}
@@ -833,6 +873,11 @@ export function AppointmentDialog({
         totalDurationMinutes={totalDurationMinutes}
         allAppointments={allAppointments}
         customerMap={customerMap}
+        tripId={tripId}
+        serviceAreaLabel={serviceAreaLabel}
+        initialTimeMinutes={initialTimeMinutes}
+        initialDurationMinutes={initialDurationMinutes}
+        additionalExistingAppointments={additionalExistingAppointments}
         onSuccess={() => onOpenChange(false)}
       />
     </>

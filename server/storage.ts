@@ -839,6 +839,7 @@ export class DatabaseStorage implements IStorage {
         servicesRequested: current.servicesRequested,
         priceEstimate: current.priceEstimate,
         notes: current.notes,
+        title: current.title,
         isTuning,
         serviceItems: current.serviceItems,
         status: "scheduled",
