@@ -19,7 +19,6 @@ import {
   calendarEvents,
   trips,
   tripAppointments,
-  tripOutreachCandidates,
   invoices,
   userSettings,
   customerContacts,
@@ -51,7 +50,6 @@ import {
   type InsertTrip,
   type TripAppointment,
   type InsertTripAppointment,
-  type TripOutreachCandidate,
   type Invoice,
   type InsertInvoice,
   type UserSettings,
@@ -237,11 +235,6 @@ export interface IStorage {
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   completeTripAppointment(id: number, data?: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
-  getTripOutreachCandidates(tripId: number): Promise<TripOutreachCandidate[]>;
-  addTripOutreachCandidate(tripId: number, customerId: number): Promise<TripOutreachCandidate>;
-  removeTripOutreachCandidate(id: number, tripId: number): Promise<boolean>;
-  setTripOutreachCandidateScheduled(tripId: number, customerId: number, tripAppointmentId: number): Promise<void>;
-  setTripOutreachCandidateBooked(tripId: number, customerId: number, tripAppointmentId: number): Promise<void>;
   bookTripAppointment(tripAppointmentId: number, userId: string): Promise<{ tripAppointment: TripAppointment; appointmentId: number; alreadyBooked: boolean } | null>;
   getInvoices(userId: string): Promise<Invoice[]>;
   getInvoicesByCustomer(customerId: number, userId: string): Promise<Invoice[]>;
@@ -714,7 +707,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteTrip(id: number): Promise<boolean> {
-    await db.delete(tripOutreachCandidates).where(eq(tripOutreachCandidates.tripId, id));
+    // SLC outreach candidate rows are retained as legacy records, even when
+    // their associated trip is deleted.
     await db.delete(tripAppointments).where(eq(tripAppointments.tripId, id));
     const result = await db.delete(trips).where(eq(trips.id, id)).returning();
     return result.length > 0;
@@ -813,48 +807,6 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getTripOutreachCandidates(tripId: number): Promise<TripOutreachCandidate[]> {
-    return db.select().from(tripOutreachCandidates)
-      .where(eq(tripOutreachCandidates.tripId, tripId))
-      .orderBy(tripOutreachCandidates.createdAt);
-  }
-
-  async addTripOutreachCandidate(tripId: number, customerId: number): Promise<TripOutreachCandidate> {
-    const [candidate] = await db.insert(tripOutreachCandidates)
-      .values({ tripId, customerId, status: "candidate" })
-      .onConflictDoUpdate({
-        target: [tripOutreachCandidates.tripId, tripOutreachCandidates.customerId],
-        set: { customerId },
-      })
-      .returning();
-    return candidate;
-  }
-
-  async removeTripOutreachCandidate(id: number, tripId: number): Promise<boolean> {
-    const result = await db.delete(tripOutreachCandidates)
-      .where(and(eq(tripOutreachCandidates.id, id), eq(tripOutreachCandidates.tripId, tripId)))
-      .returning();
-    return result.length > 0;
-  }
-
-  async setTripOutreachCandidateScheduled(tripId: number, customerId: number, tripAppointmentId: number): Promise<void> {
-    await db.update(tripOutreachCandidates)
-      .set({ status: "scheduled", tripAppointmentId })
-      .where(and(
-        eq(tripOutreachCandidates.tripId, tripId),
-        eq(tripOutreachCandidates.customerId, customerId),
-      ));
-  }
-
-  async setTripOutreachCandidateBooked(tripId: number, customerId: number, tripAppointmentId: number): Promise<void> {
-    await db.update(tripOutreachCandidates)
-      .set({ status: "booked", tripAppointmentId })
-      .where(and(
-        eq(tripOutreachCandidates.tripId, tripId),
-        eq(tripOutreachCandidates.customerId, customerId),
-      ));
-  }
-
   async bookTripAppointment(
     tripAppointmentId: number,
     userId: string,
@@ -865,12 +817,6 @@ export class DatabaseStorage implements IStorage {
         .for("update");
       if (!current) return null;
       if (current.linkedAppointmentId) {
-        await tx.update(tripOutreachCandidates)
-          .set({ status: "booked", tripAppointmentId: current.id })
-          .where(and(
-            eq(tripOutreachCandidates.tripId, current.tripId),
-            eq(tripOutreachCandidates.customerId, current.customerId),
-          ));
         return {
           tripAppointment: current,
           appointmentId: current.linkedAppointmentId,
@@ -901,12 +847,6 @@ export class DatabaseStorage implements IStorage {
         .set({ linkedAppointmentId: appointment.id })
         .where(eq(tripAppointments.id, current.id))
         .returning();
-      await tx.update(tripOutreachCandidates)
-        .set({ status: "booked", tripAppointmentId: current.id })
-        .where(and(
-          eq(tripOutreachCandidates.tripId, current.tripId),
-          eq(tripOutreachCandidates.customerId, current.customerId),
-        ));
       return {
         tripAppointment: bookedStop ?? { ...current, linkedAppointmentId: appointment.id },
         appointmentId: appointment.id,

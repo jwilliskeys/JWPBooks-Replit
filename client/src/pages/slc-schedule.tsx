@@ -122,7 +122,6 @@ import {
   getNearbyCities,
   areNearby,
   getClusterName,
-  getServiceRegion,
   checkTimeConflict,
   getNextAvailableTime,
   parseTimeToMinutes,
@@ -371,99 +370,6 @@ function isTripActive(trip: Trip): boolean {
   const start = parseDateStr(trip.startDate);
   const end = parseDateStr(trip.endDate);
   return !isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= today && today <= end;
-}
-
-function getMonthsSinceDate(dateStr: string | null | undefined): number | null {
-  if (!dateStr) return null;
-  const parts = dateStr.split("/");
-  if (parts.length < 2) return null;
-  const month = parseInt(parts[0]) - 1;
-  const day = parseInt(parts[1]);
-  let year = parseInt(parts[2] ?? String(new Date().getFullYear()));
-  if (year < 100) year += 2000;
-  const date = new Date(year, month, day);
-  if (isNaN(date.getTime())) return null;
-  const now = new Date();
-  return (now.getFullYear() - date.getFullYear()) * 12 + (now.getMonth() - date.getMonth());
-}
-
-interface OverdueSLCClientsProps {
-  customers: Customer[];
-  pianosByCustomer: Map<number, Piano>;
-  customersWithAllInactivePianos: Set<number>;
-}
-
-function OverdueSLCClients({ customers, pianosByCustomer, customersWithAllInactivePianos }: OverdueSLCClientsProps) {
-  const [open, setOpen] = useState(false);
-
-  const overdueClients = useMemo(() => {
-    return customers
-      .filter(c => {
-        if (customersWithAllInactivePianos.has(c.id)) return false;
-        const region = getServiceRegion(c.city ?? "");
-        return region === "Salt Lake City";
-      })
-      .map(c => {
-        const monthsTuned = getMonthsSinceDate(c.lastTuned);
-        const piano = pianosByCustomer.get(c.id);
-        const pianoLabel = piano && (piano.make || piano.pianoType)
-          ? [piano.make, piano.pianoType].filter(Boolean).join(" ")
-          : null;
-        return { ...c, monthsTuned, pianoLabel };
-      })
-      .filter(c => (c.monthsTuned ?? 0) >= 10)
-      .sort((a, b) => (b.monthsTuned ?? 0) - (a.monthsTuned ?? 0));
-  }, [customers, pianosByCustomer, customersWithAllInactivePianos]);
-
-  if (overdueClients.length === 0) return null;
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          className="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 text-sm font-medium hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
-          data-testid="button-overdue-slc-toggle"
-        >
-          <div className="flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
-            <span className="text-amber-800 dark:text-amber-200">
-              {overdueClients.length} SLC client{overdueClients.length !== 1 ? "s" : ""} overdue for tuning
-            </span>
-          </div>
-          {open ? <ChevronDown className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />}
-        </button>
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <div className="mt-1 rounded-lg border border-border overflow-hidden">
-          {overdueClients.map((c, i) => {
-            const mo = c.monthsTuned ?? 0;
-            const urgencyClass = mo >= 18 ? "text-destructive font-bold" : mo >= 14 ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-muted-foreground";
-            return (
-              <Link key={c.id} href={`/customers/${c.id}`}>
-                <div
-                  className={`flex items-center gap-3 px-3 py-2 hover:bg-accent cursor-pointer text-sm ${i > 0 ? "border-t border-border" : ""}`}
-                  data-testid={`overdue-slc-client-${c.id}`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">{clientName(c)}</div>
-                    <div className="text-xs text-muted-foreground truncate">
-                      {c.city ?? ""}
-                      {c.pianoLabel ? ` · ${c.pianoLabel}` : ""}
-                      {c.phone ? ` · ${formatPhone(c.phone)}` : ""}
-                    </div>
-                  </div>
-                  <span className={`text-xs shrink-0 ${urgencyClass}`}>
-                    {mo}mo ago
-                  </span>
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-      </CollapsibleContent>
-    </Collapsible>
-  );
 }
 
 interface SortableApptRowProps {
@@ -2146,10 +2052,9 @@ export default function SlcSchedule() {
     [allPianos]
   );
 
-  const { customersWithAllInactivePianos, pianosByCustomer } = useMemo(() => {
+  const customersWithAllInactivePianos = useMemo(() => {
     const inactive = new Set<number>();
-    const byCustomer = new Map<number, Piano>();
-    if (!allPianos) return { customersWithAllInactivePianos: inactive, pianosByCustomer: byCustomer };
+    if (!allPianos) return inactive;
     const customerPianoMap = new Map<number, Piano[]>();
     allPianos.forEach((p) => {
       if (!customerPianoMap.has(p.customerId)) customerPianoMap.set(p.customerId, []);
@@ -2157,14 +2062,11 @@ export default function SlcSchedule() {
     });
     customerPianoMap.forEach((pianosArr, custId) => {
       const activePiano = pianosArr.find(p => p.isActive !== false);
-      if (activePiano) {
-        byCustomer.set(custId, activePiano);
-      } else if (pianosArr.length > 0) {
+      if (!activePiano && pianosArr.length > 0) {
         inactive.add(custId);
-        byCustomer.set(custId, pianosArr[0]);
       }
     });
-    return { customersWithAllInactivePianos: inactive, pianosByCustomer: byCustomer };
+    return inactive;
   }, [allPianos]);
 
   // Pianos for the selected customer — fetched per-customer when dialog is open
@@ -2626,14 +2528,6 @@ export default function SlcSchedule() {
           Add New Trip
         </Button>
       </div>
-
-      {customers && (
-        <OverdueSLCClients
-          customers={customers}
-          pianosByCustomer={pianosByCustomer}
-          customersWithAllInactivePianos={customersWithAllInactivePianos}
-        />
-      )}
 
       {/* Trip list */}
       {sortedTrips.length === 0 ? (
