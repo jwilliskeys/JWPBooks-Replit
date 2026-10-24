@@ -1477,6 +1477,13 @@ export default function BookPage() {
     return (
       <div className="space-y-4">
         <h2 className="text-xl font-bold text-slate-900">Primary Contact Information</h2>
+        <div
+          className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3"
+          data-testid="booking-review-services"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Services requested</p>
+          <p className="mt-1 text-sm font-medium text-slate-800">{selectedServicesSummary}</p>
+        </div>
         {mutation.isError && !(mutation.error as Error & { conflict?: boolean }).conflict && (
           <div
             role="alert"

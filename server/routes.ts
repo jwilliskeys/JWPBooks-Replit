@@ -2768,8 +2768,8 @@ export async function registerRoutes(
     }
 
     // Calendar events: all-day events (incl. multi-day ranges like conventions)
-    // block whole days; timed events block their interval.
-    // (Repeating events only block their base date for now.)
+    // block whole days; timed events block their interval. Expand repeating
+    // personal events across the booking window just like repeating appointments.
     const events = await drizzleDb
       .select({
         eventType: calendarEvents.eventType,
@@ -2778,6 +2778,9 @@ export async function registerRoutes(
         startTime: calendarEvents.startTime,
         endTime: calendarEvents.endTime,
         isAllDay: calendarEvents.isAllDay,
+        isRepeating: calendarEvents.isRepeating,
+        repeatFrequency: calendarEvents.repeatFrequency,
+        repeatEndDate: calendarEvents.repeatEndDate,
       })
       .from(calendarEvents)
       .where(eqOp(calendarEvents.userId, ownerUserId));
@@ -2785,14 +2788,16 @@ export async function registerRoutes(
       if (ev.eventType === "memo") continue;
       const start = booking.normalizeDateStr(ev.date);
       if (!start) continue;
-      const end = booking.normalizeDateStr(ev.endDate) ?? start;
-      if (end < todayStr) continue;
+      const occurrenceDates = repeat.expandAppointmentDates({
+        date: ev.date,
+        endDate: ev.endDate,
+        isAllDay: ev.isAllDay,
+        repeatFrequency: ev.isRepeating ? ev.repeatFrequency : null,
+        repeatEndDate: ev.isRepeating ? ev.repeatEndDate : null,
+      }, todayDate, horizonEndDate).map(booking.toLocalYMD);
+      if (occurrenceDates.length === 0) continue;
       if (ev.isAllDay || !ev.startTime) {
-        const d = new Date(start + "T00:00:00");
-        const stop = new Date(end + "T00:00:00");
-        for (; d <= stop; d.setDate(d.getDate() + 1)) {
-          blockedDates.add(booking.toLocalYMD(d));
-        }
+        for (const date of occurrenceDates) blockedDates.add(date);
       } else {
         const startMins = booking.parseTimeToMinutes(ev.startTime);
         const endMins = booking.parseTimeToMinutes(ev.endTime);
@@ -2800,7 +2805,9 @@ export async function registerRoutes(
           startMins != null && endMins != null && endMins > startMins
             ? `${endMins - startMins} min`
             : null;
-        (busyByDate[start] ??= []).push({ time: ev.startTime, duration: durationLabel });
+        for (const date of occurrenceDates) {
+          (busyByDate[date] ??= []).push({ time: ev.startTime, duration: durationLabel });
+        }
       }
     }
 

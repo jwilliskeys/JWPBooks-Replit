@@ -44,6 +44,7 @@ function addMonthsClamped(base: Date, months: number): Date {
 }
 
 const FREQ_STEPS: Record<string, { days?: number; months?: number }> = {
+  "daily": { days: 1 },
   "weekly": { days: 7 },
   "biweekly": { days: 14 },
   "monthly": { months: 1 },
