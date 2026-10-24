@@ -12,7 +12,7 @@ import {
 } from "@dnd-kit/core";
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock, GripVertical, Plane } from "lucide-react";
 import { Link } from "wouter";
-import type { Appointment, Customer, Trip, TripAppointment } from "@shared/schema";
+import type { Appointment, Customer, Piano, Trip, TripAppointment } from "@shared/schema";
 import { appointmentOccursOn, expandAppointmentDates, parseAnyDate } from "@shared/appointment-repeat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { clientName } from "@shared/client-name";
+import { tripAppointmentPianoLines } from "@/lib/trip-appointment-lines";
 import {
   checkTimeConflict,
   minutesToTimeStr,
@@ -164,19 +165,28 @@ function TripDayDropButton({
 function TripAppointmentRow({
   appointment,
   customer,
+  pianoMap,
   onSelectDate,
   onBook,
+  onUnbook,
   isBooking,
+  isUnbooking,
 }: {
   appointment: TripAppointment;
   customer: Customer | undefined;
+  pianoMap: Map<number, Piano>;
   onSelectDate: (date: Date) => void;
   onBook: () => void;
+  onUnbook: () => void;
   isBooking: boolean;
+  isUnbooking: boolean;
 }) {
   const date = parseAnyDate(appointment.date);
   const canBook = !appointment.linkedAppointmentId &&
     !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase());
+  const canUnbook = !!appointment.linkedAppointmentId &&
+    !["cancelled", "completed"].includes((appointment.status ?? "").toLowerCase());
+  const pianoLines = tripAppointmentPianoLines(appointment, pianoMap);
   return (
     <div className="flex items-center gap-1 rounded-md px-1 transition-colors hover:bg-accent" data-testid={`dashboard-trip-stop-${appointment.id}`}>
       <button
@@ -195,7 +205,14 @@ function TripAppointmentRow({
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted-foreground">
             {appointment.date} · {formatTime(appointment.time)}
-            {appointment.servicesRequested ? ` · ${appointment.servicesRequested}` : ""}
+          </span>
+          <span className="mt-0.5 block space-y-0.5">
+            {pianoLines.map((line, index) => (
+              <span key={`${line.pianoId ?? "misc"}-${index}`} className="block break-words text-xs text-muted-foreground" data-testid={`dashboard-trip-piano-line-${appointment.id}-${index}`}>
+                <span className="font-medium text-foreground/80">{line.pianoName}:</span>{" "}
+                {line.services} · {line.durationMinutes > 0 ? formatDuration(line.durationMinutes) : "Duration not set"}
+              </span>
+            ))}
           </span>
         </span>
       </button>
@@ -209,6 +226,18 @@ function TripAppointmentRow({
           data-testid={`button-book-dashboard-trip-stop-${appointment.id}`}
         >
           {isBooking ? "Booking…" : "Book appointment"}
+        </Button>
+      )}
+      {canUnbook && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 shrink-0 px-2 text-xs"
+          onClick={onUnbook}
+          disabled={isUnbooking}
+          data-testid={`button-unbook-dashboard-trip-stop-${appointment.id}`}
+        >
+          {isUnbooking ? "Unbooking…" : "Unbook"}
         </Button>
       )}
     </div>
@@ -361,6 +390,7 @@ export function DashboardSchedule() {
   const { data: customers, isLoading: customersLoading } = useQuery<Customer[]>({
     queryKey: ["/api/customers"],
   });
+  const { data: pianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
 
   const upcomingTrip = useMemo(() => getUpcomingTrip(trips, today), [trips, today]);
   const tripAppointmentsKey = `/api/trips/${upcomingTrip?.id ?? "none"}/appointments`;
@@ -372,6 +402,10 @@ export function DashboardSchedule() {
   const customerMap = useMemo(
     () => new Map(customers?.map((customer) => [customer.id, customer]) ?? []),
     [customers],
+  );
+  const pianoMap = useMemo(
+    () => new Map(pianos?.map((piano) => [piano.id, piano]) ?? []),
+    [pianos],
   );
 
   const nextAppointmentDate = useMemo(() => {
@@ -428,6 +462,25 @@ export function DashboardSchedule() {
       });
     },
     onError: (error: any) => toast({ title: "Could not book appointment", description: error.message, variant: "destructive" }),
+  });
+
+  const unbookTripAppointmentMutation = useMutation({
+    mutationFn: async (tripAppointmentId: number) => {
+      const response = await apiRequest("POST", `/api/trip-appointments/${tripAppointmentId}/unbook`);
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || "Could not unbook appointment");
+      }
+      return response.json();
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [tripAppointmentsKey] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
+      ]);
+      toast({ title: "Appointment unbooked", description: "The calendar entry was cancelled and the trip stop is back in the plan." });
+    },
+    onError: (error: Error) => toast({ title: "Could not unbook appointment", description: error.message, variant: "destructive" }),
   });
 
   const tripDateChips = useMemo(() => {
@@ -648,9 +701,12 @@ export function DashboardSchedule() {
                       key={appointment.id}
                       appointment={appointment}
                       customer={customerMap.get(appointment.customerId)}
+                      pianoMap={pianoMap}
                       onSelectDate={setDate}
                       onBook={() => bookTripAppointmentMutation.mutate(appointment.id)}
                       isBooking={bookTripAppointmentMutation.isPending && bookTripAppointmentMutation.variables === appointment.id}
+                      onUnbook={() => unbookTripAppointmentMutation.mutate(appointment.id)}
+                      isUnbooking={unbookTripAppointmentMutation.isPending && unbookTripAppointmentMutation.variables === appointment.id}
                     />
                   ))
                 )}

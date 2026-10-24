@@ -1654,6 +1654,25 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/trip-appointments/:id/unbook", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid ID" });
+      const result = await storage.unbookTripAppointment(id, userId);
+      if (!result) return res.status(404).json({ message: "Trip appointment not found" });
+      if ("error" in result) {
+        if (result.error === "forbidden") return res.status(403).json({ message: "Forbidden" });
+        if (result.error === "not_booked") return res.status(409).json({ message: "This trip stop is not currently booked." });
+        if (result.error === "completed") return res.status(409).json({ message: "Completed appointments cannot be unbooked." });
+        if (result.error === "invoiced") return res.status(409).json({ message: "Appointments with an invoice cannot be unbooked." });
+      }
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.patch("/api/trip-appointments/:id", async (req, res) => {
     try {
       const userId = getUserId(req);

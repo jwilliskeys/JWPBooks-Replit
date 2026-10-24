@@ -236,6 +236,11 @@ export interface IStorage {
   completeTripAppointment(id: number, data?: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
   deleteTripAppointment(id: number): Promise<boolean>;
   bookTripAppointment(tripAppointmentId: number, userId: string): Promise<{ tripAppointment: TripAppointment; appointmentId: number; alreadyBooked: boolean } | null>;
+  unbookTripAppointment(tripAppointmentId: number, userId: string): Promise<
+    | { tripAppointment: TripAppointment; appointmentId: number }
+    | { error: "not_booked" | "completed" | "invoiced" | "forbidden" }
+    | null
+  >;
   getInvoices(userId: string): Promise<Invoice[]>;
   getInvoicesByCustomer(customerId: number, userId: string): Promise<Invoice[]>;
   getInvoicesByPiano(pianoId: number, userId: string): Promise<Invoice[]>;
@@ -852,6 +857,50 @@ export class DatabaseStorage implements IStorage {
         tripAppointment: bookedStop ?? { ...current, linkedAppointmentId: appointment.id },
         appointmentId: appointment.id,
         alreadyBooked: false,
+      };
+    });
+  }
+
+  async unbookTripAppointment(
+    tripAppointmentId: number,
+    userId: string,
+  ): Promise<
+    | { tripAppointment: TripAppointment; appointmentId: number }
+    | { error: "not_booked" | "completed" | "invoiced" | "forbidden" }
+    | null
+  > {
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tripAppointments)
+        .where(eq(tripAppointments.id, tripAppointmentId))
+        .for("update");
+      if (!current) return null;
+      const [trip] = await tx.select().from(trips).where(eq(trips.id, current.tripId));
+      if (!trip || trip.userId !== userId) return { error: "forbidden" };
+      if (!current.linkedAppointmentId) return { error: "not_booked" };
+
+      const [appointment] = await tx.select().from(appointments)
+        .where(eq(appointments.id, current.linkedAppointmentId))
+        .for("update");
+      if (!appointment || appointment.userId !== userId) return { error: "forbidden" };
+      if (current.status === "completed" || appointment.status === "completed") {
+        return { error: "completed" };
+      }
+
+      const [invoice] = await tx.select({ id: invoices.id }).from(invoices)
+        .where(eq(invoices.appointmentId, appointment.id))
+        .limit(1);
+      if (invoice) return { error: "invoiced" };
+
+      await tx.update(appointments)
+        .set({ status: "cancelled" })
+        .where(eq(appointments.id, appointment.id));
+      const [updatedStop] = await tx.update(tripAppointments)
+        .set({ linkedAppointmentId: null })
+        .where(eq(tripAppointments.id, current.id))
+        .returning();
+      return {
+        tripAppointment: updatedStop ?? { ...current, linkedAppointmentId: null },
+        appointmentId: appointment.id,
       };
     });
   }

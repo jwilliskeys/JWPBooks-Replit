@@ -143,6 +143,7 @@ import {
   parseServiceItems,
   serializeServiceItems,
 } from "@/lib/service-lines";
+import { tripAppointmentPianoLines } from "@/lib/trip-appointment-lines";
 
 // Trip Planner is SLC-trip-specific, so home base here is always the
 // Centerville, UT address (vs. the Somerville home base used everywhere else).
@@ -386,10 +387,12 @@ interface SortableApptRowProps {
   onComplete: () => void;
   onDelete: () => void;
   onConfirm: () => void;
+  onUnbook: () => void;
   isBooking: boolean;
+  isUnbooking: boolean;
 }
 
-function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm, isBooking }: SortableApptRowProps) {
+function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm, onUnbook, isBooking, isUnbooking }: SortableApptRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: appt.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const cust = customerMap.get(appt.customerId);
@@ -410,6 +413,8 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
         : `Piano #${id}`;
     })
     .join(", ");
+  const hasStructuredServices = !!parseServiceItems(appt.serviceItems)?.length;
+  const pianoServiceLines = tripAppointmentPianoLines(appt, pianoMap);
 
   return (
     <div ref={setNodeRef} style={style}>
@@ -467,13 +472,26 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
                 <span className="min-w-0 truncate">{formatPhone(cust.phone)}</span>
               </p>
             )}
-            {pianoStr && (
+            {hasStructuredServices ? (
+              <div className="space-y-0.5">
+                {pianoServiceLines.map((line, lineIndex) => (
+                  <p
+                    key={`${line.pianoId ?? "misc"}-${lineIndex}`}
+                    className="min-w-0 break-words text-xs text-muted-foreground"
+                    data-testid={`trip-piano-service-line-${appt.id}-${lineIndex}`}
+                  >
+                    <span className="font-medium text-foreground/80">{line.pianoName}:</span>{" "}
+                    {line.services} · {line.durationMinutes > 0 ? formatDurationMinutes(line.durationMinutes) : "Duration not set"}
+                  </p>
+                ))}
+              </div>
+            ) : pianoStr && (
               <p className="flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground" title={pianoStr}>
                 <Music className="h-3 w-3 shrink-0" />
                 <span className="truncate">{pianoStr}</span>
               </p>
             )}
-            {appt.servicesRequested && <p className="truncate text-xs text-muted-foreground" title={appt.servicesRequested}>{appt.servicesRequested}</p>}
+            {!hasStructuredServices && appt.servicesRequested && <p className="truncate text-xs text-muted-foreground" title={appt.servicesRequested}>{appt.servicesRequested}</p>}
             {appt.priceEstimate && (
               <p className="flex items-center gap-1 text-xs text-muted-foreground">
                 <DollarSign className="h-3 w-3" />{appt.priceEstimate}
@@ -506,15 +524,30 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
               </Button>
             )}
             {appt.linkedAppointmentId && (
-              <Button
-                variant="ghost" size="icon"
-                className="h-7 w-7 text-green-600 dark:text-green-400"
-                onClick={onConfirm}
-                title="Already booked — click to re-download calendar file"
-                data-testid={`button-confirm-trip-appt-${appt.id}`}
-              >
-                <CalendarCheck className="h-3.5 w-3.5" />
-              </Button>
+              <>
+                <Button
+                  variant="ghost" size="icon"
+                  className="h-7 w-7 text-green-600 dark:text-green-400"
+                  onClick={onConfirm}
+                  title="Already booked — click to re-download calendar file"
+                  data-testid={`button-confirm-trip-appt-${appt.id}`}
+                >
+                  <CalendarCheck className="h-3.5 w-3.5" />
+                </Button>
+                {!isCompleted && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={onUnbook}
+                    disabled={isUnbooking}
+                    title="Cancel the calendar appointment and return this stop to the unbooked trip plan"
+                    data-testid={`button-unbook-trip-appt-${appt.id}`}
+                  >
+                    {isUnbooking ? "Unbooking…" : "Unbook"}
+                  </Button>
+                )}
+              </>
             )}
             <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onDelete} title="Delete" data-testid={`button-delete-trip-appt-${appt.id}`}>
               <Trash2 className="h-3.5 w-3.5" />
@@ -537,14 +570,16 @@ interface DayItinerarySectionProps {
   onCompleteAppointment: (appt: TripAppointment) => void;
   onDeleteAppointment: (id: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined) => void;
+  onUnbookAppointment: (id: number) => void;
   bookingAppointmentId: number | null;
+  unbookingAppointmentId: number | null;
   onMileageReported?: (dateStr: string, miles: number | null) => void;
 }
 
 function DayItinerarySection({
   dateStr, dayDate, dayAppts, customerMap, pianoMap,
   onOpenAddDialog, onOpenEditDialog, onCompleteAppointment, onDeleteAppointment,
-  onConfirmAppointment, bookingAppointmentId, onMileageReported,
+  onConfirmAppointment, onUnbookAppointment, bookingAppointmentId, unbookingAppointmentId, onMileageReported,
 }: DayItinerarySectionProps) {
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
@@ -663,7 +698,9 @@ function DayItinerarySection({
                       const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
                       onConfirmAppointment(appt, cust, piano);
                     }}
+                    onUnbook={() => onUnbookAppointment(appt.id)}
                     isBooking={bookingAppointmentId === appt.id}
+                    isUnbooking={unbookingAppointmentId === appt.id}
                   />
                 ))}
             </SortableContext>
@@ -830,7 +867,9 @@ interface TripPanelProps {
   onCompleteAppointment: (appt: TripAppointment, tripId: number) => void;
   onDeleteAppointment: (id: number, tripId: number) => void;
   onConfirmAppointment: (appt: TripAppointment, cust: Customer | undefined, piano: Piano | null | undefined, tripId: number) => void;
+  onUnbookAppointment: (id: number, tripId: number) => void;
   bookingAppointmentId: number | null;
+  unbookingAppointmentId: number | null;
   onDeleteTrip: (id: number) => void;
   deleteIsPending: boolean;
   onRequestMove: (appt: TripAppointment, targetDate: string, prevAppt: TripAppointment | null, tripId: number) => void;
@@ -847,7 +886,9 @@ function TripPanel({
   onCompleteAppointment,
   onDeleteAppointment,
   onConfirmAppointment,
+  onUnbookAppointment,
   bookingAppointmentId,
+  unbookingAppointmentId,
   onDeleteTrip,
   deleteIsPending,
   onRequestMove,
@@ -1290,7 +1331,9 @@ function TripPanel({
                         onCompleteAppointment={(appt) => onCompleteAppointment(appt, trip.id)}
                         onDeleteAppointment={(id) => onDeleteAppointment(id, trip.id)}
                         onConfirmAppointment={(appt, cust, piano) => onConfirmAppointment(appt, cust, piano, trip.id)}
+                        onUnbookAppointment={(id) => onUnbookAppointment(id, trip.id)}
                         bookingAppointmentId={bookingAppointmentId}
+                        unbookingAppointmentId={unbookingAppointmentId}
                         onMileageReported={handleMileageReported}
                       />
                     </div>
@@ -2287,6 +2330,27 @@ export default function SlcSchedule() {
     },
   });
 
+  const unbookTripAppointmentMutation = useMutation({
+    mutationFn: async ({ id, tripId }: { id: number; tripId: number }) => {
+      const response = await apiRequest("POST", `/api/trip-appointments/${id}/unbook`);
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message || "Could not unbook appointment");
+      }
+      return { tripId };
+    },
+    onSuccess: async ({ tripId }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
+      ]);
+      toast({ title: "Appointment unbooked", description: "The calendar entry was cancelled and the trip stop is back in the plan." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Could not unbook appointment", description: error.message, variant: "destructive" });
+    },
+  });
+
   function toggleTrip(tripId: number) {
     setExpandedTripIds(prev => {
       const next = new Set(prev);
@@ -2541,9 +2605,15 @@ export default function SlcSchedule() {
               onCompleteAppointment={handleCompleteAppointment}
               onDeleteAppointment={(id, tripId) => deleteAppointmentMutation.mutate({ id, tripId })}
               onConfirmAppointment={handleConfirmAppointment}
+              onUnbookAppointment={(id, tripId) => unbookTripAppointmentMutation.mutate({ id, tripId })}
               bookingAppointmentId={
                 confirmAppointmentMutation.isPending
                   ? confirmAppointmentMutation.variables?.appt.id ?? null
+                  : null
+              }
+              unbookingAppointmentId={
+                unbookTripAppointmentMutation.isPending
+                  ? unbookTripAppointmentMutation.variables?.id ?? null
                   : null
               }
               onDeleteTrip={(id) => deleteTripMutation.mutate(id)}
