@@ -10,7 +10,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock, GripVertical, Plane } from "lucide-react";
+import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock, GripVertical, Plane, Plus, Search, Pencil, Trash2, CheckCircle2, X } from "lucide-react";
 import { Link } from "wouter";
 import type { Appointment, Customer, Piano, Trip, TripAppointment } from "@shared/schema";
 import { appointmentOccursOn, expandAppointmentDates, parseAnyDate } from "@shared/appointment-repeat";
@@ -22,6 +22,11 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { clientName } from "@shared/client-name";
 import { tripAppointmentPianoLines } from "@/lib/trip-appointment-lines";
+import { AppointmentDialog } from "@/components/appointment-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   checkTimeConflict,
   minutesToTimeStr,
@@ -169,6 +174,7 @@ function TripAppointmentRow({
   onSelectDate,
   onBook,
   onUnbook,
+  onOpenDetails,
   isBooking,
   isUnbooking,
 }: {
@@ -178,6 +184,7 @@ function TripAppointmentRow({
   onSelectDate: (date: Date) => void;
   onBook: () => void;
   onUnbook: () => void;
+  onOpenDetails: () => void;
   isBooking: boolean;
   isUnbooking: boolean;
 }) {
@@ -191,7 +198,7 @@ function TripAppointmentRow({
     <div className="flex items-center gap-1 rounded-md px-1 transition-colors hover:bg-accent" data-testid={`dashboard-trip-stop-${appointment.id}`}>
       <button
         type="button"
-        onClick={() => date && onSelectDate(date)}
+        onClick={onOpenDetails}
         className="flex min-w-0 flex-1 items-start gap-2.5 py-2 pl-1 text-left"
         aria-label={`Show ${customer ? clientName(customer) : "unknown client"} on ${appointment.date}`}
       >
@@ -381,6 +388,13 @@ export function DashboardSchedule() {
   const { toast } = useToast();
   const today = useMemo(() => startOfDay(new Date()), []);
   const [selectedDateOverride, setSelectedDateOverride] = useState<Date | null>(null);
+  const [selectedTripStop, setSelectedTripStop] = useState<TripAppointment | null>(null);
+  const [addClientOpen, setAddClientOpen] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const [selectedAddClient, setSelectedAddClient] = useState<Customer | null>(null);
+  const [addStopOpen, setAddStopOpen] = useState(false);
+  const [editingStop, setEditingStop] = useState(false);
+  const [editValues, setEditValues] = useState({ date: "", time: "", duration: 120, title: "", notes: "" });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 7 } }));
 
   const { data: trips, isLoading: tripsLoading } = useQuery<Trip[]>({ queryKey: ["/api/trips"] });
@@ -483,6 +497,38 @@ export function DashboardSchedule() {
     onError: (error: Error) => toast({ title: "Could not unbook appointment", description: error.message, variant: "destructive" }),
   });
 
+  const updateTripStopMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Record<string, unknown> }) => {
+      const response = await apiRequest("PATCH", `/api/trip-appointments/${id}`, data);
+      return response.json() as Promise<TripAppointment>;
+    },
+    onSuccess: async (updated) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [tripAppointmentsKey] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
+      ]);
+      setSelectedTripStop(updated);
+      setEditingStop(false);
+      toast({ title: updated.status === "completed" ? "Appointment completed" : "Trip appointment updated" });
+    },
+    onError: (error: any) => toast({ title: "Could not update appointment", description: error.message, variant: "destructive" }),
+  });
+
+  const deleteTripStopMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/trip-appointments/${id}`);
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [tripAppointmentsKey] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] }),
+      ]);
+      setSelectedTripStop(null);
+      toast({ title: "Trip appointment deleted" });
+    },
+    onError: (error: any) => toast({ title: "Could not delete appointment", description: error.message, variant: "destructive" }),
+  });
+
   const tripDateChips = useMemo(() => {
     if (!upcomingTrip) return [];
     const start = parseAnyDate(upcomingTrip.startDate);
@@ -499,13 +545,74 @@ export function DashboardSchedule() {
   }, [upcomingTrip]);
 
   const tripAppointmentsForCard = useMemo(
-    () => [...(tripAppointments ?? [])].sort((a, b) => {
+    () => [...(tripAppointments ?? [])].filter((appointment) => appointment.status !== "cancelled").sort((a, b) => {
       const dateDiff = (parseAnyDate(a.date)?.getTime() ?? 0) - (parseAnyDate(b.date)?.getTime() ?? 0);
       if (dateDiff !== 0) return dateDiff;
       return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
     }),
     [tripAppointments],
   );
+  const existingTripCustomerIds = useMemo(
+    () => new Set(tripAppointmentsForCard.map((appointment) => appointment.customerId)),
+    [tripAppointmentsForCard],
+  );
+  const utahClients = useMemo(() => (customers ?? []).filter((customer) =>
+    customer.state?.trim().toLowerCase() === "ut" ||
+    customer.state?.trim().toLowerCase() === "utah" ||
+    customer.address?.toLowerCase().includes(", ut"),
+  ), [customers]);
+  const clientOptions = useMemo(() => {
+    const query = clientSearch.trim().toLowerCase();
+    return utahClients
+      .filter((customer) => !existingTripCustomerIds.has(customer.id))
+      .filter((customer) => !query || `${clientName(customer)} ${customer.city ?? ""} ${customer.phone ?? ""}`.toLowerCase().includes(query))
+      .sort((a, b) => Number(!!b.isStarred) - Number(!!a.isStarred) || clientName(a).localeCompare(clientName(b)))
+      .slice(0, 30);
+  }, [utahClients, existingTripCustomerIds, clientSearch]);
+  const recommendedClients = useMemo(() => {
+    const now = new Date();
+    const tripCityCounts = new Map<string, number>();
+    (tripAppointments ?? []).forEach((stop) => {
+      const city = customerMap.get(stop.customerId)?.city?.trim().toLowerCase();
+      if (city) tripCityCounts.set(city, (tripCityCounts.get(city) ?? 0) + 1);
+    });
+    return utahClients
+      .filter((customer) => !existingTripCustomerIds.has(customer.id))
+      .map((customer) => {
+        const ownedPianos = (pianos ?? []).filter((piano) => piano.customerId === customer.id && piano.isActive !== false);
+        const dueCount = ownedPianos.filter((piano) => {
+          if (!piano.lastTuned) return true;
+          const lastTuned = parseAnyDate(piano.lastTuned);
+          if (!lastTuned) return true;
+          const months = Number.parseInt(piano.tuningInterval ?? "", 10) || 6;
+          return (now.getTime() - lastTuned.getTime()) / 86400000 >= months * 30;
+        }).length;
+        const city = customer.city?.trim().toLowerCase() ?? "";
+        const routeFit = city && tripCityCounts.has(city) ? tripCityCounts.get(city)! : 0;
+        return { customer, dueCount, pianoCount: ownedPianos.length, routeFit };
+      })
+      .filter((item) => item.pianoCount > 0)
+      .sort((a, b) => b.dueCount - a.dueCount || b.routeFit - a.routeFit || Number(!!b.customer.isStarred) - Number(!!a.customer.isStarred))
+      .slice(0, 5);
+  }, [utahClients, pianos, existingTripCustomerIds, tripAppointments, customerMap]);
+
+  function openTripStopDetails(appointment: TripAppointment) {
+    setSelectedTripStop(appointment);
+    setEditingStop(false);
+  }
+
+  function beginEditTripStop(appointment: TripAppointment) {
+    const date = parseAnyDate(appointment.date);
+    const minutes = parseTimeToMinutes(appointment.time || "");
+    setEditValues({
+      date: date ? dateKey(date) : "",
+      time: minutes >= 0 ? `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}` : "",
+      duration: parseDurationToMinutes(appointment.duration || DEFAULT_DURATION),
+      title: appointment.title || "",
+      notes: appointment.notes || "",
+    });
+    setEditingStop(true);
+  }
 
   const visibleEntries = useMemo<ScheduleEntry[]>(() => {
     const linkedAppointmentIds = new Set(
@@ -703,6 +810,7 @@ export function DashboardSchedule() {
                       customer={customerMap.get(appointment.customerId)}
                       pianoMap={pianoMap}
                       onSelectDate={setDate}
+                      onOpenDetails={() => openTripStopDetails(appointment)}
                       onBook={() => bookTripAppointmentMutation.mutate(appointment.id)}
                       isBooking={bookTripAppointmentMutation.isPending && bookTripAppointmentMutation.variables === appointment.id}
                       onUnbook={() => unbookTripAppointmentMutation.mutate(appointment.id)}
@@ -843,6 +951,129 @@ export function DashboardSchedule() {
           )}
         </CardContent>
       </Card>
+      <Dialog open={addClientOpen} onOpenChange={setAddClientOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>Add a client to {upcomingTrip?.name ?? "the trip"}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input value={clientSearch} onChange={(event) => setClientSearch(event.target.value)} placeholder="Search Utah clients…" className="pl-9" />
+            </div>
+            {!clientSearch.trim() && recommendedClients.length > 0 && (
+              <section>
+                <p className="mb-2 text-sm font-medium">Recommended · tuning due</p>
+                <div className="space-y-1">
+                  {recommendedClients.map(({ customer, dueCount, pianoCount }) => (
+                    <button key={customer.id} type="button" onClick={() => setSelectedAddClient(customer)}
+                      className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${selectedAddClient?.id === customer.id ? "border-primary bg-accent" : "hover:bg-accent"}`}>
+                      <span>{clientName(customer)} <span className="text-xs text-muted-foreground">· {customer.city || "Utah"} · {pianoCount} piano{pianoCount === 1 ? "" : "s"}</span></span>
+                      <span className="text-xs text-muted-foreground">{dueCount ? `${dueCount} due` : "Not due"}</span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+            <section>
+              <p className="mb-2 text-sm font-medium">{clientSearch.trim() ? "Matching Utah clients" : "All Utah clients"}</p>
+              <div className="max-h-52 space-y-1 overflow-y-auto">
+                {clientOptions.length ? clientOptions.map((customer) => (
+                  <button key={customer.id} type="button" onClick={() => setSelectedAddClient(customer)}
+                    className={`flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm ${selectedAddClient?.id === customer.id ? "border-primary bg-accent" : "hover:bg-accent"}`}>
+                    <span>{clientName(customer)}</span><span className="text-xs text-muted-foreground">{customer.city}</span>
+                  </button>
+                )) : <p className="py-4 text-center text-sm text-muted-foreground">No matching clients available for this trip.</p>}
+              </div>
+            </section>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAddClientOpen(false)}>Cancel</Button>
+              <Button disabled={!selectedAddClient || !upcomingTrip} onClick={() => { setAddClientOpen(false); setAddStopOpen(true); }}>
+                Continue to appointment
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <AppointmentDialog
+        open={addStopOpen}
+        onOpenChange={(open) => { setAddStopOpen(open); if (!open) setSelectedAddClient(null); }}
+        customerId={selectedAddClient?.id}
+        customerName={selectedAddClient ? clientName(selectedAddClient) : undefined}
+        initialDate={upcomingTrip ? formatAppDate(parseAnyDate(upcomingTrip.startDate) ?? today) : undefined}
+        tripId={upcomingTrip?.id}
+        serviceAreaLabel="Utah trip"
+      />
+      <Dialog open={!!selectedTripStop} onOpenChange={(open) => { if (!open) { setSelectedTripStop(null); setEditingStop(false); } }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{editingStop ? "Edit trip appointment" : (selectedTripStop?.title || "Trip appointment")}</DialogTitle>
+          </DialogHeader>
+          {selectedTripStop && (() => {
+            const customer = customerMap.get(selectedTripStop.customerId);
+            const lines = tripAppointmentPianoLines(selectedTripStop, pianoMap);
+            const completed = selectedTripStop.status === "completed";
+            return editingStop ? (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">{customer ? clientName(customer) : "Unknown client"}</p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="space-y-1"><Label htmlFor="trip-stop-date">Date</Label><Input id="trip-stop-date" type="date" value={editValues.date} onChange={(e) => setEditValues({ ...editValues, date: e.target.value })} /></div>
+                  <div className="space-y-1"><Label htmlFor="trip-stop-time">Start time</Label><Input id="trip-stop-time" type="time" value={editValues.time} onChange={(e) => setEditValues({ ...editValues, time: e.target.value })} /></div>
+                  <div className="space-y-1"><Label htmlFor="trip-stop-duration">Duration (minutes)</Label><Input id="trip-stop-duration" type="number" min="15" step="15" value={editValues.duration} onChange={(e) => setEditValues({ ...editValues, duration: Number(e.target.value) })} /></div>
+                </div>
+                <div className="space-y-1"><Label htmlFor="trip-stop-title">Appointment title</Label><Input id="trip-stop-title" value={editValues.title} onChange={(e) => setEditValues({ ...editValues, title: e.target.value })} /></div>
+                <div className="space-y-1"><Label htmlFor="trip-stop-notes">Notes</Label><Textarea id="trip-stop-notes" value={editValues.notes} onChange={(e) => setEditValues({ ...editValues, notes: e.target.value })} /></div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setEditingStop(false)}>Cancel</Button>
+                  <Button disabled={!editValues.date || !editValues.time || editValues.duration < 15 || updateTripStopMutation.isPending}
+                    onClick={() => updateTripStopMutation.mutate({ id: selectedTripStop.id, data: {
+                      date: formatAppDate(new Date(`${editValues.date}T12:00:00`)),
+                      time: minutesToTimeStr(Number(editValues.time.slice(0, 2)) * 60 + Number(editValues.time.slice(3, 5))),
+                      duration: `${Math.floor(editValues.duration / 60)}${editValues.duration % 60 ? ` hr ${editValues.duration % 60} min` : " hours"}`,
+                      title: editValues.title,
+                      notes: editValues.notes,
+                    } })}>
+                    {updateTripStopMutation.isPending ? "Saving…" : "Save changes"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="rounded-md border p-3">
+                  <p className="font-medium">{customer ? clientName(customer) : "Unknown client"}</p>
+                  {customer?.address && <p className="text-sm text-muted-foreground">{customer.address}{customer.city ? `, ${customer.city}` : ""}{customer.state ? `, ${customer.state}` : ""} {customer.zipCode || ""}</p>}
+                  {customer?.phone && <p className="text-sm text-muted-foreground">{customer.phone}</p>}
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-sm font-medium">{selectedTripStop.date} · {formatTime(selectedTripStop.time)} · {selectedTripStop.duration || "Duration not set"}</p>
+                  {lines.map((line, index) => {
+                    const piano = line.pianoId ? pianoMap.get(line.pianoId) : undefined;
+                    const pianoLabel = [piano?.year, piano?.make, piano?.model].filter(Boolean).join(" ") || line.pianoName;
+                    return <p key={index} className="mt-2 text-sm">
+                      <span className="font-medium">{pianoLabel}:</span> {line.services} · {line.durationMinutes ? formatDuration(line.durationMinutes) : "Duration not set"}
+                      {piano?.lastTuned && <span className="ml-1 text-xs text-muted-foreground">Last tuned {piano.lastTuned}</span>}
+                      {piano && [piano.pianoType, piano.serialNumber && `Serial ${piano.serialNumber}`, piano.location].filter(Boolean).length > 0 && (
+                        <span className="block text-xs text-muted-foreground">
+                          {[piano.pianoType, piano.serialNumber && `Serial ${piano.serialNumber}`, piano.location].filter(Boolean).join(" · ")}
+                        </span>
+                      )}
+                    </p>;
+                  })}
+                  {selectedTripStop.notes && <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">{selectedTripStop.notes}</p>}
+                </div>
+                <div className="flex flex-wrap justify-between gap-2">
+                  <div className="flex gap-2">
+                    {!completed && <Button variant="outline" onClick={() => beginEditTripStop(selectedTripStop)}><Pencil className="mr-1 h-4 w-4" /> Edit</Button>}
+                    {!completed && <Button variant="outline" disabled={updateTripStopMutation.isPending} onClick={() => updateTripStopMutation.mutate({ id: selectedTripStop.id, data: { status: "completed" } })}><CheckCircle2 className="mr-1 h-4 w-4" /> Complete</Button>}
+                    {!completed && <Button variant="destructive" disabled={deleteTripStopMutation.isPending} onClick={() => {
+                      if (window.confirm("Delete this trip stop? Any linked calendar appointment will be cancelled, and its history will be kept.")) deleteTripStopMutation.mutate(selectedTripStop.id);
+                    }}><Trash2 className="mr-1 h-4 w-4" /> Delete</Button>}
+                  </div>
+                  <Button variant="ghost" onClick={() => setSelectedTripStop(null)}><X className="mr-1 h-4 w-4" /> Close</Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

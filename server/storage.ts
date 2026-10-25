@@ -734,8 +734,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined> {
-    const [updated] = await db.update(tripAppointments).set(data).where(eq(tripAppointments.id, id)).returning();
-    return updated;
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tripAppointments).where(eq(tripAppointments.id, id)).for("update");
+      if (!current) return undefined;
+      const [updated] = await tx.update(tripAppointments).set(data).where(eq(tripAppointments.id, id)).returning();
+      if (current.linkedAppointmentId) {
+        const syncFields = [
+          "customerId", "pianoId", "date", "time", "duration", "title", "notes",
+          "servicesRequested", "priceEstimate", "serviceItems", "status",
+        ] as const;
+        const appointmentData: Record<string, unknown> = {};
+        for (const field of syncFields) {
+          if (Object.prototype.hasOwnProperty.call(data, field)) appointmentData[field] = data[field];
+        }
+        if (Object.keys(appointmentData).length) {
+          await tx.update(appointments).set(appointmentData).where(eq(appointments.id, current.linkedAppointmentId));
+        }
+      }
+      return updated;
+    });
   }
 
   async completeTripAppointment(
@@ -808,8 +825,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteTripAppointment(id: number): Promise<boolean> {
-    const result = await db.delete(tripAppointments).where(eq(tripAppointments.id, id)).returning();
-    return result.length > 0;
+    return db.transaction(async (tx) => {
+      const [current] = await tx.select().from(tripAppointments).where(eq(tripAppointments.id, id)).for("update");
+      if (!current || current.status === "completed") return false;
+      if (current.linkedAppointmentId) {
+        await tx.update(appointments)
+          .set({ status: "cancelled" })
+          .where(eq(appointments.id, current.linkedAppointmentId));
+      }
+      await tx.update(tripAppointments).set({ status: "cancelled" }).where(eq(tripAppointments.id, id));
+      return true;
+    });
   }
 
   async bookTripAppointment(
