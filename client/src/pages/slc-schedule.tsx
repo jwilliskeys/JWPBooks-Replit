@@ -112,7 +112,7 @@ import {
   parseTimeString,
   parseDurationString,
 } from "@/components/time-stepper";
-import type { Trip, TripAppointment, Customer, Piano, Invoice, ServiceCatalogItem } from "@shared/schema";
+import type { Trip, TripAppointment, Customer, Piano, Invoice, ServiceCatalogItem, UserSettings } from "@shared/schema";
 import {
   SCHEDULE_C_CATEGORIES,
   getCatInfo,
@@ -145,14 +145,16 @@ import {
 } from "@/lib/service-lines";
 import { tripAppointmentPianoLines } from "@/lib/trip-appointment-lines";
 
-// Trip Planner is SLC-trip-specific, so home base here is always the
-// Centerville, UT address (vs. the Somerville home base used everywhere else).
-const HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
+// Used only until the owner enters an SLC home address in Company Profile.
+const DEFAULT_HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
 
-function buildCustomerAddress(cust: { address?: string | null; city?: string | null; state?: string | null; zipCode?: string | null } | undefined): string {
-  if (!cust) return HOME_ADDRESS;
+function buildCustomerAddress(
+  cust: { address?: string | null; city?: string | null; state?: string | null; zipCode?: string | null } | undefined,
+  homeAddress = DEFAULT_HOME_ADDRESS,
+): string {
+  if (!cust) return homeAddress;
   const parts = [cust.address, cust.city, cust.state, cust.zipCode].filter(Boolean) as string[];
-  return parts.length > 0 ? parts.join(", ") : HOME_ADDRESS;
+  return parts.length > 0 ? parts.join(", ") : homeAddress;
 }
 
 function formatCompactTimeRange(startMinutes: number, endMinutes: number): string {
@@ -581,11 +583,13 @@ function DayItinerarySection({
   onOpenAddDialog, onOpenEditDialog, onCompleteAppointment, onDeleteAppointment,
   onConfirmAppointment, onUnbookAppointment, bookingAppointmentId, unbookingAppointmentId, onMileageReported,
 }: DayItinerarySectionProps) {
+  const { data: userSettings } = useQuery<UserSettings>({ queryKey: ["/api/settings"] });
+  const homeAddress = userSettings?.slcHomeAddress?.trim() || DEFAULT_HOME_ADDRESS;
   const addresses = useMemo(() => {
     if (dayAppts.length === 0) return [];
-    const apptAddresses = dayAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId)));
-    return [HOME_ADDRESS, ...apptAddresses, HOME_ADDRESS];
-  }, [dayAppts, customerMap]);
+    const apptAddresses = dayAppts.map(a => buildCustomerAddress(customerMap.get(a.customerId), homeAddress));
+    return [homeAddress, ...apptAddresses, homeAddress];
+  }, [dayAppts, customerMap, homeAddress]);
 
   const { data: drivingData } = useQuery<{ durations: number[] | null; distances: number[] | null }>({
     queryKey: ["/api/driving-times", addresses.join("|")],

@@ -490,6 +490,21 @@ export default function InvoiceDetailPage() {
   const amountDue = computeAmountDue(form.total, form.paidAmount);
 
   const displayData = editMode ? form : (invoice ? invoiceToForm(invoice) : form);
+  const sellerName = isNew
+    ? paymentSettings?.businessName?.trim() || COMPANY_NAME
+    : invoice?.companyName || COMPANY_NAME;
+  const sellerAddress = isNew
+    ? [
+        paymentSettings?.businessAddress?.trim(),
+        [paymentSettings?.businessCity, paymentSettings?.businessState, paymentSettings?.businessZipCode].filter(Boolean).join(", "),
+      ].filter(Boolean).join("\n") || COMPANY_ADDRESS
+    : invoice?.companyAddress || COMPANY_ADDRESS;
+  const sellerPhone = isNew ? paymentSettings?.businessPhone : invoice?.companyPhone;
+  const sellerEmail = isNew ? paymentSettings?.businessEmail : invoice?.companyEmail;
+  const sellerWebsite = isNew ? paymentSettings?.businessWebsite : invoice?.companyWebsite;
+  const sellerWebsiteUrl = sellerWebsite
+    ? (/^https?:\/\//i.test(sellerWebsite) ? sellerWebsite : `https://${sellerWebsite}`)
+    : "";
 
   if (loadingInvoice && !isNew) {
     return (
@@ -573,9 +588,9 @@ export default function InvoiceDetailPage() {
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const subject = encodeURIComponent(`Invoice #${displayData.invoiceNumber} – John Willis Piano`);
+                      const subject = encodeURIComponent(`Invoice #${displayData.invoiceNumber} – ${sellerName}`);
                       const body = encodeURIComponent(
-                        `Hi ${displayData.customerName},\n\nPlease find your invoice below:\n\nInvoice #${displayData.invoiceNumber}\nDate: ${displayData.invoiceDate}\nDue: ${displayData.dueDate}\nTotal: ${displayData.total}\n\nThank you!\nJohn Willis Piano`
+                        `Hi ${displayData.customerName},\n\nPlease find your invoice below:\n\nInvoice #${displayData.invoiceNumber}\nDate: ${displayData.invoiceDate}\nDue: ${displayData.dueDate}\nTotal: ${displayData.total}\n\nThank you!\n${[sellerName, sellerPhone, sellerEmail, sellerWebsite].filter(Boolean).join("\n")}`
                       );
                       window.location.href = `mailto:${displayData.customerEmail}?subject=${subject}&body=${body}`;
                     }}
@@ -676,8 +691,15 @@ export default function InvoiceDetailPage() {
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-8">
             {/* Company block */}
             <div>
-              <div className="text-xl font-bold mb-1">{COMPANY_NAME}</div>
-              <div className="text-sm text-muted-foreground whitespace-pre-line">{COMPANY_ADDRESS}</div>
+              <div className="text-xl font-bold mb-1">{sellerName}</div>
+              <div className="text-sm text-muted-foreground whitespace-pre-line">{sellerAddress}</div>
+              {(sellerPhone || sellerEmail || sellerWebsite) && (
+                <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {sellerPhone && <div>{sellerPhone}</div>}
+                  {sellerEmail && <div>{sellerEmail}</div>}
+                  {sellerWebsite && <div><a href={sellerWebsiteUrl} className="underline">{sellerWebsite}</a></div>}
+                </div>
+              )}
             </div>
 
             {/* Invoice meta */}

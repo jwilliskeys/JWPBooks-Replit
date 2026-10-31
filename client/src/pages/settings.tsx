@@ -1019,6 +1019,17 @@ export default function SettingsPage() {
     cashAppHandle: "",
     stripePaymentLink: "",
   });
+  const [profileForm, setProfileForm] = useState({
+    businessName: "",
+    businessPhone: "",
+    businessEmail: "",
+    businessWebsite: "",
+    businessAddress: "",
+    businessCity: "",
+    businessState: "",
+    businessZipCode: "",
+    slcHomeAddress: "",
+  });
 
   const { data: userSettings } = useQuery<UserSettings>({
     queryKey: ["/api/settings"],
@@ -1036,6 +1047,22 @@ export default function SettingsPage() {
     }
   }, [userSettings]);
 
+  useEffect(() => {
+    if (userSettings) {
+      setProfileForm({
+        businessName: userSettings.businessName ?? "",
+        businessPhone: userSettings.businessPhone ?? "",
+        businessEmail: userSettings.businessEmail ?? "",
+        businessWebsite: userSettings.businessWebsite ?? "",
+        businessAddress: userSettings.businessAddress ?? "",
+        businessCity: userSettings.businessCity ?? "",
+        businessState: userSettings.businessState ?? "",
+        businessZipCode: userSettings.businessZipCode ?? "",
+        slcHomeAddress: userSettings.slcHomeAddress ?? "",
+      });
+    }
+  }, [userSettings]);
+
   const savePaymentMutation = useMutation({
     mutationFn: (data: typeof payForm) => apiRequest("PATCH", "/api/settings", data),
     onSuccess: () => {
@@ -1043,6 +1070,15 @@ export default function SettingsPage() {
       toast({ title: "Payment methods saved" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const saveProfileMutation = useMutation({
+    mutationFn: (data: typeof profileForm) => apiRequest("PATCH", "/api/settings", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
+      toast({ title: "Company profile saved" });
+    },
+    onError: (e: Error) => toast({ title: "Could not save company profile", description: e.message, variant: "destructive" }),
   });
 
   const { data: groups = [], isLoading: groupsLoading } = useQuery<ServiceGroup[]>({
@@ -1307,6 +1343,52 @@ export default function SettingsPage() {
     );
   }
 
+  function CompanyProfilePanel() {
+    const setField = (field: keyof typeof profileForm) => (value: string) =>
+      setProfileForm((current) => ({ ...current, [field]: value }));
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-lg font-semibold">Company Profile</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">Business details captured on new invoices. Existing invoices keep their saved details.</p>
+        </div>
+        <section className="space-y-4">
+          <h3 className="text-sm font-semibold">Business information</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5"><Label htmlFor="profile-business-name">Business name</Label><Input id="profile-business-name" value={profileForm.businessName} onChange={e => setField("businessName")(e.target.value)} placeholder="John Willis Piano" /></div>
+            <div className="space-y-1.5"><Label htmlFor="profile-business-phone">Business phone</Label><Input id="profile-business-phone" type="tel" value={profileForm.businessPhone} onChange={e => setField("businessPhone")(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="profile-business-email">Business email</Label><Input id="profile-business-email" type="email" value={profileForm.businessEmail} onChange={e => setField("businessEmail")(e.target.value)} /></div>
+            <div className="space-y-1.5"><Label htmlFor="profile-business-website">Website</Label><Input id="profile-business-website" type="url" value={profileForm.businessWebsite} onChange={e => setField("businessWebsite")(e.target.value)} placeholder="https://…" /></div>
+          </div>
+        </section>
+        <section className="space-y-4 border-t pt-5">
+          <div>
+            <h3 className="text-sm font-semibold">Invoice address</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">This address appears on invoices created after you save it.</p>
+          </div>
+          <div className="space-y-1.5"><Label htmlFor="profile-business-address">Street address</Label><Input id="profile-business-address" value={profileForm.businessAddress} onChange={e => setField("businessAddress")(e.target.value)} autoComplete="street-address" /></div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_120px_140px]">
+            <div className="space-y-1.5"><Label htmlFor="profile-business-city">City</Label><Input id="profile-business-city" value={profileForm.businessCity} onChange={e => setField("businessCity")(e.target.value)} autoComplete="address-level2" /></div>
+            <div className="space-y-1.5"><Label htmlFor="profile-business-state">State</Label><Input id="profile-business-state" value={profileForm.businessState} onChange={e => setField("businessState")(e.target.value)} autoComplete="address-level1" /></div>
+            <div className="space-y-1.5"><Label htmlFor="profile-business-zip">ZIP code</Label><Input id="profile-business-zip" value={profileForm.businessZipCode} onChange={e => setField("businessZipCode")(e.target.value)} autoComplete="postal-code" /></div>
+          </div>
+        </section>
+        <section className="space-y-3 border-t pt-5">
+          <div>
+            <h3 className="text-sm font-semibold">Salt Lake City home address</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">Private trip-planning address used for the first and final drive of each SLC trip day. It is not printed on invoices.</p>
+          </div>
+          <div className="space-y-1.5"><Label htmlFor="profile-slc-home">Home address</Label><Input id="profile-slc-home" value={profileForm.slcHomeAddress} onChange={e => setField("slcHomeAddress")(e.target.value)} placeholder="Street, city, state, ZIP" autoComplete="street-address" /></div>
+        </section>
+        <div className="flex justify-end border-t pt-4">
+          <Button onClick={() => saveProfileMutation.mutate(profileForm)} disabled={saveProfileMutation.isPending} data-testid="button-save-company-profile">
+            {saveProfileMutation.isPending ? "Saving…" : "Save Company Profile"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   function MasterServiceListPanel() {
     return (
       <div className="space-y-4">
@@ -1435,7 +1517,7 @@ export default function SettingsPage() {
   function activePanel() {
     if (activeSection === "payment-methods") return PaymentMethodsPanel();
     if (activeSection === "master-service-list") return MasterServiceListPanel();
-    if (activeSection === "company-profile") return StubPanel({ title: "Company Profile", description: "Your business name, address, and contact info shown on invoices." });
+    if (activeSection === "company-profile") return CompanyProfilePanel();
     if (activeSection === "scheduling") return StubPanel({ title: "Scheduling", description: "Default appointment duration, buffer time, and calendar preferences." });
     if (activeSection === "self-scheduler") return <SelfSchedulerPanel />;
     if (activeSection === "calendar-sync") return <CalendarSyncPanel />;

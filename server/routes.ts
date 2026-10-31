@@ -2555,6 +2555,15 @@ export async function registerRoutes(
         venmoHandle: null,
         cashAppHandle: null,
         stripePaymentLink: null,
+        businessName: null,
+        businessPhone: null,
+        businessEmail: null,
+        businessWebsite: null,
+        businessAddress: null,
+        businessCity: null,
+        businessState: null,
+        businessZipCode: null,
+        slcHomeAddress: null,
         workBlockExceptions: null,
         updatedAt: null,
       });
@@ -2566,16 +2575,20 @@ export async function registerRoutes(
   app.patch("/api/settings", async (req, res) => {
     try {
       const userId = getUserId(req);
-      const { zelleHandle, paypalMe, venmoHandle, cashAppHandle, stripePaymentLink, workBlockExceptions } = req.body;
-      const settings = await storage.upsertUserSettings(userId, {
-        zelleHandle: zelleHandle ?? null,
-        paypalMe: paypalMe ?? null,
-        venmoHandle: venmoHandle ?? null,
-        cashAppHandle: cashAppHandle ?? null,
-        stripePaymentLink: stripePaymentLink ?? null,
-        // Only update workBlockExceptions if it was explicitly sent in the request body
-        ...(workBlockExceptions !== undefined ? { workBlockExceptions } : {}),
-      });
+      const allowedFields = [
+        "zelleHandle", "paypalMe", "venmoHandle", "cashAppHandle", "stripePaymentLink",
+        "businessName", "businessPhone", "businessEmail", "businessWebsite", "businessAddress",
+        "businessCity", "businessState", "businessZipCode", "slcHomeAddress", "workBlockExceptions",
+      ] as const;
+      const patch: Record<string, string | null> = {};
+      for (const field of allowedFields) {
+        if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+          const value = req.body[field];
+          patch[field] = typeof value === "string" ? value.trim() || null : null;
+        }
+      }
+      if (Object.keys(patch).length === 0) return res.status(400).json({ message: "No settings were provided." });
+      const settings = await storage.upsertUserSettings(userId, patch);
       res.json(settings);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

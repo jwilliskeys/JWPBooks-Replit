@@ -207,6 +207,11 @@ export const invoices = pgTable("invoices", {
   customerPhone: text("customer_phone"),
   pianoDescription: text("piano_description"),
   assignedTo: text("assigned_to").default("John Willis"),
+  companyName: text("company_name"),
+  companyPhone: text("company_phone"),
+  companyEmail: text("company_email"),
+  companyWebsite: text("company_website"),
+  companyAddress: text("company_address"),
   // "client" = regular piano-service billing (default). "falcetti" = the
   // biweekly Falcetti Pianos / BU paycheck — shown on income tracking but
   // completely excluded from SE-tax, income-tax, and sales-tax calculations.
@@ -381,6 +386,15 @@ export const userSettings = pgTable("user_settings", {
   venmoHandle: text("venmo_handle"),
   cashAppHandle: text("cash_app_handle"),
   stripePaymentLink: text("stripe_payment_link"),
+  businessName: text("business_name"),
+  businessPhone: text("business_phone"),
+  businessEmail: text("business_email"),
+  businessWebsite: text("business_website"),
+  businessAddress: text("business_address"),
+  businessCity: text("business_city"),
+  businessState: text("business_state"),
+  businessZipCode: text("business_zip_code"),
+  slcHomeAddress: text("slc_home_address"),
   // JSON array of date keys ("YYYY-M-D") for days the Falcetti work block is hidden
   workBlockExceptions: text("work_block_exceptions"),
   updatedAt: timestamp("updated_at").defaultNow(),

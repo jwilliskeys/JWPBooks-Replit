@@ -958,7 +958,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInvoice(invoice: InsertInvoice, userId: string): Promise<Invoice> {
-    const [created] = await db.insert(invoices).values({ ...invoice, userId }).returning();
+    const profile = await this.getUserSettings(userId);
+    const addressLines = [
+      profile?.businessAddress?.trim(),
+      [profile?.businessCity, profile?.businessState, profile?.businessZipCode].filter(Boolean).join(", "),
+    ].filter(Boolean);
+    const [created] = await db.insert(invoices).values({
+      ...invoice,
+      userId,
+      companyName: profile?.businessName?.trim() || "John Willis Piano",
+      companyPhone: profile?.businessPhone || null,
+      companyEmail: profile?.businessEmail || null,
+      companyWebsite: profile?.businessWebsite || null,
+      companyAddress: addressLines.length ? addressLines.join("\n") : "14 Murdock St. APT #3-4\nSomerville, MA 02145",
+    }).returning();
     return created;
   }
 

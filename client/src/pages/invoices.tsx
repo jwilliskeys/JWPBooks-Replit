@@ -219,9 +219,10 @@ export default function InvoicesPage() {
                             className="h-7 w-7"
                             title={`Email invoice to ${inv.customerEmail}`}
                             onClick={() => {
-                              const subject = encodeURIComponent(`Invoice #${inv.invoiceNumber} – John Willis Piano`);
+                              const sellerName = inv.companyName || "John Willis Piano";
+                              const subject = encodeURIComponent(`Invoice #${inv.invoiceNumber} – ${sellerName}`);
                               const body = encodeURIComponent(
-                                `Hi ${inv.customerName ?? getCustomerName(inv)},\n\nPlease find your invoice below:\n\nInvoice #${inv.invoiceNumber}\nDate: ${inv.invoiceDate ?? ""}\nDue: ${inv.dueDate ?? ""}\nTotal: ${inv.total ?? "$0.00"}\n\nThank you!\nJohn Willis Piano`
+                                `Hi ${inv.customerName ?? getCustomerName(inv)},\n\nPlease find your invoice below:\n\nInvoice #${inv.invoiceNumber}\nDate: ${inv.invoiceDate ?? ""}\nDue: ${inv.dueDate ?? ""}\nTotal: ${inv.total ?? "$0.00"}\n\nThank you!\n${[sellerName, inv.companyPhone, inv.companyEmail, inv.companyWebsite].filter(Boolean).join("\n")}`
                               );
                               window.location.href = `mailto:${inv.customerEmail}?subject=${subject}&body=${body}`;
                             }}
