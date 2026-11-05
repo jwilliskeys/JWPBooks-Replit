@@ -23,6 +23,17 @@ interface RecommendedService {
   service: string;
   estimatedCost: string;
   category?: string;
+  chargeType?: string;
+  quantity?: string;
+  unitPrice?: string;
+}
+
+function pricingDetail(item: RecommendedService): string {
+  if (item.chargeType === "hourly-labor") return `${item.quantity || "1"} hr × ${item.unitPrice || "$0"}/hr`;
+  if (item.chargeType === "parts") return `${item.quantity || "1"} × ${item.unitPrice || "$0"} per part`;
+  if (item.chargeType === "travel-fee") return "Travel fee";
+  if (item.chargeType === "other") return "Other charge";
+  return "Fixed rate";
 }
 
 function parseChecklist(raw: string | null | undefined): ChecklistItem[] {
@@ -236,7 +247,10 @@ export function InspectionPdfDocument({ inspection, customer, piano, businessPro
               <div style={{ fontSize: 10, fontWeight: "bold", color: "#374151", textTransform: "uppercase" as const, letterSpacing: "0.6px", marginBottom: 5 }}>{category}</div>
               {recommended.filter(r => (r.category?.trim() || "Services") === category).map((r, i) => (
                 <div key={`${category}-${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 18, padding: "7px 0", borderBottom: "1px solid #e5e7eb" }}>
-                  <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{r.service}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 11, color: "#374151" }}>{r.service}</div>
+                    <div style={{ fontSize: 9, color: "#6b7280", marginTop: 2 }}>{pricingDetail(r)}</div>
+                  </div>
                   {r.estimatedCost && <strong style={{ fontSize: 11, whiteSpace: "nowrap" as const }}>{r.estimatedCost}</strong>}
                 </div>
               ))}

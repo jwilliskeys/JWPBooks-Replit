@@ -80,6 +80,9 @@ interface RecommendedService {
   estimatedCost: string;
   category?: string;
   catalogServiceId?: number;
+  chargeType?: "fixed-rate-labor" | "hourly-labor" | "parts" | "travel-fee" | "other";
+  quantity?: string;
+  unitPrice?: string;
 }
 
 const DEFAULT_CHECKLIST: ChecklistItem[] = [
@@ -125,7 +128,38 @@ function estimateAmount(value: string | null | undefined): number {
 }
 
 function estimateTotal(items: RecommendedService[]): number {
-  return items.reduce((sum, item) => sum + estimateAmount(item.estimatedCost), 0);
+  return items.reduce((sum, item) => {
+    if (item.chargeType === "hourly-labor" || item.chargeType === "parts") {
+      return sum + estimateAmount(item.quantity || "1") * estimateAmount(item.unitPrice);
+    }
+    return sum + estimateAmount(item.estimatedCost);
+  }, 0);
+}
+
+function estimatePricingDetail(item: RecommendedService): string {
+  if (item.chargeType === "hourly-labor") return `${item.quantity || "1"} hr × ${item.unitPrice || "$0"}/hr`;
+  if (item.chargeType === "parts") return `${item.quantity || "1"} × ${item.unitPrice || "$0"} per part`;
+  if (item.chargeType === "travel-fee") return "Travel fee";
+  if (item.chargeType === "other") return "Other charge";
+  return "Fixed rate";
+}
+
+function normalizedEstimateServices(items: RecommendedService[]): RecommendedService[] {
+  return items.filter(item => item.service.trim()).map(item => ({
+    ...item,
+    estimatedCost: `$${(item.chargeType === "hourly-labor" || item.chargeType === "parts"
+      ? estimateAmount(item.quantity || "1") * estimateAmount(item.unitPrice)
+      : estimateAmount(item.estimatedCost)).toFixed(2)}`,
+  }));
+}
+
+function catalogChargeType(description: string | null | undefined): RecommendedService["chargeType"] {
+  try {
+    const type = JSON.parse(description || "").t;
+    return ["fixed-rate-labor", "hourly-labor", "parts", "travel-fee", "other"].includes(type) ? type : "fixed-rate-labor";
+  } catch {
+    return "fixed-rate-labor";
+  }
 }
 
 function EstimateLineItemsEditor({
@@ -147,12 +181,19 @@ function EstimateLineItemsEditor({
   const actionPackage = actionPackageNames
     .map(name => services.find(service => service.name.toLowerCase() === name.toLowerCase() && service.isActive));
   const total = estimateTotal(items);
+  const chargeLabel: Record<NonNullable<RecommendedService["chargeType"]>, string> = {
+    "fixed-rate-labor": "Fixed rate",
+    "hourly-labor": "Hourly",
+    parts: "Parts",
+    "travel-fee": "Travel fee",
+    other: "Other",
+  };
   return (
-    <section className="space-y-3 rounded-xl border bg-card p-4">
+    <section className="space-y-2 rounded-xl border bg-card p-3">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold">Estimate services</h3>
-          <p className="text-xs text-muted-foreground">Choose from your master service list or enter custom work and pricing.</p>
+          <p className="text-xs text-muted-foreground">Choose a charge basis for each service.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {actionPackage.every(Boolean) && (
@@ -165,6 +206,7 @@ function EstimateLineItemsEditor({
                   category: service.category || "Action Reconditioning",
                   service: service.name,
                   estimatedCost: service.defaultCost || "$600",
+                  chargeType: "fixed-rate-labor" as const,
                 }));
               setItems([...items, ...additions]);
             }}>
@@ -177,45 +219,70 @@ function EstimateLineItemsEditor({
         </div>
       </div>
       {items.map((item, index) => (
-        <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_130px_36px]">
-          <div className="space-y-1">
-            <Label className="text-xs">Category</Label>
-            <Input value={item.category ?? ""} placeholder="Action reconditioning" onChange={e => update(index, { category: e.target.value })} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Service / description</Label>
-            <div className="space-y-1.5">
-              <select
-                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-                value={item.catalogServiceId ?? ""}
-                onChange={e => {
-                  const selected = services.find(service => service.id === Number(e.target.value));
-                  if (selected) update(index, {
-                    catalogServiceId: selected.id,
-                    category: selected.category || item.category || "",
-                    service: selected.name,
-                    estimatedCost: selected.defaultCost || item.estimatedCost,
-                  });
-                  else update(index, { catalogServiceId: undefined });
-                }}
-              >
-                <option value="">Select from master service list…</option>
-                {services.filter(service => service.isActive).map(service => (
-                  <option key={service.id} value={service.id}>{service.category} · {service.name}</option>
-                ))}
-              </select>
-              <Input value={item.service} placeholder="Describe the work" onChange={e => update(index, { service: e.target.value })} />
+        <div key={index} className="grid grid-cols-2 items-center gap-2 rounded-lg border bg-background p-2 sm:grid-cols-[minmax(145px,1.15fr)_minmax(140px,1.35fr)_minmax(120px,0.9fr)_130px_minmax(155px,1.1fr)_32px]">
+          <select
+            aria-label="Choose master service"
+            className="col-span-2 h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs sm:col-span-1"
+            value={item.catalogServiceId ?? ""}
+            onChange={e => {
+              const selected = services.find(service => service.id === Number(e.target.value));
+              if (selected) {
+                const chargeType = catalogChargeType(selected.description);
+                const quantity = chargeType === "hourly-labor"
+                  ? String(Number((selected.defaultDuration || "").match(/[\d.]+/)?.[0]) || 1)
+                  : "1";
+                update(index, {
+                  catalogServiceId: selected.id,
+                  category: selected.category || item.category || "",
+                  service: selected.name,
+                  chargeType,
+                  quantity,
+                  unitPrice: selected.defaultCost || "",
+                  estimatedCost: chargeType === "hourly-labor" || chargeType === "parts" ? "" : selected.defaultCost || "",
+                });
+              } else update(index, { catalogServiceId: undefined });
+            }}
+          >
+            <option value="">Master service…</option>
+            {services.filter(service => service.isActive).map(service => (
+              <option key={service.id} value={service.id}>{service.category} · {service.name}</option>
+            ))}
+          </select>
+          <Input aria-label="Service description" className="col-span-2 h-8 sm:col-span-1" value={item.service} placeholder="Service / work description" onChange={e => update(index, { service: e.target.value })} />
+          <Input aria-label="Service category" className="h-8" value={item.category ?? ""} placeholder="Category" onChange={e => update(index, { category: e.target.value })} />
+          <select
+            aria-label="Charge basis"
+            className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs"
+            value={item.chargeType || "fixed-rate-labor"}
+            onChange={e => {
+              const chargeType = e.target.value as NonNullable<RecommendedService["chargeType"]>;
+              const isVariable = chargeType === "hourly-labor" || chargeType === "parts";
+              const currentVariableTotal = estimateAmount(item.quantity || "1") * estimateAmount(item.unitPrice);
+              update(index, {
+                chargeType,
+                quantity: item.quantity || "1",
+                unitPrice: item.unitPrice || item.estimatedCost,
+                estimatedCost: !isVariable && !item.estimatedCost
+                  ? `$${currentVariableTotal.toFixed(2)}`
+                  : item.estimatedCost,
+              });
+            }}
+          >
+            {Object.entries(chargeLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          {(item.chargeType === "hourly-labor" || item.chargeType === "parts") ? (
+            <div className="col-span-2 flex min-w-0 items-center gap-1 sm:col-span-1">
+              <Input aria-label={item.chargeType === "hourly-labor" ? "Hours" : "Part quantity"} inputMode="decimal" className="h-8 min-w-0" value={item.quantity || "1"} onChange={e => update(index, { quantity: e.target.value })} placeholder={item.chargeType === "hourly-labor" ? "Hours" : "Qty"} />
+              <span className="text-xs text-muted-foreground">×</span>
+              <Input aria-label="Rate per hour or part" inputMode="decimal" className="h-8 min-w-0" value={item.unitPrice || ""} onChange={e => update(index, { unitPrice: e.target.value })} placeholder={item.chargeType === "hourly-labor" ? "$/hr" : "$/part"} />
+              <span className="text-[10px] text-muted-foreground">${(estimateAmount(item.quantity || "1") * estimateAmount(item.unitPrice)).toFixed(0)}</span>
             </div>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Estimated price</Label>
-            <Input inputMode="decimal" value={item.estimatedCost} placeholder="$0.00" onChange={e => update(index, { estimatedCost: e.target.value })} />
-          </div>
-          <div className="flex items-end justify-end">
-            <Button type="button" variant="ghost" size="icon" aria-label="Remove service" onClick={() => setItems(items.filter((_, i) => i !== index))}>
-              <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
-          </div>
+          ) : (
+            <Input aria-label="Fixed or other charge" inputMode="decimal" className="col-span-2 h-8 sm:col-span-1" value={item.estimatedCost} placeholder="$ Amount" onChange={e => update(index, { estimatedCost: e.target.value })} />
+          )}
+          <Button type="button" variant="ghost" size="icon" aria-label="Remove service" className="h-8 w-8" onClick={() => setItems(items.filter((_, i) => i !== index))}>
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
         </div>
       ))}
       {items.length === 0 && <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Add a service to build this estimate.</p>}
@@ -396,7 +463,9 @@ function NewInspectionDialog({
             : formFields.estimatedTotal || null,
           internalNotes: formFields.internalNotes || null,
           checklistItems: formFields.type === "estimate" ? "[]" : JSON.stringify(checklist),
-          recommendedServices: JSON.stringify(recommended.filter(r => r.service.trim())),
+          recommendedServices: JSON.stringify(formFields.type === "estimate"
+            ? normalizedEstimateServices(recommended)
+            : recommended.filter(r => r.service.trim())),
         }),
       });
       if (!inspRes.ok) {
@@ -433,7 +502,7 @@ function NewInspectionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className={`max-h-[90vh] overflow-y-auto ${formFields.type === "estimate" ? "sm:max-w-5xl" : "sm:max-w-2xl"}`}>
         <DialogHeader>
           <DialogTitle>New {formFields.type === "estimate" ? "Estimate" : "Inspection"}</DialogTitle>
         </DialogHeader>
@@ -831,7 +900,9 @@ function InspectionDetailDialog({
            : editFields.estimatedTotal || null,
         internalNotes: editFields.internalNotes || null,
         checklistItems: JSON.stringify(editChecklist),
-        recommendedServices: JSON.stringify(editRecommended.filter(r => r.service.trim())),
+        recommendedServices: JSON.stringify(editFields.type === "estimate"
+          ? normalizedEstimateServices(editRecommended)
+          : editRecommended.filter(r => r.service.trim())),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
@@ -862,7 +933,7 @@ function InspectionDetailDialog({
   if (editing) {
     return (
       <Dialog open={open} onOpenChange={v => { if (!v) setEditing(false); onOpenChange(v); }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className={`max-h-[90vh] overflow-y-auto ${editFields.type === "estimate" ? "sm:max-w-5xl" : "sm:max-w-2xl"}`}>
           <DialogHeader>
             <DialogTitle>Edit {editFields.type === "estimate" ? "Estimate" : "Inspection"}</DialogTitle>
             {customer && (
@@ -1155,7 +1226,10 @@ function InspectionDetailDialog({
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{category}</p>
                   {recommended.filter(r => (r.category?.trim() || "Services") === category).map((r, i) => (
                     <div key={`${category}-${i}`} className="flex justify-between gap-4 border-b py-2 text-sm last:border-0">
-                      <span>{r.service}</span>
+                      <div>
+                        <p>{r.service}</p>
+                        <p className="text-xs text-muted-foreground">{estimatePricingDetail(r)}</p>
+                      </div>
                       {r.estimatedCost && <span className="font-medium tabular-nums">{r.estimatedCost}</span>}
                     </div>
                   ))}
@@ -1285,7 +1359,7 @@ function InspectionDetailDialog({
           {inspection.type === "estimate" && customer?.email && (
             <Button variant="outline" size="sm" onClick={() => {
               const services = parseRecommended(inspection.recommendedServices);
-              const lines = services.map(item => `${item.category ? `${item.category} — ` : ""}${item.service}: ${item.estimatedCost || "Price TBD"}`);
+              const lines = services.map(item => `${item.category ? `${item.category} — ` : ""}${item.service} (${estimatePricingDetail(item)}): ${item.estimatedCost || "Price TBD"}`);
               const subject = encodeURIComponent(`Estimate for ${clientName(customer)} — ${inspection.estimatedTotal || ""}`);
               const body = encodeURIComponent(`Hi ${clientName(customer)},\n\nI’ll attach the estimate PDF to this email.\n\n${lines.join("\n")}\n\nEstimated total: ${inspection.estimatedTotal || `$${estimateTotal(services).toFixed(2)}`}\n\n${inspection.summary || ""}\n\nJohn Willis Piano`);
               window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
