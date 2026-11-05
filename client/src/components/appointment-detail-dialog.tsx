@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import {
   Calendar, Clock, Music, Pencil, FileText, CheckCircle,
-  Trash2, ExternalLink, MapPin, User, X, Car, Repeat, Copy,
+  Trash2, ExternalLink, MapPin, User, X, Car, Repeat, Copy, CalendarPlus,
 } from "lucide-react";
 import {
   SectionBar,
@@ -61,6 +61,7 @@ import {
   formatLineDuration,
 } from "@/lib/service-lines";
 import { clientName } from "@shared/client-name";
+import { downloadAppointmentIcs } from "@/lib/appointment-ics";
 
 interface Props {
   appointment: Appointment | null;
@@ -398,6 +399,38 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
 
   // New-style itemized appointments render pianos + service lines from serviceItems
   const viewGroups = parseServiceItems(displayed.serviceItems);
+  function saveToAppleCalendar() {
+    if (!displayed) return;
+    const serviceDescription = viewGroups?.length
+      ? viewGroups.map(group => {
+          const groupPiano = group.pianoId ? pianoById.get(group.pianoId) : null;
+          const pianoName = group.pianoId == null
+            ? "Miscellaneous services"
+            : groupPiano
+              ? [groupPiano.make, groupPiano.model, groupPiano.pianoType].filter(Boolean).join(" ")
+              : `Piano #${group.pianoId}`;
+          return `${pianoName}: ${group.lines.map(line => line.name).join(", ")}`;
+        }).join("\n")
+      : displayed.servicesRequested || "Piano service";
+    const description = [
+      serviceDescription,
+      displayed.priceEstimate ? `Estimate: ${displayed.priceEstimate}` : "",
+      displayed.notes || "",
+    ].filter(Boolean).join("\n");
+    const filenameName = (customer ? clientName(customer) : "Appointment").replace(/[^a-z0-9]+/gi, "-");
+    downloadAppointmentIcs({
+      id: displayed.id,
+      summary: `${displayed.title || (customer ? clientName(customer) : "Piano Appointment")} — ${displayed.servicesRequested || "Piano Service"}`,
+      date: displayed.date,
+      time: displayed.time,
+      duration: displayed.duration,
+      allDay: displayed.isAllDay,
+      endDate: displayed.endDate,
+      location: customerAddress,
+      description,
+      timezone: "America/New_York",
+    }, `${filenameName}_${displayed.date.replace(/\//g, "-")}.ics`);
+  }
 
   return (
     <>
@@ -754,6 +787,15 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
 
                 {/* ── Action row ── */}
                 <div className="flex items-center gap-2 px-4 py-2.5 border-b bg-background/95 shrink-0 overflow-x-auto">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0"
+                    onClick={saveToAppleCalendar}
+                    data-testid="button-save-appointment-ics"
+                  >
+                    <CalendarPlus className="h-3.5 w-3.5 mr-1.5" /> Save to Apple Calendar
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"

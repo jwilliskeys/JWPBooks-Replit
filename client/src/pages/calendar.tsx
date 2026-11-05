@@ -51,6 +51,7 @@ import {
   ExternalLink,
   MessageSquare,
   Pencil,
+  CalendarPlus,
 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -60,6 +61,7 @@ import type { Appointment, Customer, CalendarNote, CalendarEvent, Piano, Trip } 
 import { CompleteAppointmentDialog } from "@/components/complete-appointment-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
+import { downloadAppointmentIcs } from "@/lib/appointment-ics";
 import { ServicePicker } from "@/components/service-picker";
 import {
   DndContext,
@@ -868,6 +870,35 @@ export default function CalendarPage() {
           {/* Action row */}
           <div className="flex items-center justify-between gap-1 pt-0.5">
             <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  const filenameName = customerName.replace(/[^a-z0-9]+/gi, "-");
+                  const description = [
+                    pianoLabel ? `Piano: ${pianoLabel}` : "",
+                    appt.servicesRequested || "",
+                    appt.priceEstimate ? `Estimate: ${appt.priceEstimate}` : "",
+                    appt.notes || "",
+                  ].filter(Boolean).join("\n");
+                  downloadAppointmentIcs({
+                    id: appt.id,
+                    summary: `${appt.title || customerName} — ${appt.servicesRequested || "Piano Service"}`,
+                    date: appt.date,
+                    time: appt.time,
+                    duration: appt.duration,
+                    allDay: appt.isAllDay,
+                    endDate: appt.endDate,
+                    location: address,
+                    description,
+                    timezone: "America/New_York",
+                  }, `${filenameName}_${appt.date.replace(/\//g, "-")}.ics`);
+                }}
+                className="h-6 px-2 text-[10px] border-sky-300 dark:border-sky-700 text-sky-800 dark:text-sky-200 hover:bg-sky-100 dark:hover:bg-sky-900"
+                data-testid="button-appt-save-ics"
+              >
+                <CalendarPlus className="mr-1 h-3 w-3" /> Save .ics
+              </Button>
               <Button
                 size="sm"
                 variant="outline"

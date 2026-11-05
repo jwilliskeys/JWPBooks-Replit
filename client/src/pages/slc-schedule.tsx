@@ -53,6 +53,7 @@ import {
   Car,
   Star,
   CalendarCheck,
+  CalendarPlus,
   FileText,
   ExternalLink,
   ChevronDown,
@@ -196,6 +197,10 @@ function formatIcsDateTime(dateStr: string, timeStr: string): string {
   return `${year}${String(month).padStart(2, "0")}${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}${String(minute).padStart(2, "0")}00`;
 }
 
+function escapeIcsText(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+
 function generateIcs(
   appt: TripAppointment,
   cust: Customer | undefined,
@@ -228,7 +233,7 @@ function generateIcs(
   if (appt.priceEstimate) descParts.push(`Est. ${appt.priceEstimate}`);
   if (appt.notes) descParts.push(appt.notes);
   const description = descParts.join(" | ");
-  const uid = `${Date.now()}-${appt.id}@pianotech`;
+  const uid = `slc-${appt.id}@johnwillispiano`;
   const dtstamp = new Date().toISOString().replace(/[-:.]/g, "").slice(0, 15) + "Z";
   return [
     "BEGIN:VCALENDAR",
@@ -256,9 +261,9 @@ function generateIcs(
     `DTSTAMP:${dtstamp}`,
     `DTSTART;TZID=America/Denver:${dtStart}`,
     `DTEND;TZID=America/Denver:${dtEnd}`,
-    `SUMMARY:${summary}`,
-    `LOCATION:${location}`,
-    description ? `DESCRIPTION:${description}` : null,
+    `SUMMARY:${escapeIcsText(summary)}`,
+    `LOCATION:${escapeIcsText(location)}`,
+    description ? `DESCRIPTION:${escapeIcsText(description)}` : null,
     "END:VEVENT",
     "END:VCALENDAR",
   ].filter(Boolean).join("\r\n");
@@ -273,7 +278,7 @@ function downloadIcs(content: string, filename: string) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function parseDateStr(dateStr: string): Date {
@@ -389,12 +394,13 @@ interface SortableApptRowProps {
   onComplete: () => void;
   onDelete: () => void;
   onConfirm: () => void;
+  onSaveCalendar: () => void;
   onUnbook: () => void;
   isBooking: boolean;
   isUnbooking: boolean;
 }
 
-function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm, onUnbook, isBooking, isUnbooking }: SortableApptRowProps) {
+function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, driveToNextMinutes, customerMap, pianoMap, onEdit, onComplete, onDelete, onConfirm, onSaveCalendar, onUnbook, isBooking, isUnbooking }: SortableApptRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: appt.id });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
   const cust = customerMap.get(appt.customerId);
@@ -517,6 +523,17 @@ function SortableApptRow({ appt, index, totalAppts, driveMinutes, driveMiles, dr
             )}
           </div>
           <div className="flex shrink-0 items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onSaveCalendar}
+              title="Save to Apple Calendar (.ics)"
+              aria-label="Save appointment to Apple Calendar"
+              data-testid={`button-save-trip-appt-ics-${appt.id}`}
+            >
+              <CalendarPlus className="h-3.5 w-3.5" />
+            </Button>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} title="Edit" data-testid={`button-edit-trip-appt-${appt.id}`}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
@@ -632,6 +649,14 @@ function DayItinerarySection({
     ? customerMap.get(dayAppts[0].customerId)?.city || dayAppts[0].serviceArea || ""
     : "";
 
+  function saveTripAppointmentToCalendar(appt: TripAppointment) {
+    const customer = customerMap.get(appt.customerId);
+    const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
+    const name = customer ? clientName(customer) : "Appointment";
+    const safeName = name.replace(/[^a-z0-9]+/gi, "-");
+    downloadIcs(generateIcs(appt, customer, piano, pianoMap), `${safeName}_${appt.date.replace(/\//g, "-")}.ics`);
+  }
+
   // Whole day column is a drop target so appointments can be dragged onto
   // other days (including empty ones). The parent TripPanel owns the DndContext.
   const { setNodeRef: setDayDropRef, isOver: isDayOver } = useDroppable({ id: `day:${dateStr}` });
@@ -702,6 +727,7 @@ function DayItinerarySection({
                       const piano = appt.pianoId ? pianoMap.get(appt.pianoId) : null;
                       onConfirmAppointment(appt, cust, piano);
                     }}
+                    onSaveCalendar={() => saveTripAppointmentToCalendar(appt)}
                     onUnbook={() => onUnbookAppointment(appt.id)}
                     isBooking={bookingAppointmentId === appt.id}
                     isUnbooking={unbookingAppointmentId === appt.id}
