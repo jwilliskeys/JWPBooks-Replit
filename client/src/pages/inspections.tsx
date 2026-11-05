@@ -1617,17 +1617,17 @@ export default function InspectionsPage() {
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">Inspections & Estimates</h1>
+          <h1 className="text-xl font-bold tracking-tight">Estimates</h1>
           <p className="text-sm text-muted-foreground">
             {inspectionList.length} total
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { setNewType("inspection"); setShowNew(true); }}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Inspection
-          </Button>
           <Button onClick={() => { setNewType("estimate"); setShowNew(true); }}>
             <Plus className="h-4 w-4 mr-1.5" /> New Estimate
+          </Button>
+          <Button variant="outline" onClick={() => { setNewType("inspection"); setShowNew(true); }}>
+            <Plus className="h-4 w-4 mr-1.5" /> New Inspection
           </Button>
         </div>
       </div>
@@ -1647,8 +1647,8 @@ export default function InspectionsPage() {
         <Tabs value={tab} onValueChange={v => setTab(v as any)}>
           <TabsList className="h-8">
             <TabsTrigger value="all" className="text-xs h-full px-3">All</TabsTrigger>
-            <TabsTrigger value="inspection" className="text-xs h-full px-3">Inspections</TabsTrigger>
             <TabsTrigger value="estimate" className="text-xs h-full px-3">Estimates</TabsTrigger>
+            <TabsTrigger value="inspection" className="text-xs h-full px-3">Inspections</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -1662,8 +1662,8 @@ export default function InspectionsPage() {
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
           <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">No inspections found</p>
-          <p className="text-sm mt-1">Create your first inspection to get started</p>
+          <p className="font-medium">No {tab === "all" ? "records" : tab === "estimate" ? "estimates" : "inspections"} found</p>
+          <p className="text-sm mt-1">{tab === "estimate" ? "Create your first estimate to get started" : "Create a new record to get started"}</p>
           <Button className="mt-4" onClick={() => { setNewType(tab === "estimate" ? "estimate" : "inspection"); setShowNew(true); }}>
             <Plus className="h-4 w-4 mr-1.5" /> New {tab === "estimate" ? "Estimate" : "Inspection"}
           </Button>

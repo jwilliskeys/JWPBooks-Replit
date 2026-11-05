@@ -64,7 +64,7 @@ const navItems = [
   { title: "Pianos", url: "/pianos", icon: Music },
   { title: "Calendar", url: "/calendar", icon: Calendar },
   { title: "Trip Planner", url: "/slc-schedule", icon: MapPin },
-  { title: "Inspections", url: "/inspections", icon: ClipboardList },
+  { title: "Estimates", url: "/inspections", icon: FileText },
   { title: "Invoices", url: "/invoices", icon: FileText },
   { title: "Finances", url: "/finances", icon: BarChart2 },
   { title: "Inventory", url: "/inventory", icon: Package },
