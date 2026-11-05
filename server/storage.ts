@@ -1082,19 +1082,42 @@ export class DatabaseStorage implements IStorage {
 
   async seedServiceCatalog(userId: string): Promise<void> {
     const existing = await this.getServiceCatalog(userId);
-    if (existing.length > 0) return;
-    const seeds = [
-      { name: "Tuning", category: "Field Service", defaultCost: "$150", defaultDuration: "1.0 hr", isTuning: true, isDefault: true, sortOrder: 0 },
-      { name: "Pitch Raise", category: "Field Service", defaultCost: "$75", defaultDuration: "0.5 hr", isTuning: true, isDefault: false, sortOrder: 1 },
-      { name: "Regulation", category: "Shopwork", defaultCost: "$200", defaultDuration: "2.0 hr", isTuning: false, isDefault: false, sortOrder: 0 },
-      { name: "Voicing", category: "Shopwork", defaultCost: "$175", defaultDuration: "1.5 hr", isTuning: false, isDefault: false, sortOrder: 1 },
-      { name: "Minor Repair", category: "Shopwork", defaultCost: "$100", defaultDuration: "1.0 hr", isTuning: false, isDefault: false, sortOrder: 2 },
-      { name: "Major Repair", category: "Shopwork", defaultCost: "$300", defaultDuration: "4.0 hr", isTuning: false, isDefault: false, sortOrder: 3 },
-      { name: "Cleaning/Inspection", category: "Inspection", defaultCost: "$75", defaultDuration: "1.0 hr", isTuning: false, isDefault: false, sortOrder: 0 },
-      { name: "Estimate", category: "Inspection", defaultCost: "$0", defaultDuration: "0.5 hr", isTuning: false, isDefault: false, sortOrder: 1 },
+    if (existing.length === 0) {
+      const seeds = [
+        { name: "Tuning", category: "Field Service", defaultCost: "$150", defaultDuration: "1.0 hr", isTuning: true, isDefault: true, sortOrder: 0 },
+        { name: "Pitch Raise", category: "Field Service", defaultCost: "$75", defaultDuration: "0.5 hr", isTuning: true, isDefault: false, sortOrder: 1 },
+        { name: "Regulation", category: "Shopwork", defaultCost: "$200", defaultDuration: "2.0 hr", isTuning: false, isDefault: false, sortOrder: 0 },
+        { name: "Voicing", category: "Shopwork", defaultCost: "$175", defaultDuration: "1.5 hr", isTuning: false, isDefault: false, sortOrder: 1 },
+        { name: "Minor Repair", category: "Shopwork", defaultCost: "$100", defaultDuration: "1.0 hr", isTuning: false, isDefault: false, sortOrder: 2 },
+        { name: "Major Repair", category: "Shopwork", defaultCost: "$300", defaultDuration: "4.0 hr", isTuning: false, isDefault: false, sortOrder: 3 },
+        { name: "Cleaning/Inspection", category: "Inspection", defaultCost: "$75", defaultDuration: "1.0 hr", isTuning: false, isDefault: false, sortOrder: 0 },
+        { name: "Estimate", category: "Inspection", defaultCost: "$0", defaultDuration: "0.5 hr", isTuning: false, isDefault: false, sortOrder: 1 },
+      ];
+      for (const seed of seeds) {
+        await db.insert(serviceCatalog).values({ ...seed, userId, isActive: true }).onConflictDoNothing();
+      }
+    }
+
+    // Ensure the estimate services exist for current as well as newly initialized
+    // catalogs. The unique (user_id, name) constraint makes this safe to repeat.
+    const actionServices = [
+      { name: "Hammer Repinning", category: "Action Reconditioning", defaultCost: "$600", isTuning: false, sortOrder: 100 },
+      { name: "Hammer Reshaping", category: "Action Reconditioning", defaultCost: "$600", isTuning: false, sortOrder: 101 },
+      { name: "Regulation & Voicing After Hammer Work", category: "Action Reconditioning", defaultCost: "$600", isTuning: false, sortOrder: 102 },
     ];
-    for (const seed of seeds) {
-      await db.insert(serviceCatalog).values({ ...seed, userId, isActive: true }).onConflictDoNothing();
+    const serviceNames = new Set(
+      (await this.getServiceCatalog(userId)).map(item => item.name.trim().toLowerCase())
+    );
+    for (const service of actionServices) {
+      if (serviceNames.has(service.name.toLowerCase())) continue;
+      await db.insert(serviceCatalog).values({
+        ...service,
+        userId,
+        isActive: true,
+        isDefault: false,
+        selfSchedulable: false,
+      }).onConflictDoNothing();
+      serviceNames.add(service.name.toLowerCase());
     }
   }
 

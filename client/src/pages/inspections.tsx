@@ -139,6 +139,13 @@ function EstimateLineItemsEditor({
 }) {
   const update = (index: number, patch: Partial<RecommendedService>) =>
     setItems(items.map((item, i) => i === index ? { ...item, ...patch } : item));
+  const actionPackageNames = [
+    "Hammer Repinning",
+    "Hammer Reshaping",
+    "Regulation & Voicing After Hammer Work",
+  ];
+  const actionPackage = actionPackageNames
+    .map(name => services.find(service => service.name.toLowerCase() === name.toLowerCase() && service.isActive));
   const total = estimateTotal(items);
   return (
     <section className="space-y-3 rounded-xl border bg-card p-4">
@@ -147,9 +154,27 @@ function EstimateLineItemsEditor({
           <h3 className="font-semibold">Estimate services</h3>
           <p className="text-xs text-muted-foreground">Choose from your master service list or enter custom work and pricing.</p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => setItems([...items, { category: "", service: "", estimatedCost: "" }])}>
-          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add service
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          {actionPackage.every(Boolean) && (
+            <Button type="button" variant="outline" size="sm" onClick={() => {
+              const additions = actionPackage
+                .filter((service): service is ServiceCatalogItem => !!service)
+                .filter(service => !items.some(item => item.service.trim().toLowerCase() === service.name.toLowerCase()))
+                .map(service => ({
+                  catalogServiceId: service.id,
+                  category: service.category || "Action Reconditioning",
+                  service: service.name,
+                  estimatedCost: service.defaultCost || "$600",
+                }));
+              setItems([...items, ...additions]);
+            }}>
+              Add action reconditioning package
+            </Button>
+          )}
+          <Button type="button" variant="outline" size="sm" onClick={() => setItems([...items, { category: "", service: "", estimatedCost: "" }])}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add service
+          </Button>
+        </div>
       </div>
       {items.map((item, index) => (
         <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_130px_36px]">
