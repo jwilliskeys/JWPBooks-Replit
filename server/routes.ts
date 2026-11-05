@@ -1607,6 +1607,43 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/trips/:id/contacted-clients", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const tripId = parseInt(req.params.id);
+      if (isNaN(tripId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
+      res.json(await storage.getTripContactedCustomerIds(tripId));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/trips/:id/contacted-clients/:customerId", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const tripId = parseInt(req.params.id);
+      const customerId = parseInt(req.params.customerId);
+      if (isNaN(tripId) || isNaN(customerId)) return res.status(400).json({ message: "Invalid ID" });
+      const trip = await storage.getTrip(tripId);
+      if (!trip || trip.userId !== userId) return res.status(404).json({ message: "Trip not found" });
+      const customer = await storage.getCustomer(customerId);
+      if (!customer || customer.userId !== userId) return res.status(404).json({ message: "Customer not found" });
+      const lastContacted = new Intl.DateTimeFormat("en-US", {
+        timeZone: "America/New_York",
+        month: "numeric",
+        day: "numeric",
+        year: "2-digit",
+      }).format(new Date());
+      await storage.updateCustomer(customerId, { lastContacted });
+      await storage.markTripCustomerContacted(tripId, customerId);
+      res.json({ customerId, lastContacted });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/trips/:id/appointments", async (req, res) => {
     try {
       const userId = getUserId(req);

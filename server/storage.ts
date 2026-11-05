@@ -30,6 +30,7 @@ import {
   bookingRequests,
   schedulerSettings,
   outreachLeads,
+  tripOutreachCandidates,
   type Customer,
   type InsertCustomer,
   type Piano,
@@ -230,6 +231,8 @@ export interface IStorage {
   updateTrip(id: number, data: Partial<InsertTrip>): Promise<Trip | undefined>;
   deleteTrip(id: number): Promise<boolean>;
   getTripAppointments(tripId: number): Promise<TripAppointment[]>;
+  getTripContactedCustomerIds(tripId: number): Promise<number[]>;
+  markTripCustomerContacted(tripId: number, customerId: number): Promise<void>;
   getTripAppointment(id: number): Promise<TripAppointment | undefined>;
   createTripAppointment(appointment: InsertTripAppointment): Promise<TripAppointment>;
   updateTripAppointment(id: number, data: Partial<InsertTripAppointment>): Promise<TripAppointment | undefined>;
@@ -721,6 +724,24 @@ export class DatabaseStorage implements IStorage {
 
   async getTripAppointments(tripId: number): Promise<TripAppointment[]> {
     return db.select().from(tripAppointments).where(eq(tripAppointments.tripId, tripId)).orderBy(tripAppointments.date, tripAppointments.time);
+  }
+
+  async getTripContactedCustomerIds(tripId: number): Promise<number[]> {
+    const rows = await db
+      .select({ customerId: tripOutreachCandidates.customerId })
+      .from(tripOutreachCandidates)
+      .where(and(eq(tripOutreachCandidates.tripId, tripId), eq(tripOutreachCandidates.status, "contacted")));
+    return rows.map((row) => row.customerId);
+  }
+
+  async markTripCustomerContacted(tripId: number, customerId: number): Promise<void> {
+    await db
+      .insert(tripOutreachCandidates)
+      .values({ tripId, customerId, status: "contacted" })
+      .onConflictDoUpdate({
+        target: [tripOutreachCandidates.tripId, tripOutreachCandidates.customerId],
+        set: { status: "contacted" },
+      });
   }
 
   async getTripAppointment(id: number): Promise<TripAppointment | undefined> {

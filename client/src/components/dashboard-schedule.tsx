@@ -392,6 +392,7 @@ export function DashboardSchedule() {
   const [addClientOpen, setAddClientOpen] = useState(false);
   const [clientSearch, setClientSearch] = useState("");
   const [selectedAddClient, setSelectedAddClient] = useState<Customer | null>(null);
+  const [bookClientImmediately, setBookClientImmediately] = useState(false);
   const [tripCategory, setTripCategory] = useState<"booked" | "unconfirmed" | "suggested">("booked");
   const [showIgnoredSuggestions, setShowIgnoredSuggestions] = useState(false);
   const [addStopOpen, setAddStopOpen] = useState(false);
@@ -426,6 +427,12 @@ export function DashboardSchedule() {
     queryKey: [tripAppointmentsKey],
     enabled: !!upcomingTrip,
   });
+  const contactedClientsKey = `/api/trips/${upcomingTrip?.id ?? "none"}/contacted-clients`;
+  const { data: contactedCustomerIds = [] } = useQuery<number[]>({
+    queryKey: [contactedClientsKey],
+    enabled: !!upcomingTrip,
+  });
+  const contactedCustomerIdSet = useMemo(() => new Set(contactedCustomerIds), [contactedCustomerIds]);
 
   const customerMap = useMemo(
     () => new Map(customers?.map((customer) => [customer.id, customer]) ?? []),
@@ -490,6 +497,22 @@ export function DashboardSchedule() {
       });
     },
     onError: (error: any) => toast({ title: "Could not book appointment", description: error.message, variant: "destructive" }),
+  });
+
+  const markTripClientContactedMutation = useMutation({
+    mutationFn: async (customerId: number) => {
+      if (!upcomingTrip) throw new Error("There is no upcoming trip.");
+      const response = await apiRequest("POST", `/api/trips/${upcomingTrip.id}/contacted-clients/${customerId}`);
+      return response.json() as Promise<{ customerId: number; lastContacted: string }>;
+    },
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: [contactedClientsKey] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/customers"] }),
+      ]);
+      toast({ title: "Client marked as contacted" });
+    },
+    onError: (error: Error) => toast({ title: "Could not mark client contacted", description: error.message, variant: "destructive" }),
   });
 
   const unbookTripAppointmentMutation = useMutation({
@@ -587,6 +610,7 @@ export function DashboardSchedule() {
     const query = clientSearch.trim().toLowerCase();
     return utahClients
       .filter((customer) => !customer.isTripSuggestionIgnored && !existingTripCustomerIds.has(customer.id))
+      .filter((customer) => !contactedCustomerIdSet.has(customer.id))
       .filter((customer) => !query || `${clientName(customer)} ${customer.city ?? ""} ${customer.phone ?? ""}`.toLowerCase().includes(query))
       .sort((a, b) => Number(!!b.isStarred) - Number(!!a.isStarred) || clientName(a).localeCompare(clientName(b)))
       .slice(0, 30);
@@ -656,7 +680,7 @@ export function DashboardSchedule() {
       })
       .filter((item) => item.pianoCount > 0 && item.nearestDueDays <= 180)
       .sort((a, b) => b.score - a.score || clientName(a.customer).localeCompare(clientName(b.customer)));
-  }, [utahClients, pianos, existingTripCustomerIds, tripAppointments, customerMap, outreachLeads]);
+  }, [utahClients, pianos, existingTripCustomerIds, tripAppointments, customerMap, outreachLeads, contactedCustomerIdSet]);
   const recommendedClients = useMemo(
     () => allSuggestions.slice(0, 5),
     [allSuggestions],
@@ -949,17 +973,38 @@ export function DashboardSchedule() {
                     {recommendedClients.map(({ customer, reason, pianoCount }) => (
                       <div key={customer.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
                         <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">{clientName(customer)}</p>
+                          <Link href={`/customers/${customer.id}`} className="block truncate text-sm font-medium hover:text-primary hover:underline" data-testid={`link-suggested-client-${customer.id}`}>
+                            {clientName(customer)}
+                          </Link>
                           <p className="truncate text-xs text-muted-foreground">
                             {[customer.city, `${pianoCount} piano${pianoCount === 1 ? "" : "s"}`, reason].filter(Boolean).join(" · ")}
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-1">
-                          <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" disabled={!upcomingTrip} onClick={() => {
+                          <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!upcomingTrip} onClick={() => {
                             setSelectedAddClient(customer);
+                            setBookClientImmediately(false);
                             setAddStopOpen(true);
                           }}>
                             Add
+                          </Button>
+                          <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" disabled={!upcomingTrip} onClick={() => {
+                            setSelectedAddClient(customer);
+                            setBookClientImmediately(true);
+                            setAddStopOpen(true);
+                          }}>
+                            Book
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            title={`Mark ${clientName(customer)} as contacted`}
+                            aria-label={`Mark ${clientName(customer)} as contacted`}
+                            disabled={markTripClientContactedMutation.isPending || !upcomingTrip}
+                            onClick={() => markTripClientContactedMutation.mutate(customer.id)}
+                          >
+                            <CheckCircle2 className="h-4 w-4 text-green-600" />
                           </Button>
                           <Button size="icon" variant="ghost" className="h-7 w-7" title={`Ignore ${clientName(customer)}`} aria-label={`Ignore ${clientName(customer)}`} disabled={ignoreSuggestionMutation.isPending} onClick={() => ignoreSuggestionMutation.mutate({ customerId: customer.id, ignored: true })}>
                             <X className="h-3.5 w-3.5" />
@@ -1100,7 +1145,7 @@ export function DashboardSchedule() {
             </section>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setAddClientOpen(false)}>Cancel</Button>
-              <Button disabled={!selectedAddClient || !upcomingTrip} onClick={() => { setAddClientOpen(false); setAddStopOpen(true); }}>
+              <Button disabled={!selectedAddClient || !upcomingTrip} onClick={() => { setBookClientImmediately(false); setAddClientOpen(false); setAddStopOpen(true); }}>
                 Continue to appointment
               </Button>
             </div>
@@ -1109,12 +1154,13 @@ export function DashboardSchedule() {
       </Dialog>
       <AppointmentDialog
         open={addStopOpen}
-        onOpenChange={(open) => { setAddStopOpen(open); if (!open) setSelectedAddClient(null); }}
+        onOpenChange={(open) => { setAddStopOpen(open); if (!open) { setSelectedAddClient(null); setBookClientImmediately(false); } }}
         customerId={selectedAddClient?.id}
         customerName={selectedAddClient ? clientName(selectedAddClient) : undefined}
         initialDate={upcomingTrip ? formatAppDate(parseAnyDate(upcomingTrip.startDate) ?? today) : undefined}
         tripId={upcomingTrip?.id}
         serviceAreaLabel="Utah trip"
+        bookImmediately={bookClientImmediately}
       />
       <Dialog open={!!selectedTripStop} onOpenChange={(open) => { if (!open) { setSelectedTripStop(null); setEditingStop(false); } }}>
         <DialogContent className="max-w-xl">

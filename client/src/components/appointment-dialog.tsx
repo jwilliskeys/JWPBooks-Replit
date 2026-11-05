@@ -79,6 +79,7 @@ interface AppointmentDialogProps {
   tripId?: number;
   serviceAreaLabel?: string;
   additionalExistingAppointments?: ExistingAppointment[];
+  bookImmediately?: boolean;
 }
 
 // ─── Finalize & Save Dialog ──────────────────────────────────────────────────
@@ -106,6 +107,7 @@ interface FinalizeDialogProps {
   initialTimeMinutes?: number;
   initialDurationMinutes?: number;
   additionalExistingAppointments?: ExistingAppointment[];
+  bookImmediately?: boolean;
   onSuccess: () => void;
 }
 
@@ -132,6 +134,7 @@ function FinalizeDialog({
   initialTimeMinutes,
   initialDurationMinutes,
   additionalExistingAppointments,
+  bookImmediately,
   onSuccess,
 }: FinalizeDialogProps) {
   const { toast } = useToast();
@@ -284,12 +287,29 @@ function FinalizeDialog({
             serviceArea: selectedCustomer?.city || serviceAreaLabel,
           })
         : await apiRequest("POST", "/api/appointments", payload);
-      return res.json();
+      const appointment = await res.json();
+      let booked = !tripId || !bookImmediately;
+      let bookingError = "";
+      if (tripId && bookImmediately) {
+        try {
+          const bookingResponse = await apiRequest("POST", `/api/trip-appointments/${appointment.id}/book`);
+          if (bookingResponse.ok) {
+            booked = true;
+          } else {
+            const result = await bookingResponse.json().catch(() => ({}));
+            bookingError = result.message || "The appointment was added as unconfirmed.";
+          }
+        } catch (error) {
+          bookingError = error instanceof Error ? error.message : "The appointment was added as unconfirmed.";
+        }
+      }
+      return { appointment, booked, bookingError };
     },
-    onSuccess: () => {
+    onSuccess: ({ booked, bookingError }) => {
       if (tripId) {
-        queryClient.invalidateQueries({ queryKey: ["/api/trips", tripId, "appointments"] });
+        queryClient.invalidateQueries({ queryKey: [`/api/trips/${tripId}/appointments`] });
         queryClient.invalidateQueries({ queryKey: ["/api/trips"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       } else {
         queryClient.invalidateQueries({ queryKey: ["/api/appointments"] });
       }
@@ -299,7 +319,13 @@ function FinalizeDialog({
       onSuccess();
       onOpenChange(false);
       const pianoCount = sections.filter(s => !s.isMisc && s.pianoId).length;
-      toast({ title: tripId ? "Appointment added to trip" : pianoCount > 1 ? `Appointment scheduled (${pianoCount} pianos)` : "Appointment scheduled" });
+      if (tripId && bookImmediately) {
+        toast(booked
+          ? { title: "Appointment booked" }
+          : { title: "Added as unconfirmed", description: bookingError, variant: "destructive" });
+      } else {
+        toast({ title: tripId ? "Appointment added to trip" : pianoCount > 1 ? `Appointment scheduled (${pianoCount} pianos)` : "Appointment scheduled" });
+      }
     },
     onError: () => toast({ title: "Failed to schedule appointment", variant: "destructive" }),
   });
@@ -507,7 +533,13 @@ function FinalizeDialog({
             Cancel
           </Button>
           <Button onClick={handleSave} disabled={createMutation.isPending} data-testid="button-save-appointment">
-            {createMutation.isPending ? "Saving…" : "Save"}
+            {createMutation.isPending
+              ? "Saving…"
+              : tripId && bookImmediately
+                ? "Book appointment"
+                : tripId
+                  ? "Add unconfirmed stop"
+                  : "Save"}
           </Button>
         </div>
       </DialogContent>
@@ -529,6 +561,7 @@ export function AppointmentDialog({
   tripId,
   serviceAreaLabel,
   additionalExistingAppointments,
+  bookImmediately = false,
 }: AppointmentDialogProps) {
   const [pickerMountKey, setPickerMountKey] = useState(0);
   const [showFinalizeDialog, setShowFinalizeDialog] = useState(false);
@@ -846,7 +879,7 @@ export function AppointmentDialog({
                   className="text-sm"
                   data-testid="button-book-appointment"
                 >
-                   {tripId ? "Book appointment" : bookLabel}
+                   {tripId ? (bookImmediately ? "Book appointment" : "Add unconfirmed stop") : bookLabel}
                 </Button>
               </div>
             </div>
@@ -878,6 +911,7 @@ export function AppointmentDialog({
         initialTimeMinutes={initialTimeMinutes}
         initialDurationMinutes={initialDurationMinutes}
         additionalExistingAppointments={additionalExistingAppointments}
+        bookImmediately={bookImmediately}
         onSuccess={() => onOpenChange(false)}
       />
     </>

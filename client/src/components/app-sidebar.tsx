@@ -22,29 +22,29 @@ function JwpEmblem({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 600 600" fill="currentColor" className={className} aria-label="John Willis Piano logo">
       <clipPath id="jwp-emblem-clip">
-        <circle cx="300" cy="300" r="265" />
+        <circle cx="300" cy="300" r="253" />
       </clipPath>
-      <circle cx="300" cy="300" r="272" fill="none" stroke="currentColor" strokeWidth="14" />
+      <circle cx="300" cy="300" r="260" fill="none" stroke="currentColor" strokeWidth="14" />
       <g clipPath="url(#jwp-emblem-clip)">
         {/* keybed rail */}
-        <rect x="28" y="382" width="544" height="10" />
+        <rect x="28" y="370" width="544" height="10" />
         {/* white-key dividers */}
-        <rect x="79.9" y="392" width="5" height="200" />
-        <rect x="134.3" y="392" width="5" height="200" />
-        <rect x="188.7" y="392" width="5" height="200" />
-        <rect x="243.1" y="392" width="5" height="200" />
-        <rect x="297.5" y="392" width="5" height="200" />
-        <rect x="351.9" y="392" width="5" height="200" />
-        <rect x="406.3" y="392" width="5" height="200" />
-        <rect x="460.7" y="392" width="5" height="200" />
-        <rect x="515.1" y="392" width="5" height="200" />
+        <rect x="79.9" y="380" width="5" height="200" />
+        <rect x="134.3" y="380" width="5" height="200" />
+        <rect x="188.7" y="380" width="5" height="200" />
+        <rect x="243.1" y="380" width="5" height="200" />
+        <rect x="297.5" y="380" width="5" height="200" />
+        <rect x="351.9" y="380" width="5" height="200" />
+        <rect x="406.3" y="380" width="5" height="200" />
+        <rect x="460.7" y="380" width="5" height="200" />
+        <rect x="515.1" y="380" width="5" height="200" />
         {/* black keys — real piano 2+3 grouping (band starts on B) */}
-        <rect x="117.87" y="392" width="31.55" height="108.4" />
-        <rect x="178.58" y="392" width="31.55" height="108.4" />
-        <rect x="280.12" y="392" width="31.55" height="108.4" />
-        <rect x="338.62" y="392" width="31.55" height="108.4" />
-        <rect x="397.13" y="392" width="31.55" height="108.4" />
-        <rect x="498.67" y="392" width="31.55" height="108.4" />
+        <rect x="117.87" y="380" width="31.55" height="120" />
+        <rect x="178.58" y="380" width="31.55" height="120" />
+        <rect x="280.12" y="380" width="31.55" height="120" />
+        <rect x="338.62" y="380" width="31.55" height="120" />
+        <rect x="397.13" y="380" width="31.55" height="120" />
+        <rect x="498.67" y="380" width="31.55" height="120" />
       </g>
       {/* JWP — Libre Baskerville Bold outlines */}
       <path
