@@ -320,6 +320,10 @@ function parsePrice(str: string | null | undefined): number {
   return isNaN(num) ? 0 : num;
 }
 
+function isBookedTripAppointment(appt: TripAppointment): boolean {
+  return appt.linkedAppointmentId != null && appt.status?.toLowerCase() !== "cancelled";
+}
+
 function legacyTripServiceGroups(
   appointment: TripAppointment,
   catalog: ServiceCatalogItem[],
@@ -644,7 +648,9 @@ function DayItinerarySection({
   const returnDriveMiles = drivingDistances ? drivingDistances[drivingDistances.length - 1] : null;
 
   const dayName = dayDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-  const dayRevenue = dayAppts.reduce((s, a) => s + parsePrice(a.priceEstimate), 0);
+  const dayRevenue = dayAppts
+    .filter(isBookedTripAppointment)
+    .reduce((s, a) => s + parsePrice(a.priceEstimate), 0);
   const dayArea = dayAppts.length > 0
     ? customerMap.get(dayAppts[0].customerId)?.city || dayAppts[0].serviceArea || ""
     : "";
@@ -948,7 +954,7 @@ function TripPanel({
   }, [tripAppointments]);
 
   const totalRevenue = useMemo(
-    () => tripAppointments?.reduce((sum, a) => sum + parsePrice(a.priceEstimate), 0) ?? 0,
+    () => tripAppointments?.filter(isBookedTripAppointment).reduce((sum, a) => sum + parsePrice(a.priceEstimate), 0) ?? 0,
     [tripAppointments]
   );
 
