@@ -10,9 +10,9 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock, GripVertical, Plane, Plus, Search, Pencil, Trash2, CheckCircle2, X } from "lucide-react";
+import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock, GripVertical, Plane, Plus, Search, Pencil, Trash2, CheckCircle2, X, Sparkles } from "lucide-react";
 import { Link } from "wouter";
-import type { Appointment, Customer, Piano, Trip, TripAppointment } from "@shared/schema";
+import type { Appointment, Customer, OutreachLead, Piano, Trip, TripAppointment } from "@shared/schema";
 import { appointmentOccursOn, expandAppointmentDates, parseAnyDate } from "@shared/appointment-repeat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -392,6 +392,8 @@ export function DashboardSchedule() {
   const [addClientOpen, setAddClientOpen] = useState(false);
   const [clientSearch, setClientSearch] = useState("");
   const [selectedAddClient, setSelectedAddClient] = useState<Customer | null>(null);
+  const [tripCategory, setTripCategory] = useState<"booked" | "unconfirmed" | "suggested">("booked");
+  const [showIgnoredSuggestions, setShowIgnoredSuggestions] = useState(false);
   const [addStopOpen, setAddStopOpen] = useState(false);
   const [editingStop, setEditingStop] = useState(false);
   const [editValues, setEditValues] = useState({ date: "", time: "", duration: 120, title: "", notes: "" });
@@ -405,6 +407,18 @@ export function DashboardSchedule() {
     queryKey: ["/api/customers"],
   });
   const { data: pianos } = useQuery<Piano[]>({ queryKey: ["/api/pianos"] });
+  const { data: outreachLeads } = useQuery<OutreachLead[]>({ queryKey: ["/api/outreach-leads"] });
+
+  const ignoreSuggestionMutation = useMutation({
+    mutationFn: async ({ customerId, ignored }: { customerId: number; ignored: boolean }) => {
+      const response = await apiRequest("PATCH", `/api/customers/${customerId}`, { isTripSuggestionIgnored: ignored });
+      return response.json() as Promise<Customer>;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/customers"] });
+    },
+    onError: (error: Error) => toast({ title: "Could not update suggested clients", description: error.message, variant: "destructive" }),
+  });
 
   const upcomingTrip = useMemo(() => getUpcomingTrip(trips, today), [trips, today]);
   const tripAppointmentsKey = `/api/trips/${upcomingTrip?.id ?? "none"}/appointments`;
@@ -552,6 +566,14 @@ export function DashboardSchedule() {
     }),
     [tripAppointments],
   );
+  const bookedTripAppointments = useMemo(
+    () => tripAppointmentsForCard.filter((appointment) => !!appointment.linkedAppointmentId && isOpenStatus(appointment.status)),
+    [tripAppointmentsForCard],
+  );
+  const unconfirmedTripAppointments = useMemo(
+    () => tripAppointmentsForCard.filter((appointment) => !appointment.linkedAppointmentId && isOpenStatus(appointment.status)),
+    [tripAppointmentsForCard],
+  );
   const existingTripCustomerIds = useMemo(
     () => new Set(tripAppointmentsForCard.map((appointment) => appointment.customerId)),
     [tripAppointmentsForCard],
@@ -564,37 +586,85 @@ export function DashboardSchedule() {
   const clientOptions = useMemo(() => {
     const query = clientSearch.trim().toLowerCase();
     return utahClients
-      .filter((customer) => !existingTripCustomerIds.has(customer.id))
+      .filter((customer) => !customer.isTripSuggestionIgnored && !existingTripCustomerIds.has(customer.id))
       .filter((customer) => !query || `${clientName(customer)} ${customer.city ?? ""} ${customer.phone ?? ""}`.toLowerCase().includes(query))
       .sort((a, b) => Number(!!b.isStarred) - Number(!!a.isStarred) || clientName(a).localeCompare(clientName(b)))
       .slice(0, 30);
   }, [utahClients, existingTripCustomerIds, clientSearch]);
-  const recommendedClients = useMemo(() => {
-    const now = new Date();
+  const allSuggestions = useMemo(() => {
+    const now = startOfDay(new Date());
+    const dayMs = 86400000;
     const tripCityCounts = new Map<string, number>();
     (tripAppointments ?? []).forEach((stop) => {
       const city = customerMap.get(stop.customerId)?.city?.trim().toLowerCase();
       if (city) tripCityCounts.set(city, (tripCityCounts.get(city) ?? 0) + 1);
     });
+    const contactDigits = (value?: string | null) => (value || "").replace(/\D/g, "");
+    const warmthFor = (customer: Customer) => {
+      const email = customer.email?.trim().toLowerCase();
+      const phone = contactDigits(customer.phone);
+      const match = (outreachLeads ?? []).find((lead) => {
+        const emailMatch = !!email && !!lead.email && email === lead.email.trim().toLowerCase();
+        const leadPhone = contactDigits(lead.phone);
+        const phoneMatch = phone.length >= 7 && leadPhone.length >= 7 && phone === leadPhone;
+        return emailMatch || phoneMatch;
+      });
+      const status = match?.status?.toLowerCase() || "";
+      if (/not interested|not in service|do not contact/.test(status)) return { score: -2, label: "Cool contact" };
+      if (/interested|\bclient\b|booked/.test(status)) return { score: 3, label: "Warm contact" };
+      if (match && !/not contacted/.test(status)) return { score: 1, label: "Previously contacted" };
+      return { score: 0, label: "New contact" };
+    };
+
     return utahClients
       .filter((customer) => !existingTripCustomerIds.has(customer.id))
       .map((customer) => {
         const ownedPianos = (pianos ?? []).filter((piano) => piano.customerId === customer.id && piano.isActive !== false);
-        const dueCount = ownedPianos.filter((piano) => {
-          if (!piano.lastTuned) return true;
+        const daysUntilDue = ownedPianos.map((piano) => {
+          if (!piano.lastTuned) return -3650;
           const lastTuned = parseAnyDate(piano.lastTuned);
-          if (!lastTuned) return true;
-          const months = Number.parseInt(piano.tuningInterval ?? "", 10) || 6;
-          return (now.getTime() - lastTuned.getTime()) / 86400000 >= months * 30;
-        }).length;
+          if (!lastTuned) return -3650;
+          const dueDate = new Date(lastTuned);
+          dueDate.setMonth(dueDate.getMonth() + (Number.parseInt(piano.tuningInterval ?? "", 10) || 6));
+          return Math.ceil((startOfDay(dueDate).getTime() - now.getTime()) / dayMs);
+        });
+        const dueCount = daysUntilDue.filter((days) => days <= 0).length;
+        const nearestDueDays = daysUntilDue.length ? Math.min(...daysUntilDue) : Infinity;
         const city = customer.city?.trim().toLowerCase() ?? "";
         const routeFit = city && tripCityCounts.has(city) ? tripCityCounts.get(city)! : 0;
-        return { customer, dueCount, pianoCount: ownedPianos.length, routeFit };
+        const warmth = warmthFor(customer);
+        const dueScore = nearestDueDays <= 0
+          ? 5 + Math.min(6, Math.floor(Math.abs(nearestDueDays) / 90))
+          : nearestDueDays <= 30 ? 4 : nearestDueDays <= 90 ? 2 : 0;
+        const score = dueScore + Math.min(routeFit, 3) * 2 + warmth.score + (customer.isStarred ? 1 : 0);
+        const dueReason = dueCount
+          ? `${dueCount} piano${dueCount === 1 ? "" : "s"} overdue`
+          : Number.isFinite(nearestDueDays)
+            ? `Tuning due in ${nearestDueDays} days`
+            : "Tuning date unknown";
+        const proximityReason = routeFit ? `Near ${routeFit} planned stop${routeFit === 1 ? "" : "s"}` : "";
+        return {
+          customer,
+          dueCount,
+          pianoCount: ownedPianos.length,
+          routeFit,
+          nearestDueDays,
+          warmthLabel: warmth.label,
+          score,
+          reason: [dueReason, proximityReason, warmth.score !== 0 ? warmth.label : ""].filter(Boolean).join(" · "),
+        };
       })
-      .filter((item) => item.pianoCount > 0)
-      .sort((a, b) => b.dueCount - a.dueCount || b.routeFit - a.routeFit || Number(!!b.customer.isStarred) - Number(!!a.customer.isStarred))
-      .slice(0, 5);
-  }, [utahClients, pianos, existingTripCustomerIds, tripAppointments, customerMap]);
+      .filter((item) => item.pianoCount > 0 && item.nearestDueDays <= 180)
+      .sort((a, b) => b.score - a.score || clientName(a.customer).localeCompare(clientName(b.customer)));
+  }, [utahClients, pianos, existingTripCustomerIds, tripAppointments, customerMap, outreachLeads]);
+  const recommendedClients = useMemo(
+    () => allSuggestions.slice(0, 5),
+    [allSuggestions],
+  );
+  const ignoredClients = useMemo(
+    () => utahClients.filter((customer) => customer.isTripSuggestionIgnored && !existingTripCustomerIds.has(customer.id)),
+    [utahClients, existingTripCustomerIds],
+  );
 
   function openTripStopDetails(appointment: TripAppointment) {
     setSelectedTripStop(appointment);
@@ -753,82 +823,7 @@ export function DashboardSchedule() {
   }
 
   return (
-    <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.65fr)]">
-      <Card className="min-w-0" data-testid="dashboard-upcoming-trip">
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base font-semibold">
-            <Plane className="h-4 w-4" /> Upcoming Trip
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {tripsLoading ? (
-            <div className="space-y-2">
-              <Skeleton className="h-5 w-40" />
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : !upcomingTrip ? (
-            <div className="flex flex-col items-center gap-2 py-7 text-center">
-              <Plane className="h-8 w-8 text-muted-foreground/35" />
-              <p className="text-sm text-muted-foreground">No active or upcoming trips.</p>
-              <Link href="/slc-schedule">
-                <Button size="sm" variant="outline">Plan a trip</Button>
-              </Link>
-            </div>
-          ) : (
-            <>
-              <div>
-                <Link href="/slc-schedule" className="font-semibold hover:underline">
-                  {upcomingTrip.name}
-                </Link>
-                <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <CalendarDays className="h-3.5 w-3.5" />
-                  {formatTripRange(upcomingTrip)}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="outline" className="border-green-600/30 bg-green-500/10 text-green-700 dark:text-green-400">
-                  {tripAppointmentsForCard.filter((appointment) => !!appointment.linkedAppointmentId).length} booked
-                </Badge>
-                <Badge variant="outline" className="border-amber-600/30 bg-amber-500/10 text-amber-700 dark:text-amber-400">
-                  {tripAppointmentsForCard.filter((appointment) => !appointment.linkedAppointmentId).length} not booked
-                </Badge>
-              </div>
-              <div className="max-h-[420px] space-y-0.5 overflow-y-auto rounded-md border p-1" data-testid="dashboard-trip-stops">
-                {tripAppointmentsLoading ? (
-                  <div className="space-y-2 p-2">
-                    <Skeleton className="h-11 w-full" />
-                    <Skeleton className="h-11 w-full" />
-                  </div>
-                ) : tripAppointmentsForCard.length === 0 ? (
-                  <p className="px-3 py-5 text-center text-xs text-muted-foreground">No stops added to this trip yet.</p>
-                ) : (
-                  tripAppointmentsForCard.map((appointment) => (
-                    <TripAppointmentRow
-                      key={appointment.id}
-                      appointment={appointment}
-                      customer={customerMap.get(appointment.customerId)}
-                      pianoMap={pianoMap}
-                      onSelectDate={setDate}
-                      onOpenDetails={() => openTripStopDetails(appointment)}
-                      onBook={() => bookTripAppointmentMutation.mutate(appointment.id)}
-                      isBooking={bookTripAppointmentMutation.isPending && bookTripAppointmentMutation.variables === appointment.id}
-                      onUnbook={() => unbookTripAppointmentMutation.mutate(appointment.id)}
-                      isUnbooking={unbookTripAppointmentMutation.isPending && unbookTripAppointmentMutation.variables === appointment.id}
-                    />
-                  ))
-                )}
-              </div>
-              <Link href="/slc-schedule">
-                <Button variant="ghost" size="sm" className="w-full text-xs">
-                  Open Trip Planner <ArrowRight className="ml-1 h-3 w-3" />
-                </Button>
-              </Link>
-            </>
-          )}
-        </CardContent>
-      </Card>
-
+    <div className="min-w-0 space-y-4">
       <Card className="min-w-0" data-testid="dashboard-upcoming-appointments">
         <CardHeader className="space-y-3 pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -846,6 +841,16 @@ export function DashboardSchedule() {
             </div>
           </div>
           <p className="text-sm font-medium">{dateLabel}</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Link href="/slc-schedule">
+              <Button size="sm" variant="outline" className="h-8">
+                <Plane className="mr-1.5 h-3.5 w-3.5" />
+                {tripsLoading ? "Loading trip…" : upcomingTrip ? `${upcomingTrip.name} · Trip Planner` : "Plan a trip"}
+                <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+              </Button>
+            </Link>
+            {upcomingTrip && <span className="text-xs text-muted-foreground">{formatTripRange(upcomingTrip)}</span>}
+          </div>
           {tripDateChips.length > 0 && (
             <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label="Trip days">
               {tripDateChips.map((date) => (
@@ -860,6 +865,115 @@ export function DashboardSchedule() {
           )}
         </CardHeader>
         <CardContent className="pt-0">
+          <div className="mb-4 rounded-lg border bg-muted/10 p-3" data-testid="dashboard-trip-categories">
+            <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Trip clients">
+              <Button
+                size="sm"
+                variant={tripCategory === "booked" ? "secondary" : "ghost"}
+                onClick={() => setTripCategory("booked")}
+                role="tab"
+                aria-selected={tripCategory === "booked"}
+              >
+                Booked <Badge variant="outline" className="ml-1">{bookedTripAppointments.length}</Badge>
+              </Button>
+              <Button
+                size="sm"
+                variant={tripCategory === "unconfirmed" ? "secondary" : "ghost"}
+                onClick={() => setTripCategory("unconfirmed")}
+                role="tab"
+                aria-selected={tripCategory === "unconfirmed"}
+              >
+                Unconfirmed <Badge variant="outline" className="ml-1">{unconfirmedTripAppointments.length}</Badge>
+              </Button>
+              <Button
+                size="sm"
+                variant={tripCategory === "suggested" ? "secondary" : "ghost"}
+                onClick={() => setTripCategory("suggested")}
+                role="tab"
+                aria-selected={tripCategory === "suggested"}
+              >
+                <Sparkles className="mr-1 h-3.5 w-3.5" /> Suggested clients
+              </Button>
+            </div>
+            {tripCategory === "booked" || tripCategory === "unconfirmed" ? (
+              <div className="max-h-64 overflow-y-auto rounded-md border bg-background p-1" data-testid={`dashboard-trip-${tripCategory}`}>
+                {tripAppointmentsLoading ? (
+                  <div className="space-y-2 p-2"><Skeleton className="h-11 w-full" /><Skeleton className="h-11 w-full" /></div>
+                ) : (tripCategory === "booked" ? bookedTripAppointments : unconfirmedTripAppointments).length === 0 ? (
+                  <p className="px-3 py-5 text-center text-xs text-muted-foreground">
+                    {tripCategory === "booked" ? "No booked appointments on this trip yet." : "No unconfirmed appointments on this trip."}
+                  </p>
+                ) : (tripCategory === "booked" ? bookedTripAppointments : unconfirmedTripAppointments).map((appointment) => (
+                  <TripAppointmentRow
+                    key={appointment.id}
+                    appointment={appointment}
+                    customer={customerMap.get(appointment.customerId)}
+                    pianoMap={pianoMap}
+                    onSelectDate={setDate}
+                    onOpenDetails={() => openTripStopDetails(appointment)}
+                    onBook={() => bookTripAppointmentMutation.mutate(appointment.id)}
+                    isBooking={bookTripAppointmentMutation.isPending && bookTripAppointmentMutation.variables === appointment.id}
+                    onUnbook={() => unbookTripAppointmentMutation.mutate(appointment.id)}
+                    isUnbooking={unbookTripAppointmentMutation.isPending && unbookTripAppointmentMutation.variables === appointment.id}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    Ranked by tuning urgency, nearby trip stops, and matched contact history.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {ignoredClients.length > 0 && (
+                      <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setShowIgnoredSuggestions((value) => !value)}>
+                        {showIgnoredSuggestions ? "Hide ignored" : `Ignored (${ignoredClients.length})`}
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => setAddClientOpen(true)}>
+                      <Search className="mr-1 h-3 w-3" /> Find client
+                    </Button>
+                  </div>
+                </div>
+                {showIgnoredSuggestions ? (
+                  <div className="space-y-1">
+                    {ignoredClients.length ? ignoredClients.map((customer) => (
+                      <div key={customer.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2 text-sm">
+                        <span>{clientName(customer)}</span>
+                        <Button size="sm" variant="ghost" className="h-7" disabled={ignoreSuggestionMutation.isPending} onClick={() => ignoreSuggestionMutation.mutate({ customerId: customer.id, ignored: false })}>Restore</Button>
+                      </div>
+                    )) : <p className="py-3 text-center text-xs text-muted-foreground">No ignored clients.</p>}
+                  </div>
+                ) : recommendedClients.length ? (
+                  <div className="max-h-64 space-y-1 overflow-y-auto">
+                    {recommendedClients.map(({ customer, reason, pianoCount }) => (
+                      <div key={customer.id} className="flex items-center justify-between gap-2 rounded-md border bg-background px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{clientName(customer)}</p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {[customer.city, `${pianoCount} piano${pianoCount === 1 ? "" : "s"}`, reason].filter(Boolean).join(" · ")}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <Button size="sm" variant="secondary" className="h-7 px-2 text-xs" disabled={!upcomingTrip} onClick={() => {
+                            setSelectedAddClient(customer);
+                            setAddStopOpen(true);
+                          }}>
+                            Add
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-7 w-7" title={`Ignore ${clientName(customer)}`} aria-label={`Ignore ${clientName(customer)}`} disabled={ignoreSuggestionMutation.isPending} onClick={() => ignoreSuggestionMutation.mutate({ customerId: customer.id, ignored: true })}>
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="py-4 text-center text-xs text-muted-foreground">No due or soon-due Utah clients to suggest right now.</p>
+                )}
+              </div>
+            )}
+          </div>
           {appointmentsLoading || customersLoading || (!!upcomingTrip && tripAppointmentsLoading) ? (
             <Skeleton className="h-[440px] w-full" />
           ) : (

@@ -23,6 +23,7 @@ export const customers = pgTable("customers", {
   preferredTechnician: text("preferred_technician"),
   lastContacted: text("last_contacted"),
   isStarred: boolean("is_starred").default(false),
+  isTripSuggestionIgnored: boolean("is_trip_suggestion_ignored").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
