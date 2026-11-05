@@ -3,7 +3,7 @@
  * All styles must be inline; no Tailwind classes — html2canvas won't see them.
  */
 
-import type { Inspection, Customer, Piano } from "@shared/schema";
+import type { Inspection, Customer, Piano, UserSettings } from "@shared/schema";
 import { clientName, clientSearchText } from "@shared/client-name";
 
 // ── Business constants (mirror invoice-detail.tsx) ───────────────────────────
@@ -22,6 +22,7 @@ interface ChecklistItem {
 interface RecommendedService {
   service: string;
   estimatedCost: string;
+  category?: string;
 }
 
 function parseChecklist(raw: string | null | undefined): ChecklistItem[] {
@@ -65,12 +66,21 @@ export interface InspectionPdfDocumentProps {
   inspection: Inspection;
   customer: Customer | undefined;
   piano: Piano | undefined;
+  businessProfile?: UserSettings;
 }
 
-export function InspectionPdfDocument({ inspection, customer, piano }: InspectionPdfDocumentProps) {
+export function InspectionPdfDocument({ inspection, customer, piano, businessProfile }: InspectionPdfDocumentProps) {
   const checklist   = parseChecklist(inspection.checklistItems);
   const recommended = parseRecommended(inspection.recommendedServices).filter(r => r.service.trim());
   const isEstimate  = inspection.type === "estimate";
+  const companyName = businessProfile?.businessName?.trim() || CO_NAME;
+  const companyPhone = businessProfile?.businessPhone || CO_PHONE;
+  const companyEmail = businessProfile?.businessEmail || CO_EMAIL;
+  const companyAddress = [
+    businessProfile?.businessAddress?.trim(),
+    [businessProfile?.businessCity, businessProfile?.businessState, businessProfile?.businessZipCode].filter(Boolean).join(", "),
+  ].filter(Boolean).join(" · ") || CO_ADDR;
+  const companyWebsite = businessProfile?.businessWebsite;
 
   const pianoLabel = [
     piano?.year,
@@ -95,17 +105,19 @@ export function InspectionPdfDocument({ inspection, customer, piano }: Inspectio
         {/* Left: company name + tagline */}
         <div>
           <div style={{ fontSize: 20, fontWeight: "bold", letterSpacing: "-0.3px", color: "#111827" }}>
-            {CO_NAME}
+            {companyName}
           </div>
           <div style={{ fontSize: 10, color: "#6b7280", marginTop: 3 }}>{CO_LINE2}</div>
         </div>
 
-        {/* Right: phone + email */}
+        {/* Right: contact details */}
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 10, color: "#6b7280" }}>{CO_PHONE}</div>
-          <div style={{ fontSize: 10, color: "#6b7280" }}>{CO_EMAIL}</div>
+          <div style={{ fontSize: 10, color: "#6b7280" }}>{companyPhone}</div>
+          <div style={{ fontSize: 10, color: "#6b7280" }}>{companyEmail}</div>
+          {companyWebsite && <div style={{ fontSize: 10, color: "#6b7280" }}>{companyWebsite}</div>}
         </div>
       </div>
+      <div style={{ fontSize: 10, color: "#6b7280", marginBottom: 8 }}>{companyAddress}</div>
 
       {/* Thick rule */}
       <div style={{ height: 2, background: "#111827", marginBottom: 10 }} />
@@ -170,7 +182,7 @@ export function InspectionPdfDocument({ inspection, customer, piano }: Inspectio
       {HR}
 
       {/* ── Checklist ─────────────────────────────────────────────────────── */}
-      {checklist.length > 0 && (
+      {!isEstimate && checklist.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           {SECTION_TITLE(isEstimate ? "Estimate" : "Inspection")}
 
@@ -216,7 +228,28 @@ export function InspectionPdfDocument({ inspection, customer, piano }: Inspectio
       )}
 
       {/* ── Recommended Services ──────────────────────────────────────────── */}
-      {recommended.length > 0 && (
+      {isEstimate && recommended.length > 0 && (
+        <div style={{ marginBottom: 20 }}>
+          {SECTION_TITLE("Scope & Investment")}
+          {Array.from(new Set(recommended.map(r => r.category?.trim() || "Services"))).map(category => (
+            <div key={category} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, fontWeight: "bold", color: "#374151", textTransform: "uppercase" as const, letterSpacing: "0.6px", marginBottom: 5 }}>{category}</div>
+              {recommended.filter(r => (r.category?.trim() || "Services") === category).map((r, i) => (
+                <div key={`${category}-${i}`} style={{ display: "flex", justifyContent: "space-between", gap: 18, padding: "7px 0", borderBottom: "1px solid #e5e7eb" }}>
+                  <span style={{ fontSize: 11, color: "#374151", flex: 1 }}>{r.service}</span>
+                  {r.estimatedCost && <strong style={{ fontSize: 11, whiteSpace: "nowrap" as const }}>{r.estimatedCost}</strong>}
+                </div>
+              ))}
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "space-between", borderTop: "2px solid #111827", paddingTop: 10, marginTop: 12, fontSize: 14, fontWeight: "bold" }}>
+            <span>Estimated total</span>
+            <span>{inspection.estimatedTotal || `$${recommended.reduce((sum, item) => sum + Number((item.estimatedCost || "").replace(/[^0-9.-]/g, "") || 0), 0).toFixed(2)}`}</span>
+          </div>
+        </div>
+      )}
+
+      {!isEstimate && recommended.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           {SECTION_TITLE("Recommended Services")}
           {recommended.map((r, i) => (
@@ -278,11 +311,11 @@ export function InspectionPdfDocument({ inspection, customer, piano }: Inspectio
         lineHeight: 1.8,
       }}>
         <div>
-          <strong style={{ color: "#6b7280" }}>{CO_NAME}</strong>
+          <strong style={{ color: "#6b7280" }}>{companyName}</strong>
           {" · "}
-          <strong style={{ color: "#6b7280" }}>{CO_PHONE}</strong>
+          <strong style={{ color: "#6b7280" }}>{companyPhone}</strong>
           {" · "}
-          <strong style={{ color: "#6b7280" }}>{CO_EMAIL}</strong>
+          <strong style={{ color: "#6b7280" }}>{companyEmail}</strong>
         </div>
         <div>To schedule these services, reply to this report or contact us at the information above.</div>
       </div>

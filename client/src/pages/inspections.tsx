@@ -61,8 +61,9 @@ import {
   X,
   Loader2,
   FileDown,
+  Mail,
 } from "lucide-react";
-import type { Inspection, Customer, Piano } from "@shared/schema";
+import type { Inspection, Customer, Piano, ServiceCatalogItem, UserSettings } from "@shared/schema";
 import { clientName, clientSearchText } from "@shared/client-name";
 import { InspectionPdfDocument } from "@/components/inspection-pdf";
 
@@ -77,6 +78,8 @@ interface ChecklistItem {
 interface RecommendedService {
   service: string;
   estimatedCost: string;
+  category?: string;
+  catalogServiceId?: number;
 }
 
 const DEFAULT_CHECKLIST: ChecklistItem[] = [
@@ -116,6 +119,89 @@ function parseRecommended(raw: string | null | undefined): RecommendedService[] 
   }
 }
 
+function estimateAmount(value: string | null | undefined): number {
+  const amount = Number((value ?? "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function estimateTotal(items: RecommendedService[]): number {
+  return items.reduce((sum, item) => sum + estimateAmount(item.estimatedCost), 0);
+}
+
+function EstimateLineItemsEditor({
+  items,
+  setItems,
+  services,
+}: {
+  items: RecommendedService[];
+  setItems: (next: RecommendedService[]) => void;
+  services: ServiceCatalogItem[];
+}) {
+  const update = (index: number, patch: Partial<RecommendedService>) =>
+    setItems(items.map((item, i) => i === index ? { ...item, ...patch } : item));
+  const total = estimateTotal(items);
+  return (
+    <section className="space-y-3 rounded-xl border bg-card p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="font-semibold">Estimate services</h3>
+          <p className="text-xs text-muted-foreground">Choose from your master service list or enter custom work and pricing.</p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={() => setItems([...items, { category: "", service: "", estimatedCost: "" }])}>
+          <Plus className="mr-1.5 h-3.5 w-3.5" /> Add service
+        </Button>
+      </div>
+      {items.map((item, index) => (
+        <div key={index} className="grid grid-cols-1 gap-2 rounded-lg border bg-background p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_130px_36px]">
+          <div className="space-y-1">
+            <Label className="text-xs">Category</Label>
+            <Input value={item.category ?? ""} placeholder="Action reconditioning" onChange={e => update(index, { category: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Service / description</Label>
+            <div className="space-y-1.5">
+              <select
+                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                value={item.catalogServiceId ?? ""}
+                onChange={e => {
+                  const selected = services.find(service => service.id === Number(e.target.value));
+                  if (selected) update(index, {
+                    catalogServiceId: selected.id,
+                    category: selected.category || item.category || "",
+                    service: selected.name,
+                    estimatedCost: selected.defaultCost || item.estimatedCost,
+                  });
+                  else update(index, { catalogServiceId: undefined });
+                }}
+              >
+                <option value="">Select from master service list…</option>
+                {services.filter(service => service.isActive).map(service => (
+                  <option key={service.id} value={service.id}>{service.category} · {service.name}</option>
+                ))}
+              </select>
+              <Input value={item.service} placeholder="Describe the work" onChange={e => update(index, { service: e.target.value })} />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Estimated price</Label>
+            <Input inputMode="decimal" value={item.estimatedCost} placeholder="$0.00" onChange={e => update(index, { estimatedCost: e.target.value })} />
+          </div>
+          <div className="flex items-end justify-end">
+            <Button type="button" variant="ghost" size="icon" aria-label="Remove service" onClick={() => setItems(items.filter((_, i) => i !== index))}>
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        </div>
+      ))}
+      {items.length === 0 && <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">Add a service to build this estimate.</p>}
+      <div className="flex items-center justify-between border-t pt-3 text-sm">
+        <span className="font-medium">Estimated total</span>
+        <span className="text-lg font-bold">${total.toFixed(2)}</span>
+      </div>
+    </section>
+  );
+}
+
 function checklistStatusIcon(status: string) {
   switch (status) {
     case "ok": return <CheckCircle className="h-4 w-4 text-emerald-500" />;
@@ -134,6 +220,7 @@ function NewInspectionDialog({
   pianos,
   prefillCustomerId,
   prefillPianoId,
+  initialType = "inspection",
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -141,9 +228,11 @@ function NewInspectionDialog({
   pianos: Piano[];
   prefillCustomerId?: number;
   prefillPianoId?: number;
+  initialType?: "inspection" | "estimate";
 }) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { data: serviceCatalog = [] } = useQuery<ServiceCatalogItem[]>({ queryKey: ["/api/service-catalog"] });
 
   const today = new Date();
   const dateStr = `${today.getMonth() + 1}/${today.getDate()}/${String(today.getFullYear()).slice(-2)}`;
@@ -167,7 +256,7 @@ function NewInspectionDialog({
 
   // ── Form fields ──────────────────────────────────────────────────────────
   const [formFields, setFormFields] = useState({
-    type: "inspection" as "inspection" | "estimate",
+    type: initialType,
     inspectionDate: dateStr,
     overallCondition: "",
     findings: "",
@@ -176,7 +265,7 @@ function NewInspectionDialog({
     internalNotes: "",
   });
   const [checklist, setChecklist] = useState<ChecklistItem[]>(DEFAULT_CHECKLIST.map(i => ({ ...i })));
-  const [recommended, setRecommended] = useState<RecommendedService[]>([{ service: "", estimatedCost: "" }]);
+  const [recommended, setRecommended] = useState<RecommendedService[]>([{ category: "", service: "", estimatedCost: "" }]);
   const [isSaving, setIsSaving] = useState(false);
 
   // ── Reset on open ────────────────────────────────────────────────────────
@@ -193,9 +282,11 @@ function NewInspectionDialog({
     setPendingPhotos([]);
     photoPreviewUrls.forEach(u => URL.revokeObjectURL(u));
     setPhotoPreviewUrls([]);
-    setFormFields({ type: "inspection", inspectionDate: dateStr, overallCondition: "", findings: "", summary: "", estimatedTotal: "", internalNotes: "" });
+    setFormFields({ type: initialType, inspectionDate: dateStr, overallCondition: "", findings: "", summary: "", estimatedTotal: "", internalNotes: "" });
     setChecklist(DEFAULT_CHECKLIST.map(i => ({ ...i })));
-    setRecommended([{ service: "", estimatedCost: "" }]);
+    setRecommended(initialType === "estimate"
+      ? [{ category: "", service: "", estimatedCost: "" }]
+      : [{ service: "", estimatedCost: "" }]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -232,6 +323,10 @@ function NewInspectionDialog({
   async function handleSave() {
     if (!selectedCustomer || !formFields.inspectionDate) {
       toast({ title: "Required fields missing", description: "Customer and date are required.", variant: "destructive" });
+      return;
+    }
+    if (formFields.type === "estimate" && recommended.every(item => !item.service.trim())) {
+      toast({ title: "Add at least one service", description: "An estimate needs at least one service description.", variant: "destructive" });
       return;
     }
     setIsSaving(true);
@@ -271,9 +366,11 @@ function NewInspectionDialog({
           overallCondition: formFields.overallCondition || null,
           findings: formFields.findings || null,
           summary: formFields.summary || null,
-          estimatedTotal: formFields.estimatedTotal || null,
+          estimatedTotal: formFields.type === "estimate"
+            ? `$${estimateTotal(recommended).toFixed(2)}`
+            : formFields.estimatedTotal || null,
           internalNotes: formFields.internalNotes || null,
-          checklistItems: JSON.stringify(checklist),
+          checklistItems: formFields.type === "estimate" ? "[]" : JSON.stringify(checklist),
           recommendedServices: JSON.stringify(recommended.filter(r => r.service.trim())),
         }),
       });
@@ -300,7 +397,7 @@ function NewInspectionDialog({
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
-      toast({ title: "Inspection created" });
+      toast({ title: formFields.type === "estimate" ? "Estimate saved" : "Inspection created" });
       onOpenChange(false);
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -410,6 +507,7 @@ function NewInspectionDialog({
             </div>
           )}
 
+          {formFields.type === "inspection" && <>
           {/* Checklist */}
           <div>
             <Label className="text-sm font-semibold mb-2 block">Inspection Checklist</Label>
@@ -464,7 +562,11 @@ function NewInspectionDialog({
               rows={3}
             />
           </div>
+          </>}
 
+          {formFields.type === "estimate" ? (
+            <EstimateLineItemsEditor items={recommended} setItems={setRecommended} services={serviceCatalog} />
+          ) : <>
           {/* Recommended Services */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -524,6 +626,7 @@ function NewInspectionDialog({
               </div>
             )}
           </div>
+          </>}
 
           {/* Summary */}
           <div className="space-y-1">
@@ -623,6 +726,7 @@ function InspectionDetailDialog({
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
   const photoFileInputRef = useRef<HTMLInputElement>(null);
+  const { data: serviceCatalog = [] } = useQuery<ServiceCatalogItem[]>({ queryKey: ["/api/service-catalog"] });
 
   // ── Edit form state ──────────────────────────────────────────────────────
   const [editFields, setEditFields] = useState({
@@ -697,14 +801,16 @@ function InspectionDetailDialog({
         inspectionDate: editFields.inspectionDate,
         findings: editFields.findings || null,
         summary: editFields.summary || null,
-        estimatedTotal: editFields.estimatedTotal || null,
+         estimatedTotal: editFields.type === "estimate"
+           ? `$${estimateTotal(editRecommended).toFixed(2)}`
+           : editFields.estimatedTotal || null,
         internalNotes: editFields.internalNotes || null,
         checklistItems: JSON.stringify(editChecklist),
         recommendedServices: JSON.stringify(editRecommended.filter(r => r.service.trim())),
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/inspections"] });
-      toast({ title: "Inspection saved" });
+      toast({ title: editFields.type === "estimate" ? "Estimate saved" : "Inspection saved" });
       setEditing(false);
     },
     onError: (err: any) =>
@@ -761,7 +867,7 @@ function InspectionDetailDialog({
 
             {/* Date */}
             <div className="space-y-1">
-              <Label>Inspection Date</Label>
+              <Label>{editFields.type === "estimate" ? "Estimate date" : "Inspection Date"}</Label>
               <Input
                 value={editFields.inspectionDate}
                 onChange={e => setEditFields(f => ({ ...f, inspectionDate: e.target.value }))}
@@ -769,6 +875,7 @@ function InspectionDetailDialog({
               />
             </div>
 
+            {editFields.type === "inspection" && <>
             {/* Checklist */}
             <div>
               <Label className="text-sm font-semibold mb-2 block">Inspection Checklist</Label>
@@ -823,7 +930,11 @@ function InspectionDetailDialog({
                 rows={3}
               />
             </div>
+            </>}
 
+            {editFields.type === "estimate" ? (
+              <EstimateLineItemsEditor items={editRecommended} setItems={setEditRecommended} services={serviceCatalog} />
+            ) : <>
             {/* Recommended Services */}
             <div>
               <div className="flex items-center justify-between mb-2">
@@ -883,10 +994,11 @@ function InspectionDetailDialog({
                 </div>
               )}
             </div>
+            </>}
 
             {/* Summary */}
             <div className="space-y-1">
-              <Label>Summary (for client)</Label>
+              <Label>{editFields.type === "estimate" ? "Estimate notes for client" : "Summary (for client)"}</Label>
               <Textarea
                 placeholder="What the client needs to know…"
                 value={editFields.summary}
@@ -965,7 +1077,7 @@ function InspectionDetailDialog({
           </div>
 
           {/* Checklist summary */}
-          {checklist.length > 0 && (
+          {inspection.type !== "estimate" && checklist.length > 0 && (
             <div>
               <p className="text-sm font-semibold mb-2">Checklist</p>
               <div className="grid gap-1">
@@ -1002,7 +1114,7 @@ function InspectionDetailDialog({
           )}
 
           {/* Findings */}
-          {inspection.findings && (
+          {inspection.type !== "estimate" && inspection.findings && (
             <div>
               <p className="text-sm font-semibold mb-1">Findings</p>
               <p className="text-sm text-muted-foreground whitespace-pre-wrap">{inspection.findings}</p>
@@ -1010,7 +1122,26 @@ function InspectionDetailDialog({
           )}
 
           {/* Recommended services */}
-          {recommended.length > 0 && (
+          {inspection.type === "estimate" && recommended.length > 0 ? (
+            <div className="rounded-lg border p-4">
+              <p className="text-sm font-semibold mb-3">Estimate services</p>
+              {[...new Set(recommended.map(r => r.category?.trim() || "Services"))].map(category => (
+                <div key={category} className="mb-4 last:mb-0">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{category}</p>
+                  {recommended.filter(r => (r.category?.trim() || "Services") === category).map((r, i) => (
+                    <div key={`${category}-${i}`} className="flex justify-between gap-4 border-b py-2 text-sm last:border-0">
+                      <span>{r.service}</span>
+                      {r.estimatedCost && <span className="font-medium tabular-nums">{r.estimatedCost}</span>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div className="flex justify-between border-t pt-3 font-semibold">
+                <span>Estimated total</span>
+                <span>{inspection.estimatedTotal || `$${estimateTotal(recommended).toFixed(2)}`}</span>
+              </div>
+            </div>
+          ) : recommended.length > 0 && (
             <div>
               <p className="text-sm font-semibold mb-2">Recommended Services</p>
               <div className="space-y-1">
@@ -1126,6 +1257,17 @@ function InspectionDetailDialog({
           >
             <FileDown className="h-3.5 w-3.5 mr-1.5" /> Download PDF
           </Button>
+          {inspection.type === "estimate" && customer?.email && (
+            <Button variant="outline" size="sm" onClick={() => {
+              const services = parseRecommended(inspection.recommendedServices);
+              const lines = services.map(item => `${item.category ? `${item.category} — ` : ""}${item.service}: ${item.estimatedCost || "Price TBD"}`);
+              const subject = encodeURIComponent(`Estimate for ${clientName(customer)} — ${inspection.estimatedTotal || ""}`);
+              const body = encodeURIComponent(`Hi ${clientName(customer)},\n\nI’ll attach the estimate PDF to this email.\n\n${lines.join("\n")}\n\nEstimated total: ${inspection.estimatedTotal || `$${estimateTotal(services).toFixed(2)}`}\n\n${inspection.summary || ""}\n\nJohn Willis Piano`);
+              window.location.href = `mailto:${customer.email}?subject=${subject}&body=${body}`;
+            }}>
+              <Mail className="mr-1.5 h-3.5 w-3.5" /> Email estimate
+            </Button>
+          )}
           <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
           <Button variant="outline" size="sm" onClick={startEditing}>
             <Edit className="h-3.5 w-3.5 mr-1.5" /> Edit
@@ -1241,6 +1383,7 @@ export default function InspectionsPage() {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState<"all" | "inspection" | "estimate">("all");
   const [showNew, setShowNew] = useState(false);
+  const [newType, setNewType] = useState<"inspection" | "estimate">("inspection");
   const [selected, setSelected] = useState<Inspection | null>(null);
   const [prefillCustomerId, setPrefillCustomerId] = useState<number | undefined>(undefined);
   const [prefillPianoId, setPrefillPianoId] = useState<number | undefined>(undefined);
@@ -1277,6 +1420,7 @@ export default function InspectionsPage() {
   const { data: allPianos = [] } = useQuery<Piano[]>({
     queryKey: ["/api/pianos"],
   });
+  const { data: businessProfile } = useQuery<UserSettings>({ queryKey: ["/api/settings"] });
 
   const customerMap = useMemo(() => {
     const map = new Map<number, Customer>();
@@ -1379,9 +1523,14 @@ export default function InspectionsPage() {
             {inspectionList.length} total
           </p>
         </div>
-        <Button onClick={() => setShowNew(true)}>
-          <Plus className="h-4 w-4 mr-1.5" /> New Inspection
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setNewType("inspection"); setShowNew(true); }}>
+            <Plus className="h-4 w-4 mr-1.5" /> New Inspection
+          </Button>
+          <Button onClick={() => { setNewType("estimate"); setShowNew(true); }}>
+            <Plus className="h-4 w-4 mr-1.5" /> New Estimate
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -1416,8 +1565,8 @@ export default function InspectionsPage() {
           <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-30" />
           <p className="font-medium">No inspections found</p>
           <p className="text-sm mt-1">Create your first inspection to get started</p>
-          <Button className="mt-4" onClick={() => setShowNew(true)}>
-            <Plus className="h-4 w-4 mr-1.5" /> New Inspection
+          <Button className="mt-4" onClick={() => { setNewType(tab === "estimate" ? "estimate" : "inspection"); setShowNew(true); }}>
+            <Plus className="h-4 w-4 mr-1.5" /> New {tab === "estimate" ? "Estimate" : "Inspection"}
           </Button>
         </div>
       ) : (
@@ -1442,6 +1591,7 @@ export default function InspectionsPage() {
         pianos={allPianos}
         prefillCustomerId={prefillCustomerId}
         prefillPianoId={prefillPianoId}
+        initialType={newType}
       />
 
       <InspectionDetailDialog
@@ -1471,6 +1621,7 @@ export default function InspectionsPage() {
               inspection={pdfTarget.inspection}
               customer={pdfTarget.customer}
               piano={pdfTarget.piano}
+              businessProfile={businessProfile}
             />
           </div>
         </div>
