@@ -87,3 +87,36 @@ export function getTripPianoServiceGroups(
     .map((name) => ({ name, isTuning: /tuning/i.test(name) }));
   return [{ pianoId: Number(fallbackPianoId), lines }];
 }
+
+export function buildCompletedAppointmentServiceRecords(
+  rawServiceItems: string | null | undefined,
+  fallbackPianoId: number | null | undefined,
+  servicesRequested: string | null | undefined,
+): {
+  pianoRecords: Array<{
+    pianoId: number;
+    isTuning: boolean;
+    notes: string;
+    humidity: string;
+    temperature: string;
+    services: string;
+  }>;
+  miscServices: string;
+} {
+  const groups = getTripPianoServiceGroups(rawServiceItems, fallbackPianoId, servicesRequested);
+  return {
+    pianoRecords: groups
+      .filter((group): group is TripPianoServiceGroup & { pianoId: number } => group.pianoId !== null)
+      .map((group) => ({
+        pianoId: group.pianoId,
+        isTuning: group.lines.some((line) => hasTuningService(line.isTuning, line.name, null)),
+        notes: "",
+        humidity: "",
+        temperature: "",
+        services: JSON.stringify(group.lines),
+      })),
+    miscServices: JSON.stringify(
+      groups.filter((group) => group.pianoId === null).flatMap((group) => group.lines),
+    ),
+  };
+}

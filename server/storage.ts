@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { eq, and, asc, desc, ne } from "drizzle-orm";
+import { eq, and, asc, desc, ne, isNull } from "drizzle-orm";
 import { clientName } from "@shared/client-name";
 import {
   getTripPianoServiceGroups,
@@ -279,6 +279,7 @@ export interface IStorage {
     miscServices: string;
     appointmentDate: string;
     customerId: number;
+    appointmentUpdates?: Partial<InsertAppointment>;
   }): Promise<void>;
   getUserSettings(userId: string): Promise<UserSettings | undefined>;
   upsertUserSettings(userId: string, data: Partial<Omit<UserSettings, "userId" | "updatedAt">>): Promise<UserSettings>;
@@ -1176,6 +1177,7 @@ export class DatabaseStorage implements IStorage {
     miscServices: string;
     appointmentDate: string;
     customerId: number;
+    appointmentUpdates?: Partial<InsertAppointment>;
   }): Promise<void> {
     let completed = false;
     await db.transaction(async (tx) => {
@@ -1184,7 +1186,11 @@ export class DatabaseStorage implements IStorage {
         .for("update");
       if (!appointment) return;
       await tx.update(appointments)
-        .set({ status: data.result, notes: data.clientNotes || null })
+        .set({
+          ...data.appointmentUpdates,
+          status: data.result,
+          notes: data.clientNotes || null,
+        })
         .where(eq(appointments.id, appointmentId));
       if (!shouldRecordCompletedServices(data.result)) return;
       completed = true;
@@ -1194,21 +1200,31 @@ export class DatabaseStorage implements IStorage {
       for (const rec of data.pianoRecords) {
         const serviceType = rec.serviceType || (rec.isTuning ? "tuning" : "service");
         const isTuning = hasTuningService(rec.isTuning, serviceType, rec.services);
+        let existingRecord = existingRecords.find((record) => record.pianoId === (rec.pianoId ?? null));
+        if (!existingRecord && isTuning && rec.pianoId) {
+          const sameDayRecords = await tx.select().from(serviceRecords).where(and(
+            eq(serviceRecords.pianoId, rec.pianoId),
+            eq(serviceRecords.serviceDate, data.appointmentDate),
+            isNull(serviceRecords.appointmentId),
+          ));
+          existingRecord = sameDayRecords.find((record) =>
+            hasTuningService(record.isTuning, record.serviceType, record.services));
+        }
+        const resolvedServiceType = rec.serviceType || existingRecord?.serviceType || serviceType;
         const values = {
           customerId: data.customerId,
           pianoId: rec.pianoId ?? null,
           serviceDate: data.appointmentDate,
-          serviceType,
-          notes: rec.notes || null,
+          serviceType: resolvedServiceType,
+          notes: rec.notes || existingRecord?.notes || null,
           cost: null,
-          humidity: rec.humidity || null,
-          temperature: rec.temperature || null,
-          services: rec.services || "[]",
-          isTuning,
+          humidity: rec.humidity || existingRecord?.humidity || null,
+          temperature: rec.temperature || existingRecord?.temperature || null,
+          services: rec.services && rec.services !== "[]" ? rec.services : existingRecord?.services || "[]",
+          isTuning: isTuning || !!existingRecord?.isTuning,
           appointmentId,
-          pianoscope: rec.pianoscope || null,
+          pianoscope: rec.pianoscope || existingRecord?.pianoscope || null,
         };
-        const existingRecord = existingRecords.find((record) => record.pianoId === (rec.pianoId ?? null));
         if (existingRecord) {
           await tx.update(serviceRecords).set(values).where(eq(serviceRecords.id, existingRecord.id));
         } else {

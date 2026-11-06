@@ -14,6 +14,7 @@ import { researchCityLeads, researchConfigured } from "./research";
 import * as ics from "./ics";
 import { parseBookingServices } from "@shared/booking-services";
 import { appointmentOccursOn, parseAnyDate } from "@shared/appointment-repeat";
+import { buildCompletedAppointmentServiceRecords, hasTuningService } from "./tuning-completion";
 
 // ── Object Storage ────────────────────────────────────────────────────────────
 const objectStorage = new ObjectStorageClient();
@@ -606,8 +607,8 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
       const record = await storage.createServiceRecord(parsed.data);
-      if (/tuning/i.test(req.body.serviceType || "") && req.body.serviceDate) {
-        await storage.updatePiano(pianoId, { lastTuned: req.body.serviceDate });
+      if (hasTuningService(record.isTuning, record.serviceType, record.services)) {
+        await storage.syncPianoLastTuned(pianoId);
         await storage.syncCustomerFromPianos(piano.customerId);
       }
       res.status(201).json(record);
@@ -642,15 +643,19 @@ export async function registerRoutes(
       }
       const record = await storage.updateServiceRecord(id, parsed.data);
       if (!record) return res.status(404).json({ message: "Service record not found" });
-      const isTuning = (parsed.data.serviceType ?? existing.serviceType) === "tuning";
-      const wasTuning = existing.serviceType === "tuning";
+      const isTuning = hasTuningService(
+        parsed.data.isTuning ?? existing.isTuning,
+        parsed.data.serviceType ?? existing.serviceType,
+        parsed.data.services ?? existing.services,
+      );
+      const wasTuning = hasTuningService(existing.isTuning, existing.serviceType, existing.services);
       if (isTuning || wasTuning) {
-        const pianoId = record.pianoId ?? existing.pianoId;
-        if (pianoId) {
+        const pianoIds = new Set([existing.pianoId, record.pianoId].filter((id): id is number => id != null));
+        for (const pianoId of pianoIds) {
           await storage.syncPianoLastTuned(pianoId);
-          const piano = await storage.getPiano(pianoId);
-          if (piano) await storage.syncCustomerFromPianos(piano.customerId);
         }
+        const customerIds = new Set([existing.customerId, record.customerId]);
+        for (const customerId of customerIds) await storage.syncCustomerFromPianos(customerId);
       }
       res.json(record);
     } catch (error: any) {
@@ -669,7 +674,7 @@ export async function registerRoutes(
       if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const deleted = await storage.deleteServiceRecord(id);
       if (!deleted) return res.status(404).json({ message: "Service record not found" });
-      if (existing.serviceType === "tuning" && existing.pianoId) {
+      if (hasTuningService(existing.isTuning, existing.serviceType, existing.services) && existing.pianoId) {
         await storage.syncPianoLastTuned(existing.pianoId);
         const piano = await storage.getPiano(existing.pianoId);
         if (piano) await storage.syncCustomerFromPianos(piano.customerId);
@@ -1192,6 +1197,26 @@ export async function registerRoutes(
         : existing.serviceItems;
       const pianoLinkError = await validateAppointmentPianoLinks(userId, customerId, pianoId, serviceItems);
       if (pianoLinkError) return res.status(pianoLinkError.status).json({ message: pianoLinkError.message });
+      if (parsed.data.status === "completed" && existing.status !== "completed") {
+        const effective = { ...existing, ...parsed.data };
+        const { pianoRecords, miscServices } = buildCompletedAppointmentServiceRecords(
+          effective.serviceItems,
+          effective.pianoId,
+          effective.servicesRequested,
+        );
+        await storage.completeAppointment(id, {
+          result: "completed",
+          clientNotes: effective.notes || "",
+          pianoRecords,
+          miscServices,
+          appointmentDate: effective.date,
+          customerId: effective.customerId,
+          appointmentUpdates: parsed.data,
+        });
+        const completedAppointment = await storage.getAppointment(id);
+        if (!completedAppointment) return res.status(404).json({ message: "Appointment not found" });
+        return res.json(completedAppointment);
+      }
       const appointment = await storage.updateAppointment(id, parsed.data);
       if (!appointment) return res.status(404).json({ message: "Appointment not found" });
       res.json(appointment);

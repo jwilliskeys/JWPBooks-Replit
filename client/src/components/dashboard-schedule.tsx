@@ -888,8 +888,8 @@ export function DashboardSchedule() {
             </div>
           )}
         </CardHeader>
-        <CardContent className="flex flex-col pt-0">
-          <div className="order-2 mb-4 rounded-lg border bg-muted/10 p-3" data-testid="dashboard-trip-categories">
+        <CardContent className="flex flex-col-reverse gap-4 pt-0">
+          <div className="rounded-lg border bg-muted/10 p-3" data-testid="dashboard-trip-categories">
             <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Trip clients">
               <Button
                 size="sm"
@@ -1019,7 +1019,7 @@ export function DashboardSchedule() {
               </div>
             )}
           </div>
-          <div className="order-1">
+          <div>
             {appointmentsLoading || customersLoading || (!!upcomingTrip && tripAppointmentsLoading) ? (
               <Skeleton className="h-[440px] w-full" />
             ) : (
