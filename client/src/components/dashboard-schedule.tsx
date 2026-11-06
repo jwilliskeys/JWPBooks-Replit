@@ -888,8 +888,8 @@ export function DashboardSchedule() {
             </div>
           )}
         </CardHeader>
-        <CardContent className="pt-0">
-          <div className="mb-4 rounded-lg border bg-muted/10 p-3" data-testid="dashboard-trip-categories">
+        <CardContent className="flex flex-col pt-0">
+          <div className="order-2 mb-4 rounded-lg border bg-muted/10 p-3" data-testid="dashboard-trip-categories">
             <div className="mb-3 flex flex-wrap gap-2" role="tablist" aria-label="Trip clients">
               <Button
                 size="sm"
@@ -1019,14 +1019,15 @@ export function DashboardSchedule() {
               </div>
             )}
           </div>
-          {appointmentsLoading || customersLoading || (!!upcomingTrip && tripAppointmentsLoading) ? (
-            <Skeleton className="h-[440px] w-full" />
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={pointerWithin}
-              onDragEnd={handleDragEnd}
-            >
+          <div className="order-1">
+            {appointmentsLoading || customersLoading || (!!upcomingTrip && tripAppointmentsLoading) ? (
+              <Skeleton className="h-[440px] w-full" />
+            ) : (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={pointerWithin}
+                onDragEnd={handleDragEnd}
+              >
               {allDayEntries.length > 0 && (
                 <div className="mb-3 space-y-1 border-b pb-3" data-testid="dashboard-all-day-appointments">
                   <p className="text-xs font-medium text-muted-foreground">All day</p>
@@ -1106,8 +1107,9 @@ export function DashboardSchedule() {
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-green-500" /> Booked trip stop</span>
                 <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-amber-500" /> Unbooked, movable</span>
               </div>
-            </DndContext>
-          )}
+              </DndContext>
+            )}
+          </div>
         </CardContent>
       </Card>
       <Dialog open={addClientOpen} onOpenChange={setAddClientOpen}>
