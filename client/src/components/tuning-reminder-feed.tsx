@@ -1,10 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, ChevronRight } from "lucide-react";
 import { Link } from "wouter";
 import type { Customer, Piano } from "@shared/schema";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 function parseLocalDate(value: string | null | undefined): Date | null {
   if (!value) return null;
@@ -62,35 +59,34 @@ export function TuningReminderFeed() {
     }).sort((a, b) => a.daysUntilDue - b.daysUntilDue);
   }, [pianos, customers, today]);
 
-  if (isLoading) return null;
+  if (isLoading || reminders.length === 0) return null;
   return (
-    <Card data-testid="tuning-reminder-feed">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm font-semibold">
-          <CalendarClock className="h-4 w-4 text-primary" /> Tuning reminders
-        </CardTitle>
-        <Badge variant={reminders.some((item) => item.daysUntilDue < 0) ? "destructive" : "secondary"}>
-          {reminders.length}
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {reminders.length === 0 ? (
-          <p className="py-2 text-sm text-muted-foreground">No pianos are due for a reminder in the next month.</p>
-        ) : reminders.map(({ piano, dueDate, daysUntilDue, customer, pianoName }) => (
-          <Link key={piano.id} href={`/pianos/${piano.id}`} className="flex items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/40"
-            data-testid={`tuning-reminder-${piano.id}`}>
-            <AlertTriangle className={`h-4 w-4 shrink-0 ${daysUntilDue < 0 ? "text-destructive" : "text-amber-600"}`} />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">{pianoName}</span>
-              <span className="block truncate text-xs text-muted-foreground">{customer ? `${customer.firstName} ${customer.lastName}` : "Customer"} · Due {dueDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
-            </span>
-            <Badge variant={daysUntilDue < 0 ? "destructive" : "outline"} className="shrink-0 text-[10px]">
-              {daysUntilDue < 0 ? `${Math.abs(daysUntilDue)}d overdue` : daysUntilDue === 0 ? "Due today" : `${daysUntilDue}d`}
-            </Badge>
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-          </Link>
+    <section className="border-t pt-3" data-testid="tuning-reminder-feed" aria-labelledby="tuning-reminder-heading">
+      <h2 id="tuning-reminder-heading" className="mb-1 text-xs font-medium text-muted-foreground">
+        Tuning reminders
+      </h2>
+      <ul className="divide-y divide-border/50">
+        {reminders.map(({ piano, dueDate, daysUntilDue, customer, pianoName }) => (
+          <li key={piano.id}>
+            <Link
+              href={`/pianos/${piano.id}`}
+              className="flex items-center gap-3 py-2 transition-colors hover:text-foreground"
+              data-testid={`tuning-reminder-${piano.id}`}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm">{pianoName}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {customer ? `${customer.firstName} ${customer.lastName}` : "Customer"}
+                </span>
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {daysUntilDue < 0 ? "Overdue · " : ""}
+                {dueDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              </span>
+            </Link>
+          </li>
         ))}
-      </CardContent>
-    </Card>
+      </ul>
+    </section>
   );
 }
