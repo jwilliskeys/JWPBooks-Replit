@@ -61,6 +61,7 @@ import type {
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServiceTimeline } from "@/components/service-timeline";
 import { ContactManager } from "@/components/contact-manager";
+import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
 import { clientName, personName } from "@shared/client-name";
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -669,6 +670,7 @@ export default function CustomerDetail() {
   const [showAddPiano, setShowAddPiano] = useState(false);
   const [newPianoForm, setNewPianoForm] = useState<NewPianoFormState>(BLANK_PIANO);
   const [showAppointmentDialog, setShowAppointmentDialog] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
 
   // Lazy migration guard — only attempt once per page load
   const [migrationAttempted, setMigrationAttempted] = useState(false);
@@ -913,7 +915,15 @@ export default function CustomerDetail() {
             <p className="text-sm text-foreground/80 mt-0.5" data-testid="text-subtitle">{subtitle}</p>
           )}
           {cityLine && (
-            <p className="text-sm text-muted-foreground mt-0.5" data-testid="text-city-line">{cityLine}</p>
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent([(loc as any).address, cityLine].filter(Boolean).join(", "))}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-0.5 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-primary hover:underline"
+              data-testid="link-customer-directions"
+            >
+              <MapPin className="h-3.5 w-3.5" />{cityLine}
+            </a>
           )}
           {(customer as any).clientType && (
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
@@ -1020,6 +1030,7 @@ export default function CustomerDetail() {
                   serviceRecords={serviceRecords ?? []}
                   pianos={customerPianos ?? []}
                   mode="past"
+                  onAppointmentClick={setSelectedAppointment}
                 />
               </CardContent>
             </Card>
@@ -1045,6 +1056,7 @@ export default function CustomerDetail() {
                   serviceRecords={serviceRecords ?? []}
                   pianos={customerPianos ?? []}
                   mode="upcoming"
+                  onAppointmentClick={setSelectedAppointment}
                 />
               </CardContent>
             </Card>
@@ -1107,6 +1119,11 @@ export default function CustomerDetail() {
         onOpenChange={setShowAppointmentDialog}
         customerId={customer.id}
         customerName={clientName(customer)}
+      />
+      <AppointmentDetailDialog
+        appointment={selectedAppointment}
+        open={!!selectedAppointment}
+        onOpenChange={(open) => { if (!open) setSelectedAppointment(null); }}
       />
 
       <EditClientDialog

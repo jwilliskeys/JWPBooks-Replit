@@ -57,9 +57,10 @@ interface EntryProps {
   serviceRecords: ServiceRecord[];
   pianos: Piano[];
   isLast: boolean;
+  onAppointmentClick?: (appointment: Appointment) => void;
 }
 
-function TimelineEntry({ appointment: appt, serviceRecords, pianos, isLast }: EntryProps) {
+function TimelineEntry({ appointment: appt, serviceRecords, pianos, isLast, onAppointmentClick }: EntryProps) {
   const [expanded, setExpanded] = useState(false);
 
   const status = appt.status ?? "scheduled";
@@ -107,6 +108,33 @@ function TimelineEntry({ appointment: appt, serviceRecords, pianos, isLast }: En
         <div className="rounded-lg border border-border bg-card shadow-sm overflow-hidden">
 
           {/* Header */}
+          {onAppointmentClick ? (
+            <button
+              type="button"
+              onClick={() => onAppointmentClick(appt)}
+              className="w-full px-3 py-2.5 flex items-start justify-between gap-2 text-left hover:bg-muted/30 transition-colors"
+              aria-label={`Open appointment on ${appt.date}`}
+              data-testid={`button-open-appointment-${appt.id}`}
+            >
+              <div className="min-w-0 space-y-0.5">
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="h-3 w-3 text-muted-foreground shrink-0" />
+                  <span className="text-sm font-semibold">{appt.date}</span>
+                </div>
+                {appt.time && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3 shrink-0" />
+                    {appt.time}
+                    {endTime ? ` – ${endTime}` : ""}
+                    {appt.duration ? ` · ${appt.duration}` : ""}
+                  </p>
+                )}
+              </div>
+              <span className={cn("shrink-0 text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full border", cfg.badge)}>
+                {cfg.label}
+              </span>
+            </button>
+          ) : (
           <div className="px-3 py-2.5 flex items-start justify-between gap-2">
             <div className="min-w-0 space-y-0.5">
               <div className="flex items-center gap-1.5">
@@ -131,6 +159,7 @@ function TimelineEntry({ appointment: appt, serviceRecords, pianos, isLast }: En
               {cfg.label}
             </span>
           </div>
+          )}
 
           {/* Piano pills */}
           {pianoLabels.length > 0 && (
@@ -260,12 +289,14 @@ export function ServiceTimeline({
   serviceRecords,
   pianos,
   mode = "all",
+  onAppointmentClick,
 }: {
   appointments: Appointment[];
   serviceRecords: ServiceRecord[];
   pianos: Piano[];
   /** "all" (default) shows upcoming + history; "upcoming" / "past" show one section only. */
   mode?: "all" | "upcoming" | "past";
+  onAppointmentClick?: (appointment: Appointment) => void;
 }) {
   const upcoming =
     mode === "past"
@@ -311,6 +342,7 @@ export function ServiceTimeline({
               serviceRecords={serviceRecords}
               pianos={pianos}
               isLast={i === upcoming.length - 1}
+              onAppointmentClick={onAppointmentClick}
             />
           ))}
         </section>
@@ -344,6 +376,7 @@ export function ServiceTimeline({
               serviceRecords={serviceRecords}
               pianos={pianos}
               isLast={i === past.length - 1}
+              onAppointmentClick={onAppointmentClick}
             />
           ))}
         </section>

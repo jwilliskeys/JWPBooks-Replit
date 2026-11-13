@@ -10,6 +10,7 @@ import {
   Trash2,
   ChevronRight,
   ChevronDown,
+  MoreHorizontal,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,12 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatPhone, cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import type { CustomerContact } from "@shared/schema";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // ─── Patch shape sent to the API ─────────────────────────────────────────────
 
@@ -93,6 +100,40 @@ function formatLocation(c: CustomerContact) {
   return [c.city, c.state, c.zipCode].filter(Boolean).join(", ");
 }
 
+function normalizedContactPart(value: string | null | undefined): string {
+  return (value ?? "").trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function uniqueContacts(contacts: CustomerContact[]): CustomerContact[] {
+  const byDetails = new Map<string, CustomerContact>();
+  for (const contact of contacts) {
+    const key = [
+      contact.firstName,
+      contact.lastName,
+      contact.phone,
+      contact.email,
+      contact.address,
+      contact.city,
+      contact.state,
+      contact.zipCode,
+      contact.role,
+      contact.notes,
+    ].map(normalizedContactPart).join("|");
+    const existing = byDetails.get(key);
+    if (!existing) {
+      byDetails.set(key, contact);
+      continue;
+    }
+    byDetails.set(key, {
+      ...existing,
+      isPrimary: !!(existing.isPrimary || contact.isPrimary),
+      isBilling: !!(existing.isBilling || contact.isBilling),
+      doNotCall: !!(existing.doNotCall || contact.doNotCall),
+    });
+  }
+  return [...byDetails.values()];
+}
+
 // ─── Main component ──────────────────────────────────────────────────────────
 
 export function ContactManager({
@@ -107,11 +148,11 @@ export function ContactManager({
   const [editTarget, setEditTarget] = useState<CustomerContact | null>(null);
 
   // Sort defensively in case server didn't.
-  const sorted = [...contacts].sort((a, b) => {
+  const sorted = uniqueContacts([...contacts].sort((a, b) => {
     if (!!a.isPrimary !== !!b.isPrimary) return a.isPrimary ? -1 : 1;
     if (!!a.isBilling !== !!b.isBilling) return a.isBilling ? -1 : 1;
     return a.id - b.id;
-  });
+  }));
 
   const invalidate = () =>
     queryClient.invalidateQueries({
@@ -241,14 +282,17 @@ function ContactCard({
   const [expanded, setExpanded] = useState(false);
   const location = formatLocation(contact);
   const initials = `${contact.firstName?.[0] ?? ""}${contact.lastName?.[0] ?? ""}`.toUpperCase() || "?";
+  const address = [contact.address, location].filter(Boolean).join(", ");
+  const phone = contact.phone?.replace(/\D/g, "");
 
   return (
     <div className="rounded-lg border bg-card transition-shadow hover:shadow-sm" data-testid={`contact-card-${contact.id}`}>
       {/* Collapsed row — always visible */}
+      <div className="flex items-center gap-1 pr-2">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="flex w-full items-center gap-3 p-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 p-3 text-left"
       >
         {/* Teal circular avatar with initials */}
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-600 text-white text-sm font-semibold">
@@ -284,6 +328,32 @@ function ContactCard({
           <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
       </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label={`Contact actions for ${contact.firstName}`} data-testid={`button-contact-actions-${contact.id}`}>
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {address && (
+            <DropdownMenuItem asChild>
+              <a href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`} target="_blank" rel="noreferrer">
+                <MapPin className="mr-2 h-4 w-4" /> Directions
+              </a>
+            </DropdownMenuItem>
+          )}
+          {phone && (
+            <>
+              <DropdownMenuItem asChild><a href={`tel:${phone}`}><Phone className="mr-2 h-4 w-4" /> Call</a></DropdownMenuItem>
+              <DropdownMenuItem asChild><a href={`sms:${phone}`}><Phone className="mr-2 h-4 w-4" /> Text</a></DropdownMenuItem>
+            </>
+          )}
+          {contact.email && (
+            <DropdownMenuItem asChild><a href={`mailto:${contact.email}`}><Mail className="mr-2 h-4 w-4" /> Email</a></DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      </div>
 
       {/* Expanded detail */}
       {expanded && (
@@ -292,7 +362,17 @@ function ContactCard({
           <div className="space-y-2 p-3 pt-2.5">
             {(contact.address || location) && (
               <DetailRow icon={<MapPin className="h-3.5 w-3.5" />}>
-                {contact.address && <span>{contact.address}</span>}
+                {contact.address && (
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline"
+                    data-testid={`link-contact-directions-${contact.id}`}
+                  >
+                    {contact.address}
+                  </a>
+                )}
                 {location && <span className="text-muted-foreground">{location}</span>}
               </DetailRow>
             )}
