@@ -85,18 +85,6 @@ function formatDuration(minutes: number): string {
   return `${remainder}m`;
 }
 
-function formatTripRange(trip: Trip): string {
-  const start = parseAnyDate(trip.startDate);
-  const end = parseAnyDate(trip.endDate);
-  if (!start || !end) return `${trip.startDate} – ${trip.endDate}`;
-  const sameYear = start.getFullYear() === end.getFullYear();
-  return `${start.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    ...(sameYear ? {} : { year: "numeric" }),
-  })}, ${end.getFullYear()}`;
-}
-
 function getUpcomingTrip(trips: Trip[] | undefined, today: Date): Trip | null {
   if (!trips) return null;
   return trips
@@ -136,35 +124,6 @@ function tripStatusClass(appointment: TripAppointment): string {
   return appointment.linkedAppointmentId
     ? "border-green-600/30 bg-green-500/10 text-green-700 dark:text-green-400"
     : "border-amber-600/30 bg-amber-500/10 text-amber-700 dark:text-amber-400";
-}
-
-function TripDayDropButton({
-  date,
-  selected,
-  onSelect,
-}: {
-  date: Date;
-  selected: boolean;
-  onSelect: (date: Date) => void;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: `trip-day:${dateKey(date)}` });
-  return (
-    <button
-      ref={setNodeRef}
-      type="button"
-      onClick={() => onSelect(date)}
-      aria-pressed={selected}
-      aria-label={`Show ${date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}`}
-      className={`shrink-0 rounded-md border px-2.5 py-1.5 text-xs transition-colors ${
-        selected
-          ? "border-primary bg-primary text-primary-foreground"
-          : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-foreground"
-      } ${isOver ? "ring-2 ring-primary/50" : ""}`}
-    >
-      <span className="block font-medium">{date.toLocaleDateString("en-US", { weekday: "short" })}</span>
-      <span className="block">{date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
-    </button>
-  );
 }
 
 function TripAppointmentRow({
@@ -451,13 +410,8 @@ export function DashboardSchedule() {
       if (!isOpenStatus(appointment.status)) return;
       dates.push(...expandAppointmentDates(appointment, today, endOfSearch));
     });
-    tripAppointments?.forEach((appointment) => {
-      if (!isOpenStatus(appointment.status)) return;
-      const date = parseAnyDate(appointment.date);
-      if (date && startOfDay(date) >= today) dates.push(startOfDay(date));
-    });
     return dates.sort((a, b) => a.getTime() - b.getTime())[0] ?? today;
-  }, [appointments, tripAppointments, today]);
+  }, [appointments, today]);
 
   const selectedDate = selectedDateOverride ?? nextAppointmentDate;
   const dateLabel = selectedDate.toLocaleDateString("en-US", {
@@ -565,21 +519,6 @@ export function DashboardSchedule() {
     },
     onError: (error: any) => toast({ title: "Could not delete appointment", description: error.message, variant: "destructive" }),
   });
-
-  const tripDateChips = useMemo(() => {
-    if (!upcomingTrip) return [];
-    const start = parseAnyDate(upcomingTrip.startDate);
-    const end = parseAnyDate(upcomingTrip.endDate);
-    if (!start || !end || end < start) return [];
-    const days: Date[] = [];
-    const cursor = startOfDay(start);
-    const finalDay = startOfDay(end);
-    while (cursor <= finalDay && days.length < 60) {
-      days.push(new Date(cursor));
-      cursor.setDate(cursor.getDate() + 1);
-    }
-    return days;
-  }, [upcomingTrip]);
 
   const tripAppointmentsForCard = useMemo(
     () => [...(tripAppointments ?? [])].filter((appointment) => appointment.status !== "cancelled").sort((a, b) => {
@@ -717,7 +656,7 @@ export function DashboardSchedule() {
     const tripEntries = (tripAppointments ?? [])
       .filter((appointment) => {
         const date = parseAnyDate(appointment.date);
-        return date && sameDay(date, selectedDate) && isOpenStatus(appointment.status);
+        return !!appointment.linkedAppointmentId && date && sameDay(date, selectedDate) && isOpenStatus(appointment.status);
       })
       .map((appointment): ScheduleEntry => ({
         kind: "trip",
@@ -873,20 +812,7 @@ export function DashboardSchedule() {
                 <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
               </Button>
             </Link>
-            {upcomingTrip && <span className="text-xs text-muted-foreground">{formatTripRange(upcomingTrip)}</span>}
           </div>
-          {tripDateChips.length > 0 && (
-            <div className="flex gap-1.5 overflow-x-auto pb-1" aria-label="Trip days">
-              {tripDateChips.map((date) => (
-                <TripDayDropButton
-                  key={dateKey(date)}
-                  date={date}
-                  selected={sameDay(selectedDate, date)}
-                  onSelect={setDate}
-                />
-              ))}
-            </div>
-          )}
         </CardHeader>
         <CardContent className="flex flex-col-reverse gap-4 pt-0">
           <div className="rounded-lg border bg-muted/10 p-3" data-testid="dashboard-trip-categories">

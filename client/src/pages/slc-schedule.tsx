@@ -646,6 +646,14 @@ function DayItinerarySection({
 
   const returnDriveMinutes = drivingTimes ? drivingTimes[drivingTimes.length - 1] : null;
   const returnDriveMiles = drivingDistances ? drivingDistances[drivingDistances.length - 1] : null;
+  const returnHomeTime = useMemo(() => {
+    if (!dayAppts.length || returnDriveMinutes == null || returnDriveMinutes < 0) return null;
+    const lastAppointment = dayAppts[dayAppts.length - 1];
+    const startMinutes = parseTimeToMinutes(lastAppointment.time || "");
+    if (startMinutes < 0) return null;
+    const appointmentEnd = startMinutes + parseDurationToMinutes(lastAppointment.duration || "2 hours");
+    return minutesToTimeStr(appointmentEnd + returnDriveMinutes);
+  }, [dayAppts, returnDriveMinutes]);
 
   const dayName = dayDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
   const dayRevenue = dayAppts
@@ -744,7 +752,7 @@ function DayItinerarySection({
             {returnDriveMinutes != null && returnDriveMinutes >= 0 && (
               <div className="flex items-center gap-1.5 px-4 py-1.5 text-xs text-muted-foreground">
                 <Home className="h-3.5 w-3.5 shrink-0" />
-                <span>Return home</span>
+                <span>Return home by {returnHomeTime ?? "time unavailable"}</span>
                 <span>({returnDriveMinutes} min{returnDriveMiles != null && returnDriveMiles >= 0 ? `, ${returnDriveMiles} mi` : ""})</span>
               </div>
             )}
