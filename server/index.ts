@@ -155,6 +155,17 @@ async function ensurePianoSchemaColumns() {
         "internal_notes" text,
         "created_at" timestamp DEFAULT now()
       );
+      CREATE TABLE IF NOT EXISTS "piano_issues" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "user_id" text NOT NULL,
+        "piano_id" integer NOT NULL,
+        "title" text NOT NULL,
+        "description" text,
+        "status" text NOT NULL DEFAULT 'open',
+        "reported_date" text NOT NULL,
+        "fixed_date" text,
+        "created_at" timestamp DEFAULT now()
+      );
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS "booking_requests" (

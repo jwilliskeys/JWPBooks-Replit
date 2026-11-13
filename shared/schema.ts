@@ -73,6 +73,27 @@ export const serviceRecords = pgTable("service_records", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const pianoIssues = pgTable("piano_issues", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  pianoId: integer("piano_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("open"),
+  reportedDate: text("reported_date").notNull(),
+  fixedDate: text("fixed_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPianoIssueSchema = createInsertSchema(pianoIssues).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+});
+
+export type PianoIssue = typeof pianoIssues.$inferSelect;
+export type InsertPianoIssue = z.infer<typeof insertPianoIssueSchema>;
+
 export const serviceGroups = pgTable("service_groups", {
   id: serial("id").primaryKey(),
   userId: text("user_id"),

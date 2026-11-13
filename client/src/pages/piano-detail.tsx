@@ -65,6 +65,8 @@ import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog"
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import { PianoPhotoGallery } from "@/components/piano-photo-gallery";
 import { ReassignPianoDialog, MergePianosDialog } from "@/components/piano-transfer-dialogs";
+import { PianoIssues } from "@/components/piano-issues";
+import { DefaultPianoImage, PianoClimateSummary, PianoPitchHistory } from "@/components/piano-visuals";
 import { clientName, clientContactLine, clientInitials } from "@shared/client-name";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
@@ -72,7 +74,8 @@ import { clientName, clientContactLine, clientInitials } from "@shared/client-na
 function parseDate(s: string | null | undefined): Date | null {
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
-    const d = new Date(s);
+    const [year, month, day] = s.slice(0, 10).split("-").map(Number);
+    const d = new Date(year, month - 1, day);
     return isNaN(d.getTime()) ? null : d;
   }
   const parts = s.split("/");
@@ -111,13 +114,20 @@ function calcNextTuningDue(lastTuned: string | null | undefined, interval: strin
   const d = parseDate(lastTuned);
   const months = parseIntervalMonths(interval);
   if (!d || !months) return null;
-  const next = new Date(d);
-  next.setMonth(next.getMonth() + months);
-  return next;
+  const target = new Date(d.getFullYear(), d.getMonth() + months, 1);
+  target.setDate(Math.min(d.getDate(), new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()));
+  return target;
 }
 
 function formatDateShort(d: Date): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function daysFromToday(date: Date): number {
+  const today = new Date();
+  const targetUtc = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.round((targetUtc - todayUtc) / 86400000);
 }
 
 function parseSortTs(s: string | null | undefined): number {
@@ -160,7 +170,7 @@ function buildTimeline(services: ServiceRecord[], invoices: Invoice[], appointme
 }
 
 const INTERVAL_OPTIONS = ["3 months", "6 months", "12 months", "18 months", "24 months"];
-const PIANO_TYPES = ["Grand", "Upright", "Unknown"] as const;
+const PIANO_TYPES = ["Grand", "Upright", "Spinet", "Harpsichord", "Rhodes", "Wurlitzer", "Digital", "Hybrid"] as const;
 
 // ─── component ───────────────────────────────────────────────────────────────
 
@@ -325,6 +335,12 @@ export default function PianoDetail() {
   const monthsSince = getMonthsSince(piano.lastTuned);
   const { label: statusLabel, cls: statusCls } = tuningStatusClass(monthsSince);
   const nextDue = calcNextTuningDue(piano.lastTuned, piano.tuningInterval);
+  const daysUntilDue = nextDue ? daysFromToday(nextDue) : null;
+  const lastTuneDate = parseDate(piano.lastTuned);
+  const totalIntervalDays = lastTuneDate && nextDue ? Math.max(1, Math.round((nextDue.getTime() - lastTuneDate.getTime()) / 86400000)) : 1;
+  const elapsedDays = lastTuneDate ? Math.max(0, Math.round((Date.now() - lastTuneDate.getTime()) / 86400000)) : 0;
+  const dueProgress = Math.max(0, Math.min(100, Math.round((elapsedDays / totalIntervalDays) * 100)));
+  const knownPianoType = PIANO_TYPES.some((type) => type.toLowerCase() === (editForm.pianoType ?? "").toLowerCase());
   const nowTs = Date.now();
   const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
   const nextScheduledAppt = (pianoAppointments ?? [])
@@ -749,9 +765,7 @@ export default function PianoDetail() {
               {piano.photos && piano.photos.length > 0 ? (
                 <img src={piano.photos[0]} alt="Piano" className="h-28 w-28 object-cover rounded-xl border shadow-sm" data-testid="piano-hero-photo" />
               ) : (
-                <div className="h-28 w-28 rounded-xl bg-primary/8 border flex items-center justify-center">
-                  <Music className="h-12 w-12 text-primary/30" />
-                </div>
+                <DefaultPianoImage piano={piano} className="h-28 w-28 shadow-sm" />
               )}
             </div>
             <h1 className="text-xl font-bold" data-testid="piano-title">{pianoLabel}</h1>
@@ -794,6 +808,10 @@ export default function PianoDetail() {
               )}
             </div>
           </div>
+
+          <PianoClimateSummary records={serviceRecords ?? []} />
+          <PianoIssues pianoId={piano.id} />
+          <PianoPitchHistory records={serviceRecords ?? []} />
 
           {/* Tuning Schedule */}
           <Card>
@@ -882,18 +900,24 @@ export default function PianoDetail() {
               </div>
 
               {/* Next tuning due */}
-              <div className="flex items-center gap-2.5 py-2.5">
-                <div className="h-7 w-7 rounded-md bg-muted flex items-center justify-center shrink-0">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+              <div className="py-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Next tuning due</p>
+                    <p className="text-sm font-semibold">
+                      {nextDue ? formatDateShort(nextDue) : <span className="font-normal text-muted-foreground">Set last tuned and interval</span>}
+                    </p>
+                  </div>
+                  {daysUntilDue !== null && (
+                    <Badge variant={daysUntilDue < 0 ? "destructive" : daysUntilDue <= 30 ? "outline" : "secondary"} className="shrink-0">
+                      {daysUntilDue < 0 ? `${Math.abs(daysUntilDue)} days overdue` : daysUntilDue === 0 ? "Due today" : `In ${daysUntilDue} days`}
+                    </Badge>
+                  )}
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Next tuning due</p>
-                  <p className="text-sm font-medium">
-                    {nextDue ? (
-                      <>{formatDateShort(nextDue)} <span className="text-xs text-muted-foreground font-normal">{relativeLabel(nextDue)}</span></>
-                    ) : <span className="text-muted-foreground font-normal">—</span>}
-                  </p>
+                <div className="h-2 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Tuning interval elapsed" aria-valuenow={dueProgress} aria-valuemin={0} aria-valuemax={100}>
+                  <div className={`h-full rounded-full transition-all ${daysUntilDue !== null && daysUntilDue < 0 ? "bg-destructive" : daysUntilDue !== null && daysUntilDue <= 30 ? "bg-amber-500" : "bg-primary"}`} style={{ width: `${dueProgress}%` }} />
                 </div>
+                <p className="mt-1 text-[10px] text-muted-foreground">{piano.tuningInterval ? `Tuned every ${piano.tuningInterval}` : "Set a tuning interval to calculate reminders"} · Reminder starts one month before due</p>
               </div>
             </CardContent>
           </Card>
@@ -1036,43 +1060,22 @@ export default function PianoDetail() {
             <DialogTitle>Edit Piano</DialogTitle>
           </DialogHeader>
 
-          {/* Piano type visual selector */}
-          <div className="grid grid-cols-3 gap-3 mt-1">
-            {PIANO_TYPES.map((type) => {
-              const normalized = (editForm.pianoType ?? "").toLowerCase();
-              const active = normalized === type.toLowerCase() || (type === "Unknown" && !["grand", "upright"].some((t) => normalized.includes(t)) && normalized !== "");
-              const isGrand = normalized.includes("grand") && type === "Grand";
-              const isUpright = normalized.includes("upright") && type === "Upright";
-              const isSelected = isGrand || isUpright || (type !== "Grand" && type !== "Upright" && active);
-              const selected = editForm.pianoType?.toLowerCase() === type.toLowerCase() || (type === "Unknown" && !editForm.pianoType);
-              return (
-                <button
-                  key={type}
-                  type="button"
-                  onClick={() => setEditForm({ ...editForm, pianoType: type === "Unknown" ? "" : type })}
-                  className={`rounded-xl border-2 p-4 flex flex-col items-center gap-2 transition-colors ${
-                    (editForm.pianoType === type || (type === "Unknown" && !editForm.pianoType))
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-muted-foreground/40"
-                  }`}
-                  data-testid={`type-select-${type.toLowerCase()}`}
-                >
-                  <Music className={`h-8 w-8 ${
-                    (editForm.pianoType === type || (type === "Unknown" && !editForm.pianoType))
-                      ? "text-primary"
-                      : "text-muted-foreground/50"
-                  }`} />
-                  <span className="text-sm font-medium">{type}</span>
-                  {(editForm.pianoType === type || (type === "Unknown" && !editForm.pianoType)) && (
-                    <CheckCircle2 className="h-4 w-4 text-primary absolute top-2 left-2" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-
           {/* Core fields */}
           <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-3 space-y-1">
+              <Label className="text-xs">Piano type</Label>
+              <Select
+                value={editForm.pianoType ? (knownPianoType ? editForm.pianoType : "__existing") : "_none"}
+                onValueChange={(value) => setEditForm({ ...editForm, pianoType: value === "_none" ? "" : value === "__existing" ? piano.pianoType : value })}
+              >
+                <SelectTrigger data-testid="select-piano-type"><SelectValue placeholder="Choose a piano type" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_none">Not set</SelectItem>
+                  {PIANO_TYPES.map((type) => <SelectItem key={type} value={type}>{type}</SelectItem>)}
+                  {editForm.pianoType && !knownPianoType && <SelectItem value="__existing">{editForm.pianoType} (existing value)</SelectItem>}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-1">
               <Label className="text-xs">Make</Label>
               <Input value={editForm.make || ""} onChange={(e) => setEditForm({ ...editForm, make: e.target.value })} placeholder="Yamaha" data-testid="input-piano-make" />

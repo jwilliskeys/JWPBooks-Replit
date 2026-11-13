@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema, insertMileageLogSchema, insertBusinessExpenseSchema, insertOutreachLeadSchema, insertInspectionSchema, insertBankAccountSchema, insertBankTransactionSchema, publicBookingRequestSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema, insertMileageLogSchema, insertBusinessExpenseSchema, insertOutreachLeadSchema, insertInspectionSchema, insertBankAccountSchema, insertBankTransactionSchema, insertPianoIssueSchema, publicBookingRequestSchema } from "@shared/schema";
 import { clientName } from "@shared/client-name";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
@@ -587,6 +587,85 @@ export async function registerRoutes(
       if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
       const records = await storage.getServiceRecordsByPiano(id);
       res.json(records);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/pianos/:id/issues", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const pianoId = parseInt(req.params.id);
+      if (!Number.isSafeInteger(pianoId)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(pianoId);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      res.json(await storage.getPianoIssues(pianoId, userId));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/pianos/:id/issues", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const pianoId = parseInt(req.params.id);
+      if (!Number.isSafeInteger(pianoId)) return res.status(400).json({ message: "Invalid ID" });
+      const piano = await storage.getPiano(pianoId);
+      if (!piano) return res.status(404).json({ message: "Piano not found" });
+      const owner = await storage.getCustomer(piano.customerId);
+      if (!owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      const parsed = insertPianoIssueSchema.safeParse({ ...req.body, pianoId });
+      if (!parsed.success) return res.status(400).json({ message: "Invalid issue", errors: parsed.error.flatten() });
+      if (!parsed.data.title.trim()) return res.status(400).json({ message: "Issue title is required." });
+      parsed.data.title = parsed.data.title.trim();
+      res.status(201).json(await storage.createPianoIssue(parsed.data, userId));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/piano-issues/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (!Number.isSafeInteger(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getPianoIssue(id);
+      if (!existing) return res.status(404).json({ message: "Issue not found" });
+      const piano = await storage.getPiano(existing.pianoId);
+      const owner = piano ? await storage.getCustomer(piano.customerId) : undefined;
+      if (existing.userId !== userId || !owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      const parsed = insertPianoIssueSchema.partial().safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid issue", errors: parsed.error.flatten() });
+      if (parsed.data.status && !["open", "fixed"].includes(parsed.data.status)) {
+        return res.status(400).json({ message: "Issue status must be open or fixed." });
+      }
+      if (parsed.data.title !== undefined) {
+        parsed.data.title = parsed.data.title.trim();
+        if (!parsed.data.title) return res.status(400).json({ message: "Issue title is required." });
+      }
+      if (parsed.data.pianoId !== undefined && parsed.data.pianoId !== existing.pianoId) {
+        return res.status(400).json({ message: "An issue cannot be moved to another piano." });
+      }
+      res.json(await storage.updatePianoIssue(id, parsed.data));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/piano-issues/:id", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const id = parseInt(req.params.id);
+      if (!Number.isSafeInteger(id)) return res.status(400).json({ message: "Invalid ID" });
+      const existing = await storage.getPianoIssue(id);
+      if (!existing) return res.status(404).json({ message: "Issue not found" });
+      const piano = await storage.getPiano(existing.pianoId);
+      const owner = piano ? await storage.getCustomer(piano.customerId) : undefined;
+      if (existing.userId !== userId || !owner || owner.userId !== userId) return res.status(403).json({ message: "Forbidden" });
+      if (!await storage.deletePianoIssue(id)) return res.status(404).json({ message: "Issue not found" });
+      res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

@@ -12,6 +12,7 @@ import {
   customers,
   pianos,
   serviceRecords,
+  pianoIssues,
   serviceGroups,
   serviceCatalog,
   appointments,
@@ -37,6 +38,8 @@ import {
   type InsertPiano,
   type ServiceRecord,
   type InsertServiceRecord,
+  type PianoIssue,
+  type InsertPianoIssue,
   type ServiceGroup,
   type InsertServiceGroup,
   type ServiceCatalogItem,
@@ -203,6 +206,11 @@ export interface IStorage {
   mergePianos(keepId: number, mergeId: number): Promise<PianoMergeCounts | null>;
   getServiceRecords(customerId: number): Promise<ServiceRecord[]>;
   getServiceRecordsByPiano(pianoId: number): Promise<ServiceRecord[]>;
+  getPianoIssues(pianoId: number, userId: string): Promise<PianoIssue[]>;
+  getPianoIssue(id: number): Promise<PianoIssue | undefined>;
+  createPianoIssue(data: InsertPianoIssue, userId: string): Promise<PianoIssue>;
+  updatePianoIssue(id: number, data: Partial<InsertPianoIssue>): Promise<PianoIssue | undefined>;
+  deletePianoIssue(id: number): Promise<boolean>;
   createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord>;
   getServiceRecord(id: number): Promise<ServiceRecord | undefined>;
   updateServiceRecord(id: number, data: Partial<InsertServiceRecord>): Promise<ServiceRecord | undefined>;
@@ -380,6 +388,7 @@ export class DatabaseStorage implements IStorage {
 
   async deletePiano(id: number): Promise<boolean> {
     await db.delete(serviceRecords).where(eq(serviceRecords.pianoId, id));
+    await db.delete(pianoIssues).where(eq(pianoIssues.pianoId, id));
     const result = await db.delete(pianos).where(eq(pianos.id, id)).returning();
     return result.length > 0;
   }
@@ -549,6 +558,9 @@ export class DatabaseStorage implements IStorage {
       .where(eq(inspections.pianoId, mergeId))
       .returning({ id: inspections.id });
     counts.inspections = insp.length;
+    await db.update(pianoIssues)
+      .set({ pianoId: keepId, ...ownerPatch })
+      .where(eq(pianoIssues.pianoId, mergeId));
 
     await db.update(pianos).set(mergePianoFields(keeper, loser)).where(eq(pianos.id, keepId));
     await db.delete(pianos).where(eq(pianos.id, mergeId));
@@ -573,6 +585,32 @@ export class DatabaseStorage implements IStorage {
       .from(serviceRecords)
       .where(eq(serviceRecords.pianoId, pianoId))
       .orderBy(serviceRecords.createdAt);
+  }
+
+  async getPianoIssues(pianoId: number, userId: string): Promise<PianoIssue[]> {
+    return db.select().from(pianoIssues)
+      .where(and(eq(pianoIssues.pianoId, pianoId), eq(pianoIssues.userId, userId)))
+      .orderBy(desc(pianoIssues.createdAt));
+  }
+
+  async getPianoIssue(id: number): Promise<PianoIssue | undefined> {
+    const [issue] = await db.select().from(pianoIssues).where(eq(pianoIssues.id, id));
+    return issue;
+  }
+
+  async createPianoIssue(data: InsertPianoIssue, userId: string): Promise<PianoIssue> {
+    const [issue] = await db.insert(pianoIssues).values({ ...data, userId }).returning();
+    return issue;
+  }
+
+  async updatePianoIssue(id: number, data: Partial<InsertPianoIssue>): Promise<PianoIssue | undefined> {
+    const [issue] = await db.update(pianoIssues).set(data).where(eq(pianoIssues.id, id)).returning();
+    return issue;
+  }
+
+  async deletePianoIssue(id: number): Promise<boolean> {
+    const deleted = await db.delete(pianoIssues).where(eq(pianoIssues.id, id)).returning({ id: pianoIssues.id });
+    return deleted.length > 0;
   }
 
   async createServiceRecord(record: InsertServiceRecord): Promise<ServiceRecord> {
