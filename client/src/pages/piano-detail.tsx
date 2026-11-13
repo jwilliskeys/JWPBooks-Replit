@@ -809,9 +809,46 @@ export default function PianoDetail() {
             </div>
           </div>
 
-          <PianoClimateSummary records={serviceRecords ?? []} />
-          <PianoIssues pianoId={piano.id} />
-          <PianoPitchHistory records={serviceRecords ?? []} />
+          {/* Client */}
+          <Card>
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-sm font-semibold">Client</CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              <Link href={`/customers/${customer.id}`} className="flex items-center justify-between group" data-testid="link-customer-card">
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-sm font-bold text-primary/60">
+                    {clientInitials(customer)}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium group-hover:underline">{clientName(customer)}</p>
+                    {clientContactLine(customer) && <p className="text-xs text-muted-foreground">{clientContactLine(customer)}</p>}
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              <div className="mt-3 space-y-1.5 pl-12">
+                {customer.address && (
+                  <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
+                    <span>{customer.address}{customer.city ? `, ${customer.city}` : ""}{customer.state ? `, ${customer.state}` : ""}{customer.zipCode ? ` ${customer.zipCode}` : ""}</span>
+                  </div>
+                )}
+                {customer.phone && (
+                  <a href={`tel:${customer.phone}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                    <Phone className="h-3 w-3 shrink-0" />
+                    <span>{formatPhone(customer.phone)}</span>
+                  </a>
+                )}
+                {customer.email && (
+                  <a href={`mailto:${customer.email}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                    <Mail className="h-3 w-3 shrink-0" />
+                    <span>{customer.email}</span>
+                  </a>
+                )}
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Tuning Schedule */}
           <Card>
@@ -922,10 +959,10 @@ export default function PianoDetail() {
             </CardContent>
           </Card>
 
-          {/* Piano Details */}
+          {/* Notes */}
           <Card>
             <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-sm font-semibold">Piano Details</CardTitle>
+              <CardTitle className="text-sm font-semibold">Notes</CardTitle>
               <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={openEdit} data-testid="button-edit-details">
                 <Edit className="h-3 w-3 mr-1" /> Edit
               </Button>
@@ -946,53 +983,15 @@ export default function PianoDetail() {
             </CardContent>
           </Card>
 
-          {/* Client */}
-          <Card>
-            <CardHeader className="pb-2 pt-4 px-4">
-              <CardTitle className="text-sm font-semibold">Client</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <Link href={`/customers/${customer.id}`} className="flex items-center justify-between group" data-testid="link-customer-card">
-                <div className="flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 text-sm font-bold text-primary/60">
-                    {clientInitials(customer)}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium group-hover:underline">{clientName(customer)}</p>
-                    {clientContactLine(customer) && <p className="text-xs text-muted-foreground">{clientContactLine(customer)}</p>}
-                  </div>
-                </div>
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              </Link>
-              <div className="mt-3 space-y-1.5 pl-12">
-                {customer.address && (
-                  <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                    <MapPin className="h-3 w-3 mt-0.5 shrink-0" />
-                    <span>{customer.address}{customer.city ? `, ${customer.city}` : ""}{customer.state ? `, ${customer.state}` : ""}{customer.zipCode ? ` ${customer.zipCode}` : ""}</span>
-                  </div>
-                )}
-                {customer.phone && (
-                  <a href={`tel:${customer.phone}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-                    <Phone className="h-3 w-3 shrink-0" />
-                    <span>{formatPhone(customer.phone)}</span>
-                  </a>
-                )}
-                {customer.email && (
-                  <a href={`mailto:${customer.email}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-                    <Mail className="h-3 w-3 shrink-0" />
-                    <span>{customer.email}</span>
-                  </a>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Photos */}
           <PianoPhotoGallery
             pianoId={pianoId!}
             photos={piano.photos ?? []}
             onChanged={invalidateAll}
           />
+          <PianoClimateSummary records={serviceRecords ?? []} />
+          <PianoPitchHistory records={serviceRecords ?? []} />
+          <PianoIssues pianoId={piano.id} />
         </div>
 
         {/* ══ RIGHT PANEL: Timeline ════════════════════════════════════════ */}
