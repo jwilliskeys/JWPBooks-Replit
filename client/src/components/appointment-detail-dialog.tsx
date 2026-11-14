@@ -20,7 +20,6 @@ import {
 } from "lucide-react";
 import {
   SectionBar,
-  DurationMismatchNotice,
   PianoCard,
   PianoPickerView,
   ClientSearchBox,
@@ -659,17 +658,6 @@ export function AppointmentDetailDialog({ appointment, open, onOpenChange }: Pro
                                 {formatDurationMinutes(groupsDuration(editGroups ?? []))}
                               </span>
                             </div>
-                          )}
-                          {!form.isAllDay && (
-                            <DurationMismatchNotice
-                              serviceMinutes={groupsDuration(editGroups ?? [])}
-                              appointmentMinutes={form.durationMinutes}
-                              onUseServiceDuration={() => setForm(f => ({
-                                ...f,
-                                durationMinutes: groupsDuration(editGroups ?? []),
-                              }))}
-                              testIdPrefix="standard-edit"
-                            />
                           )}
                         </>
                       )}

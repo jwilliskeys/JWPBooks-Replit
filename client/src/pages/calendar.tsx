@@ -578,6 +578,20 @@ export default function CalendarPage() {
     return map;
   }, [appointments, currentYear]);
 
+  const completedAppointmentsThisYear = useMemo(() => {
+    let total = 0;
+    for (let month = 0; month < 12; month++) {
+      const daysInMonth = new Date(currentYear, month + 1, 0).getDate();
+      for (let day = 1; day <= daysInMonth; day++) {
+        const key = `${currentYear}-${month}-${day}`;
+        total += (appointmentsByDate.get(key) ?? []).filter(
+          (appointment) => appointment.status?.toLowerCase() === "completed",
+        ).length;
+      }
+    }
+    return total;
+  }, [appointmentsByDate, currentYear]);
+
   const notesByDate = useMemo(() => {
     const map = new Map<string, CalendarNote[]>();
     calendarNotes?.forEach((note) => {
@@ -1156,7 +1170,7 @@ export default function CalendarPage() {
       ) return;
 
       const key = event.key.toLowerCase();
-      const view = key === "d" ? "day" : key === "w" ? "week" : key === "m" ? "month" : null;
+      const view = key === "d" ? "day" : key === "w" ? "week" : key === "m" ? "month" : key === "y" ? "year" : null;
       if (!view) return;
       event.preventDefault();
       handleViewChange(view);
@@ -1486,9 +1500,9 @@ export default function CalendarPage() {
                 }`}
                 data-testid={`button-view-${v}`}
                 aria-pressed={calendarView === v}
-                title={v === "day" ? "Switch to day view (D)" : v === "week" ? "Switch to week view (W)" : v === "month" ? "Switch to month view (M)" : "Switch to year view"}
+                title={v === "day" ? "Switch to day view (D)" : v === "week" ? "Switch to week view (W)" : v === "month" ? "Switch to month view (M)" : "Switch to year view (Y)"}
               >
-                {v}{v === "day" ? " (D)" : v === "week" ? " (W)" : v === "month" ? " (M)" : ""}
+                {v}{v === "day" ? " (D)" : v === "week" ? " (W)" : v === "month" ? " (M)" : v === "year" ? " (Y)" : ""}
               </button>
             ))}
           </div>
@@ -1949,6 +1963,10 @@ export default function CalendarPage() {
       {/* ═══════════ YEAR VIEW (mobile + desktop) ═══════════ */}
       {calendarView === "year" && (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" data-testid="calendar-year-view">
+          <div className="col-span-full flex items-center justify-between rounded-md border bg-muted/20 px-3 py-2">
+            <span className="text-xs text-muted-foreground">Completed appointments in {currentYear}</span>
+            <span className="text-sm font-semibold tabular-nums">{completedAppointmentsThisYear}</span>
+          </div>
           {Array.from({ length: 12 }).map((_, m) => {
             const first = new Date(currentYear, m, 1);
             const startOffset = first.getDay();
@@ -1959,7 +1977,7 @@ export default function CalendarPage() {
             let monthCount = 0;
             for (let d = 1; d <= totalDays; d++) {
               const k = getDateKey(new Date(currentYear, m, d));
-              monthCount += appointmentsByDate.get(k)?.filter((a) => a.status !== "cancelled").length ?? 0;
+              monthCount += appointmentsByDate.get(k)?.filter((a) => a.status?.toLowerCase() === "completed").length ?? 0;
             }
             const isCurrentMonth = m === today.getMonth() && currentYear === today.getFullYear();
             return (
@@ -1975,14 +1993,14 @@ export default function CalendarPage() {
                   <div className="flex items-baseline justify-between mb-2">
                     <span className="text-sm font-semibold">{MONTH_NAMES[m]}</span>
                     <span className="text-[10px] text-muted-foreground">
-                      {monthCount} appt{monthCount === 1 ? "" : "s"}
+                      {monthCount} completed
                     </span>
                   </div>
                   <div className="grid grid-cols-7 gap-[2px]">
                     {cells.map((date, i) => {
                       if (!date) return <div key={`e-${i}`} className="aspect-square" />;
                       const k = getDateKey(date);
-                      const c = appointmentsByDate.get(k)?.filter((a) => a.status !== "cancelled").length ?? 0;
+                       const c = appointmentsByDate.get(k)?.filter((a) => a.status?.toLowerCase() === "completed").length ?? 0;
                       const isToday = isSameDay(date, today);
                       const shade =
                         c === 0

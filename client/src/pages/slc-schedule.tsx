@@ -84,7 +84,6 @@ import {
 import { MoveAppointmentDialog, type MoveRequestPrev } from "@/components/move-appointment-dialog";
 import { AppointmentDialog } from "@/components/appointment-dialog";
 import {
-  DurationMismatchNotice,
   PianoCard,
   PianoPickerView,
   SectionBar,
@@ -3399,15 +3398,6 @@ export default function SlcSchedule() {
                           </span>
                         </div>
                       )}
-                      <DurationMismatchNotice
-                        serviceMinutes={groupsDuration(editGroups)}
-                        appointmentMinutes={parseDurationString(editDuration)}
-                        onUseServiceDuration={() => {
-                          setEditDuration(formatDurationMinutes(groupsDuration(editGroups)));
-                          setEditConflictError("");
-                        }}
-                        testIdPrefix="trip-edit"
-                      />
                     </>
                   )}
                 </div>

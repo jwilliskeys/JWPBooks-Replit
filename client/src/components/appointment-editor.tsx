@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, ArrowLeft, X, ExternalLink, UserRound, Repeat, Car, Clock, AlertCircle } from "lucide-react";
+import { Search, ArrowLeft, X, ExternalLink, UserRound, Repeat, Car, Clock } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -183,42 +183,6 @@ export function SectionBar({ title, children }: { title: string; children?: Reac
     <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-muted/50 border border-border/60">
       <span className="text-sm font-semibold text-foreground">{title}</span>
       {children && <div className="flex items-center gap-2">{children}</div>}
-    </div>
-  );
-}
-
-export function DurationMismatchNotice({
-  serviceMinutes,
-  appointmentMinutes,
-  onUseServiceDuration,
-  testIdPrefix = "appointment",
-}: {
-  serviceMinutes: number;
-  appointmentMinutes: number;
-  onUseServiceDuration: () => void;
-  testIdPrefix?: string;
-}) {
-  if (serviceMinutes <= 0 || serviceMinutes === appointmentMinutes) return null;
-
-  return (
-    <div
-      className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
-      data-testid={`duration-mismatch-${testIdPrefix}`}
-    >
-      <AlertCircle className="h-4 w-4 shrink-0" />
-      <p className="flex-1">
-        Services total {formatDurationMinutes(serviceMinutes)}, but the appointment is {formatDurationMinutes(appointmentMinutes)}.
-      </p>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-7 shrink-0 border-destructive/30 text-destructive hover:bg-destructive/10"
-        onClick={onUseServiceDuration}
-        data-testid={`button-match-service-duration-${testIdPrefix}`}
-      >
-        Set to {formatDurationMinutes(serviceMinutes)}
-      </Button>
     </div>
   );
 }
