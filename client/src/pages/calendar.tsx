@@ -371,7 +371,7 @@ export default function CalendarPage() {
   const [evEndDate, setEvEndDate] = useState("");
   const [evIsAllDay, setEvIsAllDay] = useState(false);
   const [evStartMinutes, setEvStartMinutes] = useState(DEFAULT_TIME_MINUTES);
-  const [evEndMinutes, setEvEndMinutes] = useState(DEFAULT_TIME_MINUTES + 60);
+  const [evDurationMinutes, setEvDurationMinutes] = useState(60);
   const [evIsRepeating, setEvIsRepeating] = useState(false);
   const [evRepeatFreq, setEvRepeatFreq] = useState("weekly");
   const [evRepeatEndDate, setEvRepeatEndDate] = useState("");
@@ -760,7 +760,7 @@ export default function CalendarPage() {
     setEvEndDate("");
     setEvIsAllDay(false);
     setEvStartMinutes(DEFAULT_TIME_MINUTES);
-    setEvEndMinutes(DEFAULT_TIME_MINUTES + 60);
+    setEvDurationMinutes(60);
     setEvIsRepeating(false);
     setEvRepeatFreq("weekly");
     setEvRepeatEndDate("");
@@ -786,8 +786,11 @@ export default function CalendarPage() {
     setEvDate(ev.date);
     setEvEndDate(ev.endDate ?? ev.date);
     setEvIsAllDay(ev.isAllDay ?? false);
-    setEvStartMinutes(ev.startTime ? parseTimeString(ev.startTime) : DEFAULT_TIME_MINUTES);
-    setEvEndMinutes(ev.endTime ? parseTimeString(ev.endTime) : DEFAULT_TIME_MINUTES + 60);
+    const startMinutes = ev.startTime ? parseTimeString(ev.startTime) : DEFAULT_TIME_MINUTES;
+    const endMinutes = ev.endTime ? parseTimeString(ev.endTime) : startMinutes + 60;
+    const durationMinutes = ((endMinutes - startMinutes) % (24 * 60) + 24 * 60) % (24 * 60);
+    setEvStartMinutes(startMinutes);
+    setEvDurationMinutes(durationMinutes || 60);
     setEvIsRepeating(ev.isRepeating ?? false);
     setEvRepeatFreq(ev.repeatFrequency ?? "weekly");
     setEvRepeatEndDate(ev.repeatEndDate ?? "");
@@ -824,7 +827,7 @@ export default function CalendarPage() {
       title: evTitle.trim(),
       notes: evNotes.trim() || undefined,
       startTime: evIsAllDay ? undefined : formatTimeMinutes(evStartMinutes),
-      endTime: evIsAllDay ? undefined : formatTimeMinutes(evEndMinutes),
+      endTime: evIsAllDay ? undefined : formatTimeMinutes((evStartMinutes + evDurationMinutes) % (24 * 60)),
       isAllDay: evIsAllDay,
       isRepeating: evIsRepeating,
       repeatFrequency: evIsRepeating ? evRepeatFreq : undefined,
@@ -2376,15 +2379,19 @@ export default function CalendarPage() {
                         minutes={evStartMinutes}
                         onChange={setEvStartMinutes}
                         testIdPrefix="ev-start-time"
+                        editable
                       />
                     </div>
                     <div className="space-y-1.5">
-                      <Label>End Time</Label>
-                      <TimeStepperWidget
-                        minutes={evEndMinutes}
-                        onChange={setEvEndMinutes}
-                        testIdPrefix="ev-end-time"
+                      <Label>Duration</Label>
+                      <DurationStepperWidget
+                        minutes={evDurationMinutes}
+                        onChange={setEvDurationMinutes}
+                        testIdPrefix="ev-duration"
                       />
+                      <p className="text-xs text-muted-foreground pt-1">
+                        Ends at {formatTimeMinutes((evStartMinutes + evDurationMinutes) % (24 * 60))}
+                      </p>
                     </div>
                   </div>
                 )}

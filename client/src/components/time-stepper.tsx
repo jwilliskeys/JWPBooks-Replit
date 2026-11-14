@@ -60,14 +60,24 @@ export function formatDurationMinutes(totalMinutes: number): string {
 }
 
 export function parseTimeString(s: string): number {
-  if (!s) return DEFAULT_TIME_MINUTES;
-  const match = s.match(/(\d+):(\d+)\s*(AM|PM)/i);
-  if (!match) return DEFAULT_TIME_MINUTES;
-  let h = parseInt(match[1]);
-  const m = parseInt(match[2]);
-  const ampm = match[3].toUpperCase();
-  if (ampm === "PM" && h !== 12) h += 12;
-  if (ampm === "AM" && h === 12) h = 0;
+  return parseTimeInput(s) ?? DEFAULT_TIME_MINUTES;
+}
+
+/** Parse common clock input such as "6pm", "6:30 PM", or "18:30". */
+export function parseTimeInput(s: string): number | null {
+  const match = s.trim().match(/^(\d{1,2})(?::(\d{1,2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);
+  if (!match) return null;
+  let h = Number(match[1]);
+  const m = Number(match[2] ?? 0);
+  const suffix = match[3]?.replace(/\./g, "").toUpperCase();
+  if (m > 59) return null;
+  if (suffix) {
+    if (h < 1 || h > 12) return null;
+    if (suffix === "PM" && h !== 12) h += 12;
+    if (suffix === "AM" && h === 12) h = 0;
+  } else if (h > 23) {
+    return null;
+  }
   return h * 60 + m;
 }
 
@@ -93,6 +103,7 @@ const stepMiniBtn =
 
 export function StepperGroup({
   display,
+  displayContent,
   onStep,
   bigStep = 60,
   smallStep = 5,
@@ -103,6 +114,7 @@ export function StepperGroup({
   testIdPrefix,
 }: {
   display: string;
+  displayContent?: React.ReactNode;
   /** Called with the delta in minutes (positive or negative). */
   onStep: (deltaMinutes: number) => void;
   bigStep?: number;
@@ -141,7 +153,7 @@ export function StepperGroup({
         className={`flex items-center justify-center px-2 text-sm font-semibold tabular-nums min-w-[76px] ${displayClassName}`}
         data-testid={testIdPrefix ? `${testIdPrefix}-display` : undefined}
       >
-        {display}
+        {displayContent ?? display}
       </span>
       <div className="flex flex-col w-9 shrink-0 border-l border-input divide-y divide-input">
         <button
@@ -171,17 +183,49 @@ export function TimeStepperWidget({
   minutes,
   onChange,
   testIdPrefix,
+  editable = false,
 }: {
   minutes: number;
   onChange: (m: number) => void;
   testIdPrefix: string;
+  editable?: boolean;
 }) {
+  const [draft, setDraft] = useState(formatTimeMinutes(minutes));
+  const [isEditing, setIsEditing] = useState(false);
+  useEffect(() => {
+    if (!isEditing) setDraft(formatTimeMinutes(minutes));
+  }, [minutes, isEditing]);
   function wrap(m: number) {
     return ((m % (24 * 60)) + 24 * 60) % (24 * 60);
   }
   return (
     <StepperGroup
       display={formatTimeMinutes(minutes)}
+      displayContent={editable ? (
+        <input
+          type="text"
+          inputMode="text"
+          aria-label="Start time"
+          value={draft}
+          onFocus={() => setIsEditing(true)}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => {
+            const parsed = parseTimeInput(draft);
+            if (parsed !== null) onChange(parsed);
+            else setDraft(formatTimeMinutes(minutes));
+            setIsEditing(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+            if (event.key === "Escape") {
+              setDraft(formatTimeMinutes(minutes));
+              event.currentTarget.blur();
+            }
+          }}
+          className="min-w-0 w-full bg-transparent text-center text-sm font-semibold tabular-nums outline-none"
+          data-testid={`${testIdPrefix}-input`}
+        />
+      ) : undefined}
       onStep={d => onChange(wrap(minutes + d))}
       className="w-full"
       displayClassName="flex-1"
