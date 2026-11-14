@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { formatPhone } from "@/lib/utils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
@@ -284,6 +284,49 @@ const MONTH_NAMES = [
 ];
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+function appointmentInterval(appt: Appointment): { start: number; end: number } {
+  const parsedStart = parseTimeString(appt.time ?? "");
+  const start = appt.isAllDay ? 7 * 60 : Math.max(7 * 60, parsedStart > 0 ? parsedStart : 7 * 60);
+  const duration = appt.isAllDay
+    ? 13 * 60
+    : Math.max(30, parseDurationString(appt.duration ?? "") || DEFAULT_DURATION_MINUTES);
+  return { start, end: start + duration };
+}
+
+/** Give overlapping appointments separate lanes instead of hiding one beneath another. */
+function getAppointmentColumnLayout(appointments: Appointment[]) {
+  const sorted = [...appointments].sort((a, b) => appointmentInterval(a).start - appointmentInterval(b).start);
+  const layout = new Map<number, { left: number; width: number }>();
+  let cluster: Appointment[] = [];
+  let clusterEnd = -1;
+
+  const flushCluster = () => {
+    if (cluster.length === 0) return;
+    const laneEnds: number[] = [];
+    const assignments: Array<{ id: number; lane: number }> = [];
+    for (const appt of cluster) {
+      const { start, end } = appointmentInterval(appt);
+      let lane = laneEnds.findIndex((laneEnd) => laneEnd <= start);
+      if (lane < 0) lane = laneEnds.length;
+      laneEnds[lane] = end;
+      assignments.push({ id: appt.id, lane });
+    }
+    const width = 100 / laneEnds.length;
+    assignments.forEach(({ id, lane }) => layout.set(id, { left: lane * width, width }));
+    cluster = [];
+    clusterEnd = -1;
+  };
+
+  for (const appt of sorted) {
+    const { start, end } = appointmentInterval(appt);
+    if (cluster.length > 0 && start >= clusterEnd) flushCluster();
+    cluster.push(appt);
+    clusterEnd = Math.max(clusterEnd, end);
+  }
+  flushCluster();
+  return layout;
+}
 
 type DialogMode = "picker" | "appointment" | "event" | "memo" | null;
 
@@ -1057,6 +1100,75 @@ export default function CalendarPage() {
     return d;
   }, [dayOffset]);
 
+  function calendarDayNumber(date: Date): number {
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86400000;
+  }
+
+  function weekOffsetFor(date: Date): number {
+    const target = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    target.setDate(target.getDate() - target.getDay());
+    const currentWeek = new Date(today);
+    currentWeek.setDate(currentWeek.getDate() - currentWeek.getDay());
+    return Math.round((calendarDayNumber(target) - calendarDayNumber(currentWeek)) / 7);
+  }
+
+  function currentViewAnchor(): Date {
+    if (calendarView === "month") {
+      if (pickedDay && pickedDay.getMonth() === currentMonth && pickedDay.getFullYear() === currentYear) return pickedDay;
+      if (today.getMonth() === currentMonth && today.getFullYear() === currentYear) return today;
+      return new Date(currentYear, currentMonth, 1);
+    }
+    if (calendarView === "week") {
+      return weekDays.find((date) => isSameDay(date, today)) ?? weekDays[0];
+    }
+    if (calendarView === "day") return dayViewDate;
+    return new Date(currentYear, currentMonth, 1);
+  }
+
+  function handleViewChange(view: "month" | "week" | "day" | "year", dateOverride?: Date) {
+    const anchor = dateOverride ?? (view === "month" && calendarView === "week"
+      ? weekDays[3]
+      : currentViewAnchor());
+    setCalendarView(view);
+    setCurrentMonth(anchor.getMonth());
+    setCurrentYear(anchor.getFullYear());
+    setWeekOffset(weekOffsetFor(anchor));
+    setDayOffset(calendarDayNumber(anchor) - calendarDayNumber(today));
+    setPickedDay(anchor);
+  }
+
+  function goToToday() {
+    setCurrentMonth(today.getMonth());
+    setCurrentYear(today.getFullYear());
+    setWeekOffset(0);
+    setDayOffset(0);
+    setPickedDay(today);
+  }
+
+  useEffect(() => {
+    function handleCalendarShortcut(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.ctrlKey || event.metaKey || event.altKey ||
+        target?.isContentEditable ||
+        target?.closest("input, textarea, select, [contenteditable='true']") ||
+        dialogMode || detailAppt || falcettiDetail || createApptDialogOpen
+      ) return;
+
+      const key = event.key.toLowerCase();
+      const view = key === "d" ? "day" : key === "w" ? "week" : key === "m" ? "month" : null;
+      if (!view) return;
+      event.preventDefault();
+      handleViewChange(view);
+    }
+
+    window.addEventListener("keydown", handleCalendarShortcut);
+    return () => window.removeEventListener("keydown", handleCalendarShortcut);
+  }, [
+    calendarView, currentMonth, currentYear, pickedDay, weekDays, dayViewDate,
+    weekOffset, dayOffset, dialogMode, detailAppt, falcettiDetail, createApptDialogOpen,
+  ]);
+
   // Compute span count for the event dialog label (must be before early return)
   const evSpanDays = useMemo(() => {
     if (!evDate || !evEndDate || evEndDate <= evDate) return 1;
@@ -1355,7 +1467,7 @@ export default function CalendarPage() {
 
   return (
     <DndContext sensors={dndSensors} collisionDetection={rectIntersection} onDragEnd={handleCalendarDragEnd}>
-    <div className="p-4 sm:p-6 space-y-4 max-w-6xl mx-auto">
+    <div className="w-full max-w-[1600px] mx-auto p-4 sm:p-6 space-y-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-xl sm:text-2xl font-bold tracking-tight" data-testid="text-calendar-title">
           Calendar
@@ -1366,21 +1478,26 @@ export default function CalendarPage() {
             {(["day", "week", "month", "year"] as const).map((v) => (
               <button
                 key={v}
-                onClick={() => setCalendarView(v)}
+                onClick={() => handleViewChange(v)}
                 className={`px-3 py-1.5 capitalize font-medium transition-colors ${
                   calendarView === v
                     ? "bg-primary text-primary-foreground"
                     : "bg-background text-muted-foreground hover:bg-muted"
                 }`}
                 data-testid={`button-view-${v}`}
+                aria-pressed={calendarView === v}
+                title={v === "day" ? "Switch to day view (D)" : v === "week" ? "Switch to week view (W)" : v === "month" ? "Switch to month view (M)" : "Switch to year view"}
               >
-                {v}
+                {v}{v === "day" ? " (D)" : v === "week" ? " (W)" : v === "month" ? " (M)" : ""}
               </button>
             ))}
           </div>
 
           {/* Nav arrows + label */}
           <div className="flex items-center gap-1">
+            <Button variant="outline" size="sm" className="h-8 px-3 text-xs" onClick={goToToday} data-testid="button-today">
+              Today
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -1429,14 +1546,18 @@ export default function CalendarPage() {
         <Card data-testid="calendar-week-view">
           <CardContent className="p-0 overflow-auto">
             {/* Day header row */}
-            <div className="grid grid-cols-[56px_repeat(7,1fr)] border-b border-border/50">
+            <div className="grid min-w-[900px] grid-cols-[56px_repeat(7,minmax(120px,1fr))] border-b border-border/50">
               <div className="border-r border-border/30" />
               {weekDays.map((d) => {
                 const isToday = isSameDay(d, today);
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={getDateKey(d)}
-                    className={`text-center py-2 border-r last:border-r-0 border-border/30 ${isToday ? "bg-primary/5" : ""}`}
+                    onClick={() => handleViewChange("day", d)}
+                    aria-label={`Open ${formatDateLong(formatMDYY(d))}`}
+                    className={`text-center py-2 border-r last:border-r-0 border-border/30 transition-colors hover:bg-muted/50 ${isToday ? "bg-primary/5" : ""}`}
+                    data-testid={`week-day-header-${getDateKey(d)}`}
                   >
                     <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                       {DAY_NAMES[d.getDay()]}
@@ -1444,13 +1565,13 @@ export default function CalendarPage() {
                     <div className={`text-sm font-semibold leading-tight ${isToday ? "text-primary" : ""}`}>
                       {d.getDate()}
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
 
             {/* Time grid */}
-            <div className="grid grid-cols-[56px_repeat(7,1fr)]">
+            <div className="grid min-w-[900px] grid-cols-[56px_repeat(7,minmax(120px,1fr))]">
               {/* Hour labels */}
               <div className="border-r border-border/30">
                 {Array.from({ length: GRID_END_HOUR - GRID_START_HOUR }, (_, i) => (
@@ -1470,6 +1591,7 @@ export default function CalendarPage() {
               {weekDays.map((d) => {
                 const key = getDateKey(d);
                 const dayAppts = (appointmentsByDate.get(key) ?? []).slice().sort((a, b) => parseTimeString(a.time ?? "") - parseTimeString(b.time ?? ""));
+                const appointmentLayout = getAppointmentColumnLayout(dayAppts);
                 const isToday = isSameDay(d, today);
                 const isTripDay = !!getTrip(d, trips);
                 return (
@@ -1536,12 +1658,13 @@ export default function CalendarPage() {
                       const isOpen = selectedAppt?.id === appt.id;
                       const cityLastName = [customer?.city, customer?.lastName].filter(Boolean).join(" · ");
                       const fullName = customer ? clientName(customer) : "";
+                      const column = appointmentLayout.get(appt.id) ?? { left: 0, width: 100 };
                       return (
                         <DraggableAppt
                           key={appt.id}
                           id={appt.id}
-                          className="absolute left-0.5 right-0.5 z-10"
-                          style={{ top, height: Math.max(height, 24) }}
+                          className="absolute z-10 px-0.5"
+                          style={{ top, height: Math.max(height, 24), left: `${column.left}%`, width: `${column.width}%` }}
                         >
                         <Popover open={isOpen} onOpenChange={(open) => { if (!open) closeDetailDialog(); }}>
                           <PopoverTrigger asChild>
@@ -1844,8 +1967,7 @@ export default function CalendarPage() {
                 key={m}
                 className={`cursor-pointer hover:border-primary transition-colors ${isCurrentMonth ? "border-primary/50" : ""}`}
                 onClick={() => {
-                  setCurrentMonth(m);
-                  setCalendarView("month");
+                  handleViewChange("month", new Date(currentYear, m, 1));
                 }}
                 data-testid={`year-month-${m}`}
               >
