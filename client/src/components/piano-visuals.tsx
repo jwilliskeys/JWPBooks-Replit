@@ -32,13 +32,17 @@ export function DefaultPianoImage({ piano, className = "" }: { piano: Piano; cla
             <path d="M47 35h6v18h-6zm10 0h6v18h-6zm20 0h6v18h-6zm10 0h6v18h-6zm20 0h6v18h-6z" fill="currentColor" />
           </g>
         ) : (
-          <g fill="none" stroke="currentColor" strokeWidth="4" strokeLinejoin="round" className="text-stone-800 dark:text-stone-200">
-            <path d="M24 67h112l-13 17H38z" fill="currentColor" opacity=".12" />
-            <path d="M24 67h112l-13 17H38zM44 85v23m72-23v23m-78 0h83M34 67l12-33h83l7 33" />
-            <path d="M47 38h75v26H40" />
-            <path d="M45 44h77" strokeWidth="2" />
-            <path d="M50 45v17m10-17v17m10-17v17m20-17v17m10-17v17m10-17v17" strokeWidth="2" />
-            <path d="M48 45h6v10h-6zm10 0h6v10h-6zm20 0h6v10h-6zm10 0h6v10h-6zm20 0h6v10h-6z" fill="currentColor" />
+          <g className="text-stone-800 dark:text-stone-200" fill="currentColor" stroke="currentColor" strokeLinejoin="round">
+            {/* Open lid and its prop */}
+            <path d="M58 34 79 8l38-1-8 9c-2 3-1 5 3 6l25 4c6 1 7 4 4 8-8 10-23 16-42 17l-21-1-4-25-3 1 3 25-25 1-13-4z" />
+            <path d="m75 28 4 25-3 2-5-27z" />
+            {/* Keyboard end and curved grand body */}
+            <path d="m14 61 10-1 5-13 22-1 9-8 11 2-3 8c-2 5 1 8 8 9l29-2c15-1 27-4 36-8 4-2 7-1 7 3v14c0 4-2 6-6 7l-18 4c-7 2-11 7-18 11-7 4-12 6-20 6l-1 5-19 2-12-7-13-2-1 27h-4l-1-29-21-9-1-10c0-3 1-5 4-6z" />
+            {/* Keyboard white keys and dark keys */}
+            <path d="m19 62 43 15-2 5-42-15z" fill="#f5f5f4" stroke="none" />
+            <path d="m22 59 39 14-1 3-39-13z" />
+            {/* Three tapered legs */}
+            <path d="m42 85 4 1 1 27-4 1zM76 91l5-1-3 31-4 1zM128 75l4-1-2 28-4 1z" />
           </g>
         )}
       </svg>
