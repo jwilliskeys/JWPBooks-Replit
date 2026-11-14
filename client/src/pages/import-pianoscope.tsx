@@ -8,7 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Upload, ChevronLeft, Check, AlertCircle, LineChart, Loader2 } from "lucide-react";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Piano, Customer } from "@shared/schema";
+import type { Piano, Customer, ServiceRecord } from "@shared/schema";
 import { PianoscopeChips, PianoscopeReportDialog } from "@/components/pianoscope-report";
 import {
   type PianoscopeSummary,
@@ -219,22 +219,30 @@ export default function ImportPianoscopePage() {
         } else {
           pid = g.pianoId;
         }
-        // dedup against existing records on this piano (by measurement date)
-        let existingDates = new Set<string>();
-        try {
-          const cur = await (await apiRequest("GET", `/api/pianos/${pid}/services`)).json();
-          for (const r of cur as any[]) if (r.serviceDate) existingDates.add(r.serviceDate);
-        } catch { /* ignore */ }
-        // import each visit oldest-first so lastTuned ends on the newest
+        // A Pianoscope file is often refreshed and uploaded again for the same visit date.
+        // Replace that date's snapshot rather than silently skipping the updated file.
+        const cur = await (await apiRequest("GET", `/api/pianos/${pid}/services`)).json() as ServiceRecord[];
+        const recordsByDate = new Map<string, ServiceRecord>();
+        for (const record of cur) {
+          const existing = recordsByDate.get(record.serviceDate);
+          if (!existing || record.pianoscope) recordsByDate.set(record.serviceDate, record);
+        }
+        // Process oldest-first so lastTuned lands on the newest imported visit.
         for (const pf of g.files.slice().reverse()) {
           const dateLabel = measurementDateLabel(pf.summary);
-          if (existingDates.has(dateLabel)) continue;
-          await apiRequest("POST", `/api/pianos/${pid}/services`, {
-            serviceDate: dateLabel,
-            serviceType: suggestServiceType(pf.summary),
-            notes: "",
-            pianoscope: serializePianoscope(pf.summary),
-          });
+          const pianoscope = serializePianoscope(pf.summary);
+          const existing = recordsByDate.get(dateLabel);
+          if (existing) {
+            await apiRequest("PATCH", `/api/services/${existing.id}`, { pianoscope });
+          } else {
+            const response = await apiRequest("POST", `/api/pianos/${pid}/services`, {
+              serviceDate: dateLabel,
+              serviceType: suggestServiceType(pf.summary),
+              notes: "",
+              pianoscope,
+            });
+            recordsByDate.set(dateLabel, await response.json() as ServiceRecord);
+          }
           records++;
         }
       }
@@ -287,7 +295,7 @@ export default function ImportPianoscopePage() {
 
       {done && (
         <div className="rounded-lg border border-emerald-500/60 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-sm">
-          <div className="font-semibold flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400"><Check className="h-4 w-4" /> Imported {done.records} tuning record(s){done.pianos ? `, created ${done.pianos} new piano(s)` : ""}.</div>
+          <div className="font-semibold flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400"><Check className="h-4 w-4" /> Imported or updated {done.records} tuning snapshot(s){done.pianos ? `, created ${done.pianos} new piano(s)` : ""}.</div>
           <Button variant="secondary" size="sm" className="mt-2" onClick={() => navigate("/pianos")}>Go to Pianos</Button>
         </div>
       )}

@@ -394,7 +394,11 @@ export default function PianoDetail() {
   // Import one or more .pianoscope files straight onto THIS piano (no matching step).
   const handlePianoscopeFiles = async (fileList: FileList) => {
     setImportingPs(true);
-    const existingDates = new Set((serviceRecords ?? []).map((r) => r.serviceDate));
+    const recordsByDate = new Map<string, ServiceRecord>();
+    for (const record of serviceRecords ?? []) {
+      const existing = recordsByDate.get(record.serviceDate);
+      if (!existing || record.pianoscope) recordsByDate.set(record.serviceDate, record);
+    }
     const parsedList: { date: string; iso: string; summary: PianoscopeSummary }[] = [];
     let failed = 0;
     for (const f of Array.from(fileList)) {
@@ -404,26 +408,36 @@ export default function PianoDetail() {
       } catch { failed++; }
     }
     parsedList.sort((a, b) => a.iso.localeCompare(b.iso)); // oldest first so lastTuned lands on the newest
-    let added = 0, skipped = 0;
+    let added = 0, updated = 0;
     for (const p of parsedList) {
-      if (existingDates.has(p.date)) { skipped++; continue; }
       try {
-        await apiRequest("POST", `/api/pianos/${pianoId}/services`, {
-          serviceDate: p.date,
-          serviceType: suggestServiceType(p.summary),
-          notes: "",
-          pianoscope: serializePianoscope(p.summary),
-        });
-        existingDates.add(p.date);
-        added++;
+        const existing = recordsByDate.get(p.date);
+        const pianoscope = serializePianoscope(p.summary);
+        if (existing) {
+          await apiRequest("PATCH", `/api/services/${existing.id}`, { pianoscope });
+          updated++;
+        } else {
+          const response = await apiRequest("POST", `/api/pianos/${pianoId}/services`, {
+            serviceDate: p.date,
+            serviceType: suggestServiceType(p.summary),
+            notes: "",
+            pianoscope,
+          });
+          recordsByDate.set(p.date, await response.json() as ServiceRecord);
+          added++;
+        }
       } catch { failed++; }
     }
     setImportingPs(false);
     invalidateAll();
+    const resultParts = [
+      added ? `Imported ${added} tuning${added === 1 ? "" : "s"}` : "",
+      updated ? `updated ${updated} snapshot${updated === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
     toast({
-      title: added ? `Imported ${added} tuning${added === 1 ? "" : "s"}` : "Nothing imported",
-      description: [skipped ? `${skipped} already on file` : "", failed ? `${failed} failed` : ""].filter(Boolean).join(" · ") || undefined,
-      variant: added ? undefined : "destructive",
+      title: resultParts.join(" · ") || "Nothing imported",
+      description: failed ? `${failed} failed` : undefined,
+      variant: added || updated ? undefined : "destructive",
     });
   };
 
@@ -762,11 +776,18 @@ export default function PianoDetail() {
           <div className={`text-center pb-1 ${isInactive ? "opacity-70" : ""}`} data-testid="piano-hero-card">
             {/* Photo / icon */}
             <div className="flex justify-center mb-3">
-              {piano.photos && piano.photos.length > 0 ? (
-                <img src={piano.photos[0]} alt="Piano" className="h-28 w-28 object-cover rounded-xl border shadow-sm" data-testid="piano-hero-photo" />
-              ) : (
-                <DefaultPianoImage piano={piano} className="h-28 w-28 shadow-sm" />
-              )}
+              <div className="relative h-28 w-28">
+                <DefaultPianoImage piano={piano} className="absolute inset-0 h-full w-full shadow-sm" />
+                {piano.photos?.[0] && (
+                  <img
+                    src={piano.photos[0]}
+                    alt="Piano"
+                    className="absolute inset-0 h-full w-full object-cover rounded-xl border shadow-sm"
+                    onError={(event) => { event.currentTarget.style.display = "none"; }}
+                    data-testid="piano-hero-photo"
+                  />
+                )}
+              </div>
             </div>
             <h1 className="text-xl font-bold" data-testid="piano-title">{pianoLabel}</h1>
             <Link href={`/customers/${customer.id}`} className="text-sm text-muted-foreground hover:text-foreground hover:underline" data-testid="link-customer">
