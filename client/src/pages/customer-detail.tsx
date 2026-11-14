@@ -62,6 +62,7 @@ import { AppointmentDialog } from "@/components/appointment-dialog";
 import { ServiceTimeline } from "@/components/service-timeline";
 import { ContactManager } from "@/components/contact-manager";
 import { AppointmentDetailDialog } from "@/components/appointment-detail-dialog";
+import { CustomerReferrals } from "@/components/customer-referrals";
 import { clientName, personName } from "@shared/client-name";
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -1073,6 +1074,8 @@ export default function CustomerDetail() {
 
         {/* Additional Info (read-only) */}
         <AdditionalInfoCard customer={customer} />
+
+        <CustomerReferrals customer={customer} />
 
         {/* Last contacted row */}
         <Card>

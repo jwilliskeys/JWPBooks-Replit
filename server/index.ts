@@ -127,6 +127,7 @@ async function ensurePianoSchemaColumns() {
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "repeat_frequency" text;
       ALTER TABLE "appointments" ADD COLUMN IF NOT EXISTS "repeat_end_date" text;
       ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "is_trip_suggestion_ignored" boolean DEFAULT false;
+      ALTER TABLE "customers" ADD COLUMN IF NOT EXISTS "referred_by_customer_id" integer;
       CREATE TABLE IF NOT EXISTS "trip_outreach_candidates" (
         "id" serial PRIMARY KEY NOT NULL,
         "trip_id" integer NOT NULL,

@@ -351,6 +351,7 @@ export class DatabaseStorage implements IStorage {
     }
     await db.delete(serviceRecords).where(eq(serviceRecords.customerId, id));
     await db.delete(pianos).where(eq(pianos.customerId, id));
+    await db.update(customers).set({ referredByCustomerId: null }).where(eq(customers.referredByCustomerId, id));
     const result = await db.delete(customers).where(eq(customers.id, id)).returning();
     return result.length > 0;
   }

@@ -308,6 +308,26 @@ export async function registerRoutes(
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid data", errors: parsed.error.errors });
       }
+      if (parsed.data.referredByCustomerId !== undefined && parsed.data.referredByCustomerId !== null) {
+        const referrerId = parsed.data.referredByCustomerId;
+        if (referrerId === id) {
+          return res.status(400).json({ message: "A client cannot refer themselves" });
+        }
+        let referrer = await storage.getCustomer(referrerId);
+        if (!referrer || referrer.userId !== userId) {
+          return res.status(400).json({ message: "Referrer must be one of your clients" });
+        }
+        const visited = new Set<number>();
+        while (referrer) {
+          if (referrer.id === id) {
+            return res.status(400).json({ message: "This referral would create a loop" });
+          }
+          if (visited.has(referrer.id) || referrer.referredByCustomerId == null) break;
+          visited.add(referrer.id);
+          referrer = await storage.getCustomer(referrer.referredByCustomerId);
+          if (referrer && referrer.userId !== userId) referrer = undefined;
+        }
+      }
       const customer = await storage.updateCustomer(id, parsed.data);
       if (!customer) return res.status(404).json({ message: "Customer not found" });
       res.json(customer);

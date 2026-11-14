@@ -21,6 +21,7 @@ export const customers = pgTable("customers", {
   preferenceNotes: text("preference_notes"),
   clientType: text("client_type"),
   preferredTechnician: text("preferred_technician"),
+  referredByCustomerId: integer("referred_by_customer_id"),
   lastContacted: text("last_contacted"),
   isStarred: boolean("is_starred").default(false),
   isTripSuggestionIgnored: boolean("is_trip_suggestion_ignored").default(false),
