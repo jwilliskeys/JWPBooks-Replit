@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "sPvdvIk2DwCRALiaGpYCY"
+uri = "file://.local/JWP-Books-Cowork-Safe.zip"
+type = "unspecified"
+title = "Cowork-safe JWP Books copy"
+description = "A source-only ZIP with blank seed data and no Git history, customer records, calendar settings, inventory, uploads, or credentials."
+logical_id = "d459bc6e-d04e-4bca-af36-2e87d5898e49"
+content_hash = "sha256:329122e625f1f18cb41296527269f46e40ad81eeaa3b198e2401aaea8cbb536c"
+size = 5048892
+mtime_ms = 1794748336541
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:e41f2b82-d9de-48ef-9d15-9f405c2e4280/d459bc6e-d04e-4bca-af36-2e87d5898e49/55547cec-21f6-4657-bb9a-9be3e1e8d374"
+storage_version_token = "1794748351890135"
+content_type = "application/octet-stream"
