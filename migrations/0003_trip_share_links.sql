@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS trip_share_links (
+  id SERIAL PRIMARY KEY,
+  trip_id INTEGER NOT NULL UNIQUE,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

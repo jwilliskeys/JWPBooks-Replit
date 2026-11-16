@@ -1,8 +1,11 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import { createHash, randomBytes } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { db } from "./db";
 import { storage } from "./storage";
 import { getUncachableGoogleSheetClient, SPREADSHEET_ID } from "./googleSheets";
-import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema, insertMileageLogSchema, insertBusinessExpenseSchema, insertOutreachLeadSchema, insertInspectionSchema, insertBankAccountSchema, insertBankTransactionSchema, insertPianoIssueSchema, publicBookingRequestSchema } from "@shared/schema";
+import { insertCustomerSchema, insertPianoSchema, insertServiceRecordSchema, insertAppointmentSchema, insertCalendarNoteSchema, insertCalendarEventSchema, insertTripSchema, insertTripAppointmentSchema, insertInvoiceSchema, insertServiceCatalogSchema, insertServiceGroupSchema, insertCustomerContactSchema, insertMileageLogSchema, insertBusinessExpenseSchema, insertOutreachLeadSchema, insertInspectionSchema, insertBankAccountSchema, insertBankTransactionSchema, insertPianoIssueSchema, publicBookingRequestSchema, tripShareLinks } from "@shared/schema";
 import { clientName } from "@shared/client-name";
 import { isAuthenticated } from "./simpleAuth";
 import multer from "multer";
@@ -254,9 +257,95 @@ export async function registerRoutes(
     // Address autocomplete for the public booking page (server-side Google key)
     if (req.path === "/places/autocomplete" && req.method === "GET") return next();
     if (req.path === "/places/details" && req.method === "GET") return next();
+    if (/^\/shared-trips\/[A-Za-z0-9_-]{43}$/.test(req.path) && req.method === "GET") return next();
+    if (/^\/trips\/\d+\/share-link$/.test(req.path) && ["POST", "DELETE", "GET"].includes(req.method)) return next();
     // Public read-only calendar subscription feed (HMAC token in the path)
     if (/^\/feed\/[A-Za-z0-9]+\.ics$/.test(req.path) && req.method === "GET") return next();
     return isAuthenticated(req, res, next);
+  });
+
+  app.get("/shared-trip/:token", (req, res, next) => {
+    if (/^[A-Za-z0-9_-]{43}$/.test(req.params.token)) {
+      res.setHeader("X-Robots-Tag", "noindex, nofollow");
+    }
+    next();
+  });
+
+  app.get("/api/shared-trips/:token", async (req, res) => {
+    try {
+      const tokenHash = createHash("sha256").update(req.params.token).digest("hex");
+      const [share] = await db.select().from(tripShareLinks).where(eq(tripShareLinks.tokenHash, tokenHash));
+      if (!share) return res.status(404).json({ message: "This shared schedule is no longer available." });
+      const trip = await storage.getTrip(share.tripId);
+      if (!trip) return res.status(404).json({ message: "This shared schedule is no longer available." });
+      const inRange = (value: string) => {
+        const iso = (raw: string) => {
+          if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+          const match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+          if (!match) return "";
+          const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
+          return `${year}-${String(Number(match[1])).padStart(2, "0")}-${String(Number(match[2])).padStart(2, "0")}`;
+        };
+        const date = iso(value);
+        return !!date && date >= iso(trip.startDate) && date <= iso(trip.endDate);
+      };
+      const appts = await storage.getTripAppointments(trip.id);
+      const appointments = await Promise.all(appts.filter(a => inRange(a.date)).map(async a => {
+        const customer = await storage.getCustomer(a.customerId);
+        const validCustomer = customer?.userId === trip.userId ? customer : undefined;
+        const booked = a.linkedAppointmentId != null && a.status?.toLowerCase() !== "cancelled";
+        return {
+          date: a.date, time: a.time,
+          name: a.title || (validCustomer ? clientName(validCustomer) : "Appointment"),
+          city: validCustomer?.city || "",
+          status: a.status?.toLowerCase() === "cancelled" ? "Cancelled" : booked ? "Booked" : "Unconfirmed",
+          notes: a.notes || "",
+        };
+      }));
+      const [events, notes] = await Promise.all([
+        storage.getCalendarEvents(trip.userId || ""),
+        storage.getCalendarNotes(trip.userId || ""),
+      ]);
+      res.setHeader("Cache-Control", "no-store");
+      res.json({
+        trip: { name: trip.name, startDate: trip.startDate, endDate: trip.endDate },
+        appointments,
+        events: events.filter(e => inRange(e.date)).map(e => ({
+          date: e.date, title: e.title, startTime: e.startTime, endTime: e.endTime,
+          isAllDay: e.isAllDay, notes: e.notes || "",
+        })),
+        calendarNotes: notes.filter(n => inRange(n.date)).map(n => ({
+          date: n.date, title: n.title, notes: n.notes || "",
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message || "Unable to load this schedule." });
+    }
+  });
+
+  app.get("/api/trips/:id/share-link", async (req, res) => {
+    const trip = await storage.getTrip(Number(req.params.id));
+    if (!trip || trip.userId !== getUserId(req)) return res.status(404).json({ message: "Trip not found" });
+    const [share] = await db.select({ id: tripShareLinks.id }).from(tripShareLinks).where(eq(tripShareLinks.tripId, trip.id));
+    res.json({ active: !!share });
+  });
+
+  app.post("/api/trips/:id/share-link", async (req, res) => {
+    const trip = await storage.getTrip(Number(req.params.id));
+    if (!trip || trip.userId !== getUserId(req)) return res.status(404).json({ message: "Trip not found" });
+    const token = randomBytes(32).toString("base64url");
+    const tokenHash = createHash("sha256").update(token).digest("hex");
+    await db.insert(tripShareLinks).values({ tripId: trip.id, tokenHash })
+      .onConflictDoUpdate({ target: tripShareLinks.tripId, set: { tokenHash, createdAt: new Date() } });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ token });
+  });
+
+  app.delete("/api/trips/:id/share-link", async (req, res) => {
+    const trip = await storage.getTrip(Number(req.params.id));
+    if (!trip || trip.userId !== getUserId(req)) return res.status(404).json({ message: "Trip not found" });
+    await db.delete(tripShareLinks).where(eq(tripShareLinks.tripId, trip.id));
+    res.json({ success: true });
   });
 
   app.get("/api/customers", async (req, res) => {

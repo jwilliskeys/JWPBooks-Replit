@@ -144,6 +144,7 @@ import {
   serializeServiceItems,
 } from "@/lib/service-lines";
 import { tripAppointmentPianoLines } from "@/lib/trip-appointment-lines";
+import { TripShareControls } from "@/components/trip-share-controls";
 
 // Used only until the owner enters an SLC home address in Company Profile.
 const DEFAULT_HOME_ADDRESS = "868 S 700 E, Centerville, UT 84014";
@@ -1277,21 +1278,24 @@ function TripPanel({
                 </div>
               </div>
             </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-destructive shrink-0 ml-2"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (confirm("Delete this trip and all its appointments?")) {
-                  onDeleteTrip(trip.id);
-                }
-              }}
-              disabled={deleteIsPending}
-              data-testid={`button-delete-trip-${trip.id}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
+            <div className="ml-2 flex shrink-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
+              <TripShareControls tripId={trip.id} />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-destructive"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm("Delete this trip and all its appointments?")) {
+                    onDeleteTrip(trip.id);
+                  }
+                }}
+                disabled={deleteIsPending}
+                data-testid={`button-delete-trip-${trip.id}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
         </CollapsibleTrigger>
 

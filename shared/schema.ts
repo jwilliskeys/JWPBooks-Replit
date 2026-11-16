@@ -199,6 +199,13 @@ export const tripAppointments = pgTable("trip_appointments", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+export const tripShareLinks = pgTable("trip_share_links", {
+  id: serial("id").primaryKey(),
+  tripId: integer("trip_id").notNull().unique(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export const tripOutreachCandidates = pgTable("trip_outreach_candidates", {
   id: serial("id").primaryKey(),
   tripId: integer("trip_id").notNull(),

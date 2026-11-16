@@ -34,6 +34,7 @@ import OutreachPage from "@/pages/outreach";
 import InventoryPage from "@/pages/inventory";
 import LoginPage from "@/pages/login";
 import { useAuth } from "@/hooks/use-auth";
+import SharedTripPage from "@/pages/shared-trip";
 
 function Router() {
   return (
@@ -164,6 +165,19 @@ function App() {
         <TooltipProvider>
           <ErrorBoundary area="the booking page">
             <BookPage />
+          </ErrorBoundary>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+  }
+
+  if (location.startsWith("/shared-trip/")) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <ErrorBoundary area="the shared trip schedule">
+            <SharedTripPage />
           </ErrorBoundary>
           <Toaster />
         </TooltipProvider>
