@@ -16,7 +16,7 @@ import { parseDeltaFlightPdf } from "./parsePdf";
 import { researchCityLeads, researchConfigured } from "./research";
 import * as ics from "./ics";
 import { parseBookingServices } from "@shared/booking-services";
-import { appointmentOccursOn, parseAnyDate } from "@shared/appointment-repeat";
+import { appointmentOccursOn, expandAppointmentDates, parseAnyDate } from "@shared/appointment-repeat";
 import { buildCompletedAppointmentServiceRecords, hasTuningService } from "./tuning-completion";
 
 // ── Object Storage ────────────────────────────────────────────────────────────
@@ -306,14 +306,26 @@ export async function registerRoutes(
         storage.getCalendarEvents(trip.userId || ""),
         storage.getCalendarNotes(trip.userId || ""),
       ]);
+      const tripStart = parseAnyDate(trip.startDate);
+      const tripEnd = parseAnyDate(trip.endDate);
+      const sharedEvents = tripStart && tripEnd
+        ? events.flatMap(e => expandAppointmentDates({
+            date: e.date,
+            endDate: e.endDate,
+            isAllDay: e.isAllDay,
+            repeatFrequency: e.isRepeating ? e.repeatFrequency : null,
+            repeatEndDate: e.isRepeating ? e.repeatEndDate : null,
+          }, tripStart, tripEnd).map(date => ({
+            date: `${date.getMonth() + 1}/${date.getDate()}/${String(date.getFullYear()).slice(-2)}`,
+            title: e.title, startTime: e.startTime, endTime: e.endTime,
+            isAllDay: e.isAllDay, notes: e.notes || "",
+          })))
+        : [];
       res.setHeader("Cache-Control", "no-store");
       res.json({
         trip: { name: trip.name, startDate: trip.startDate, endDate: trip.endDate },
         appointments,
-        events: events.filter(e => inRange(e.date)).map(e => ({
-          date: e.date, title: e.title, startTime: e.startTime, endTime: e.endTime,
-          isAllDay: e.isAllDay, notes: e.notes || "",
-        })),
+        events: sharedEvents,
         calendarNotes: notes.filter(n => inRange(n.date)).map(n => ({
           date: n.date, title: n.title, notes: n.notes || "",
         })),
