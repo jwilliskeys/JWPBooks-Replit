@@ -9,11 +9,23 @@ type SharedSchedule = {
   calendarNotes: { date: string; title: string; notes: string }[];
 };
 
-function displayDate(value: string) {
+function parseScheduleDate(value: string) {
   const parts = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  const date = parts
-    ? new Date(Number(parts[3]) < 100 ? 2000 + Number(parts[3]) : Number(parts[3]), Number(parts[1]) - 1, Number(parts[2]))
-    : new Date(`${value}T12:00:00`);
+  if (parts) {
+    const year = Number(parts[3]) < 100 ? 2000 + Number(parts[3]) : Number(parts[3]);
+    return new Date(year, Number(parts[1]) - 1, Number(parts[2]));
+  }
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+  return null;
+}
+
+function dateKey(date: Date) {
+  return `${date.getMonth() + 1}/${date.getDate()}/${String(date.getFullYear()).slice(-2)}`;
+}
+
+function displayDate(value: string) {
+  const date = parseScheduleDate(value) || new Date(`${value}T12:00:00`);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
 }
 
@@ -37,10 +49,19 @@ export default function SharedTripPage() {
     if (!days.has(date)) days.set(date, { appointments: [], events: [], notes: [] });
     return days.get(date)!;
   };
-  data.appointments.forEach((item) => day(item.date).appointments.push(item));
-  data.events.forEach((item) => day(item.date).events.push(item));
-  data.calendarNotes.forEach((item) => day(item.date).notes.push(item));
-  const orderedDays = [...days.entries()].sort(([a], [b]) => new Date(a).getTime() - new Date(b).getTime());
+  data.appointments.forEach((item) => day(dateKey(parseScheduleDate(item.date) || new Date(item.date))).appointments.push(item));
+  data.events.forEach((item) => day(dateKey(parseScheduleDate(item.date) || new Date(item.date))).events.push(item));
+  data.calendarNotes.forEach((item) => day(dateKey(parseScheduleDate(item.date) || new Date(item.date))).notes.push(item));
+  const start = parseScheduleDate(data.trip.startDate);
+  const end = parseScheduleDate(data.trip.endDate);
+  if (start && end) {
+    for (const date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
+      day(dateKey(date));
+    }
+  }
+  const orderedDays = [...days.entries()].sort(([a], [b]) =>
+    (parseScheduleDate(a)?.getTime() ?? 0) - (parseScheduleDate(b)?.getTime() ?? 0),
+  );
 
   return (
     <main className="mx-auto min-h-screen max-w-3xl bg-background px-5 py-8 text-foreground sm:px-8">
